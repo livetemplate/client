@@ -1,179 +1,235 @@
-# LiveTemplate TypeScript Client
+# @livetemplate/client
 
-A TypeScript client for consuming LiveTemplate tree-based updates, implementing Phoenix LiveView-style optimization.
+TypeScript/JavaScript client library for LiveTemplate - reactive HTML over the wire.
 
-## 🚀 Features
+## Overview
 
-- **Tree-based Updates**: Consume optimized JSON updates from LiveTemplate server
-- **Static Structure Caching**: Cache static HTML structure client-side for maximum efficiency
-- **Phoenix LiveView Compatible**: Only dynamic values transmitted after initial render
-- **Bandwidth Optimization**: 75%+ reduction in update payload sizes
-- **Type Safety**: Full TypeScript support with type definitions
+The LiveTemplate client enables reactive web applications by efficiently applying tree-based HTML updates from the server. It uses DOM morphing, intelligent static content caching, and WebSocket transport for real-time interactivity.
 
-## 📦 Installation
+## Features
+
+- **Tree-based Updates**: Efficiently applies minimal JSON updates to the DOM
+- **Static Structure Caching**: Client caches static HTML, receives only dynamic changes
+- **DOM Morphing**: Uses morphdom for efficient, minimal DOM updates
+- **WebSocket Transport**: Real-time bidirectional communication
+- **Focus Management**: Preserves focus during updates
+- **Form Lifecycle**: Automatic form state management
+- **Event Delegation**: Efficient event handling
+- **Modal Management**: Built-in modal support
+- **TypeScript**: Full type safety and IDE support
+
+## Installation
+
+### npm
 
 ```bash
+npm install @livetemplate/client
+```
+
+### CDN
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.1.0/dist/livetemplate-client.browser.js"></script>
+```
+
+## Quick Start
+
+### Browser (via CDN)
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.1.0/dist/livetemplate-client.browser.js"></script>
+</head>
+<body>
+    <div id="app"></div>
+    <script>
+        const client = new LiveTemplateClient.LiveTemplateClient({
+            targetSelector: "#app",
+            wsUrl: "ws://localhost:8080/ws",
+            httpUrl: "http://localhost:8080"
+        });
+
+        client.connect();
+    </script>
+</body>
+</html>
+```
+
+### TypeScript/ES Modules
+
+```typescript
+import { LiveTemplateClient } from "@livetemplate/client";
+
+const client = new LiveTemplateClient({
+    targetSelector: "#app",
+    wsUrl: "ws://localhost:8080/ws",
+    httpUrl: "http://localhost:8080"
+});
+
+client.connect();
+```
+
+## Configuration Options
+
+```typescript
+interface LiveTemplateClientOptions {
+    // Required
+    targetSelector: string;      // CSS selector for target element
+    wsUrl: string;                // WebSocket URL
+    httpUrl: string;              // HTTP URL for initial render
+
+    // Optional
+    debug?: boolean;              // Enable debug logging (default: false)
+    reconnectInterval?: number;   // Reconnect interval in ms (default: 3000)
+    maxReconnectAttempts?: number;// Max reconnect attempts (default: 10)
+}
+```
+
+## API
+
+### Client Methods
+
+```typescript
+// Connect to server
+client.connect(): void
+
+// Disconnect from server
+client.disconnect(): void
+
+// Send event to server
+client.sendEvent(event: string, data: any): void
+
+// Set debug mode
+client.setDebug(enabled: boolean): void
+```
+
+### Events
+
+The client emits events you can listen to:
+
+```typescript
+// Connection established
+window.addEventListener("livetemplate:connected", (e) => {
+    console.log("Connected to server");
+});
+
+// Connection closed
+window.addEventListener("livetemplate:disconnected", (e) => {
+    console.log("Disconnected from server");
+});
+
+// Update received
+window.addEventListener("livetemplate:update", (e) => {
+    console.log("Received update:", e.detail);
+});
+```
+
+## How It Works
+
+1. **Initial Render**: Client fetches full HTML from server, caches static structure
+2. **Updates**: Server sends only changed dynamic values as tree updates
+3. **DOM Morphing**: Client applies updates using morphdom for minimal DOM changes
+4. **Caching**: Static HTML structure is cached, never re-transmitted
+
+This results in **~75% reduction** in update payload sizes compared to full HTML updates.
+
+## Development
+
+### Setup
+
+```bash
+# Clone repository
+git clone https://github.com/livetemplate/client.git
+cd client
+
+# Install dependencies
 npm install
+
+# Run tests
+npm test
+
+# Build
 npm run build
 ```
 
-## 🧪 Testing
+### Project Structure
 
-The client includes comprehensive tests to validate the optimization effectiveness:
+```
+client/
+├── livetemplate-client.ts       # Main client
+├── dom/                         # DOM utilities
+│   ├── directives.ts
+│   ├── event-delegation.ts
+│   ├── focus-manager.ts
+│   ├── form-disabler.ts
+│   ├── loading-indicator.ts
+│   ├── modal-manager.ts
+│   └── observer-manager.ts
+├── state/                       # State management
+│   ├── form-lifecycle-manager.ts
+│   └── tree-renderer.ts
+├── transport/                   # Network layer
+│   └── websocket.ts
+├── utils/                       # Utilities
+│   ├── logger.ts
+│   ├── rate-limit.ts
+│   └── testing.ts
+└── tests/                       # Test suite
+```
+
+### Running Tests
 
 ```bash
-# Run optimization validation tests
-npm run test:optimization
-
-# Run HTML reconstruction tests
-npm run test:reconstruction
-
 # Run all tests
-npm run test:all
+npm test
+
+# Run specific test
+npm test -- focus-manager
+
+# Run with coverage
+npm test -- --coverage
 ```
 
-## 📊 Test Results
+### Building
 
-Current optimization performance:
+```bash
+# Build TypeScript and browser bundle
+npm run build
 
-- **Update 1**: 168 bytes (first update after initial render)
-- **Update 2**: 128 bytes (subsequent optimized update)
-- **Bandwidth Savings**: ~75.3% vs full HTML updates
-- **Static Structure**: Successfully excluded from updates ✅
+# Build browser bundle only
+npm run build:browser
 
-## 🛠️ Usage
-
-### Basic Client Usage
-
-```typescript
-import { LiveTemplateClient } from "./livetemplate-client";
-
-const client = new LiveTemplateClient();
-
-// Apply initial update (includes static structure)
-const initialResult = client.applyUpdate({
-  s: ["<h1>", "</h1><p>Count: ", "</p>"], // Static HTML segments
-  "0": "Hello World", // Dynamic content
-  "1": "42", // Dynamic content
-});
-
-console.log(initialResult.html); // "<h1>Hello World</h1><p>Count: 42</p>"
-
-// Apply subsequent update (only changed dynamic values)
-const updateResult = client.applyUpdate({
-  "1": "43", // Only the changed value
-});
-
-console.log(updateResult.html); // "<h1>Hello World</h1><p>Count: 43</p>"
-console.log(updateResult.changed); // true
+# Clean build artifacts
+npm run clean
 ```
 
-### Loading Updates from Files
+## Related Projects
 
-```typescript
-import { loadAndApplyUpdate } from "./livetemplate-client";
+- **[LiveTemplate Core](https://github.com/livetemplate/livetemplate)** - Go library for server-side rendering
+- **[LVT CLI](https://github.com/livetemplate/lvt)** - Code generator and development server
+- **[Examples](https://github.com/livetemplate/examples)** - Example applications
 
-const client = new LiveTemplateClient();
+## Version Synchronization
 
-// Load update from JSON file
-const result = await loadAndApplyUpdate(client, "update_01.json");
-console.log(result.html);
-```
+This client library follows the LiveTemplate core library's major.minor version. For example:
 
-### HTML Comparison
+- Core: `v0.1.5` → Client: `v0.1.x` (any patch version)
+- Core: `v0.2.0` → Client: `v0.2.0` (must match major.minor)
 
-```typescript
-import { compareHTML } from "./livetemplate-client";
+Patch versions are independent and can be incremented for client-specific fixes.
 
-const comparison = compareHTML(expectedHTML, actualHTML);
-if (comparison.match) {
-  console.log("✅ HTML matches!");
-} else {
-  console.log("❌ Differences found:", comparison.differences);
-}
-```
+## Contributing
 
-## 🏗️ Architecture
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
-### Tree-Based Updates
+## License
 
-LiveTemplate uses a tree-based approach where:
+MIT License - see [LICENSE](LICENSE) for details.
 
-1. **Static Structure** (`"s"` key): HTML segments sent once and cached client-side
-2. **Dynamic Values** (numbered keys): Only the values that change between updates
-3. **Segment Interleaving**: Client reconstructs HTML by interleaving static + dynamic
+## Support
 
-Example update structure:
-
-```json
-{
-  "s": ["<h1>", "</h1><div>Count: ", "</div>"], // Static HTML (sent once)
-  "0": "Task Manager", // Dynamic: page title
-  "1": "42" // Dynamic: counter value
-}
-```
-
-### Optimization Strategy
-
-Following Phoenix LiveView's approach:
-
-- **Initial Render**: Full HTML + cached static structure
-- **Subsequent Updates**: Only changed dynamic values (75%+ bandwidth savings)
-- **Client Reconstruction**: Merge updates with cached structure
-- **DOM Morphing**: Let morphdom handle efficient DOM updates
-
-## 🧪 Test Data
-
-The test suite validates optimization using real E2E test data:
-
-- `testdata/e2e/update_01_add_todos.json` - First optimized update (168 bytes)
-- `testdata/e2e/update_02_remove_todo.json` - Subsequent update (128 bytes)
-- `testdata/e2e/rendered_*.html` - Expected HTML output for comparison
-
-## 🔧 API Reference
-
-### LiveTemplateClient
-
-#### `applyUpdate(update: TreeNode): UpdateResult`
-
-Apply a tree-based update to the client state.
-
-- **Parameters**: `update` - Tree update object from LiveTemplate server
-- **Returns**: `{ html: string, changed: boolean }`
-
-#### `reset(): void`
-
-Reset client state (useful for testing).
-
-#### `getState(): { static: string[] | null, dynamic: object }`
-
-Get current cached state for debugging.
-
-### Utility Functions
-
-#### `loadAndApplyUpdate(client, path): Promise<UpdateResult>`
-
-Load update from JSON file and apply to client.
-
-#### `compareHTML(expected, actual): { match: boolean, differences: string[] }`
-
-Compare two HTML strings, ignoring whitespace differences.
-
-## 🚀 Performance
-
-Optimization results with real E2E test data:
-
-| Update Type  | Size (bytes) | Bandwidth Savings |
-| ------------ | ------------ | ----------------- |
-| Full HTML    | ~600         | 0% (baseline)     |
-| Optimized #1 | 168          | 72%               |
-| Optimized #2 | 128          | 79%               |
-| **Average**  | **148**      | **~75.3%**        |
-
-## 📈 Future Enhancements
-
-- Browser-based DOM morphing integration
-- WebSocket client for real-time updates
-- React/Vue.js integration hooks
-- Advanced diff algorithms for complex nested structures
-- Performance monitoring and metrics
+- **Issues**: [GitHub Issues](https://github.com/livetemplate/client/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/livetemplate/client/discussions)
+- **Documentation**: [LiveTemplate Docs](https://github.com/livetemplate/livetemplate)
