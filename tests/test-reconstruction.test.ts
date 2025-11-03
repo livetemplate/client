@@ -69,7 +69,7 @@ describe('LiveTemplate Client Reconstruction Tests', () => {
   let testDir: string;
 
   beforeAll(() => {
-    testDir = path.resolve(__dirname, '../..');
+    testDir = path.resolve(__dirname, '..');
   });
 
   beforeEach(() => {
