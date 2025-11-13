@@ -20,6 +20,11 @@ import { FormDisabler } from "./dom/form-disabler";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { WebSocketManager } from "./transport/websocket";
+import { UploadHandler } from "./upload/upload-handler";
+import type {
+  UploadProgressMessage,
+  UploadStartResponse,
+} from "./upload/types";
 import type {
   LiveTemplateClientOptions,
   ResponseMetadata,
@@ -54,6 +59,7 @@ export class LiveTemplateClient {
   private formLifecycleManager: FormLifecycleManager;
   private loadingIndicator: LoadingIndicator;
   private formDisabler: FormDisabler;
+  private uploadHandler: UploadHandler;
 
   // Initialization tracking for loading indicator
   private isInitialized: boolean = false;
@@ -92,6 +98,44 @@ export class LiveTemplateClient {
     this.formLifecycleManager = new FormLifecycleManager(this.modalManager);
     this.loadingIndicator = new LoadingIndicator();
     this.formDisabler = new FormDisabler();
+
+    // Initialize upload handler
+    this.uploadHandler = new UploadHandler(
+      (message) => this.send(message),
+      {
+        chunkSize: 256 * 1024, // 256KB chunks
+        onProgress: (entry) => {
+          // Trigger DOM update to refresh upload progress
+          if (this.wrapperElement) {
+            this.wrapperElement.dispatchEvent(
+              new CustomEvent("lvt:upload:progress", {
+                detail: { entry },
+              })
+            );
+          }
+        },
+        onComplete: (uploadName, entries) => {
+          this.logger.info(`Upload complete: ${uploadName}`, entries);
+          if (this.wrapperElement) {
+            this.wrapperElement.dispatchEvent(
+              new CustomEvent("lvt:upload:complete", {
+                detail: { uploadName, entries },
+              })
+            );
+          }
+        },
+        onError: (entry, error) => {
+          this.logger.error(`Upload error for ${entry.id}:`, error);
+          if (this.wrapperElement) {
+            this.wrapperElement.dispatchEvent(
+              new CustomEvent("lvt:upload:error", {
+                detail: { entry, error },
+              })
+            );
+          }
+        },
+      }
+    );
 
     this.eventDelegator = new EventDelegator(
       {
@@ -203,6 +247,25 @@ export class LiveTemplateClient {
         (window as any).__wsMessages = [];
       }
       (window as any).__wsMessages.push(response);
+    }
+
+    // Check if this is an upload-specific message
+    const uploadMessage = response as any;
+    if (uploadMessage.type === "upload_progress") {
+      this.uploadHandler.handleProgressMessage(
+        uploadMessage as UploadProgressMessage
+      );
+      return;
+    }
+
+    // Check if this is an upload_start response
+    if (uploadMessage.upload_name && uploadMessage.entries) {
+      const startResponse = uploadMessage as UploadStartResponse;
+      // Need to get the files from the file input
+      // The UploadHandler will have initiated the startUpload, so we need to pass files
+      // This will be handled by the UploadHandler's internal file tracking
+      this.handleUploadStartResponse(startResponse);
+      return;
     }
 
     if (!this.isInitialized) {
@@ -585,10 +648,20 @@ export class LiveTemplateClient {
     // Handle animate directives
     handleAnimateDirectives(element);
 
+    // Initialize upload file inputs
+    this.uploadHandler.initializeFileInputs(element);
+
     // Handle form lifecycle if metadata is present
     if (meta) {
       this.formLifecycleManager.handleResponse(meta);
     }
+  }
+
+  /**
+   * Handle upload_start response from server
+   */
+  private handleUploadStartResponse(response: UploadStartResponse): void {
+    this.uploadHandler.handleUploadStartResponse(response);
   }
 
   /**
