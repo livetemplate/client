@@ -26,6 +26,7 @@ import type {
 export class UploadHandler {
   private entries: Map<string, UploadEntry> = new Map();
   private pendingFiles: Map<string, File[]> = new Map(); // uploadName -> files
+  private autoUploadConfig: Map<string, boolean> = new Map(); // uploadName -> autoUpload
   private chunkSize: number;
   private uploaders: Map<string, Uploader> = new Map();
   private onProgress?: (entry: UploadEntry) => void;
@@ -69,6 +70,8 @@ export class UploadHandler {
         const files = (e.target as HTMLInputElement).files;
         if (!files || files.length === 0) return;
 
+        // Always send upload_start to get validation and config
+        // But only proceed with chunks if autoUpload is true
         this.startUpload(uploadName, Array.from(files));
       };
 
@@ -109,6 +112,11 @@ export class UploadHandler {
     response: UploadStartResponse
   ): Promise<void> {
     const { upload_name, entries: entryInfos } = response;
+
+    // Store autoUpload configuration from first entry
+    if (entryInfos.length > 0) {
+      this.autoUploadConfig.set(upload_name, entryInfos[0].auto_upload);
+    }
 
     // Get pending files for this upload
     const files = this.pendingFiles.get(upload_name);
@@ -162,11 +170,15 @@ export class UploadHandler {
         continue;
       }
 
-      // Start upload (external or chunked)
-      if (info.external) {
-        this.uploadExternal(entry, info.external);
-      } else {
-        this.uploadChunked(entry);
+      // Only start upload immediately if autoUpload is true
+      // Otherwise, entries are stored and will be uploaded on form submit
+      if (info.auto_upload) {
+        // Start upload (external or chunked)
+        if (info.external) {
+          this.uploadExternal(entry, info.external);
+        } else {
+          this.uploadChunked(entry);
+        }
       }
     }
   }
@@ -332,6 +344,34 @@ export class UploadHandler {
       }
     }
     return entries;
+  }
+
+  /**
+   * Trigger upload for all pending entries (used when autoUpload is false)
+   * Called by LiveTemplate client on form submit
+   */
+  triggerPendingUploads(uploadName: string): void {
+    // Get all entries for this upload that haven't started yet
+    const pendingEntries: UploadEntry[] = [];
+    for (const entry of this.entries.values()) {
+      if (
+        entry.uploadName === uploadName &&
+        entry.progress === 0 &&
+        !entry.done &&
+        !entry.error
+      ) {
+        pendingEntries.push(entry);
+      }
+    }
+
+    // Start uploads
+    for (const entry of pendingEntries) {
+      if (entry.external) {
+        this.uploadExternal(entry, entry.external);
+      } else {
+        this.uploadChunked(entry);
+      }
+    }
   }
 
   /**

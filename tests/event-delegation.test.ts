@@ -33,6 +33,7 @@ describe("EventDelegator", () => {
       openModal: jest.fn(),
       closeModal: jest.fn(),
       getWebSocketReadyState: () => 1,
+      triggerPendingUploads: jest.fn(),
     };
 
     return { ...baseContext, ...overrides } as EventDelegationContext & {

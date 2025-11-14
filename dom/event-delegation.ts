@@ -14,6 +14,7 @@ export interface EventDelegationContext {
   openModal(modalId: string): void;
   closeModal(modalId: string): void;
   getWebSocketReadyState(): number | undefined;
+  triggerPendingUploads(uploadName: string): void;
 }
 
 /**
@@ -229,6 +230,18 @@ export class EventDelegator {
                   submitButton || null,
                   originalButtonText
                 );
+
+                // Trigger pending uploads for any file inputs in the form
+                const fileInputs = targetElement.querySelectorAll<HTMLInputElement>(
+                  'input[type="file"][lvt-upload]'
+                );
+                fileInputs.forEach((input) => {
+                  const uploadName = input.getAttribute("lvt-upload");
+                  if (uploadName) {
+                    this.logger.debug("Triggering pending uploads for:", uploadName);
+                    this.context.triggerPendingUploads(uploadName);
+                  }
+                });
 
                 targetElement.dispatchEvent(
                   new CustomEvent("lvt:pending", { detail: message })

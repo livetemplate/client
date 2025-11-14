@@ -21,6 +21,7 @@ export interface UploadEntryInfo {
   client_name: string;
   valid: boolean;
   error?: string;
+  auto_upload: boolean;
   external?: ExternalUploadMeta;
 }
 

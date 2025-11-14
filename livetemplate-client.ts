@@ -156,6 +156,8 @@ export class LiveTemplateClient {
         openModal: (modalId: string) => this.modalManager.open(modalId),
         closeModal: (modalId: string) => this.modalManager.close(modalId),
         getWebSocketReadyState: () => this.webSocketManager.getReadyState(),
+        triggerPendingUploads: (uploadName: string) =>
+          this.uploadHandler.triggerPendingUploads(uploadName),
       },
       this.logger.child("EventDelegator")
     );
