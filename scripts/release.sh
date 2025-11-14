@@ -40,8 +40,6 @@ check_prerequisites() {
 
 # Get core library version
 get_core_library_version() {
-    log_step "Fetching core library version from github.com/livetemplate/livetemplate"
-
     # Get latest release from GitHub API
     local core_version=$(gh release list --repo livetemplate/livetemplate --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
 
@@ -54,7 +52,7 @@ get_core_library_version() {
     # Remove 'v' prefix if present
     core_version=${core_version#v}
 
-    log_info "Core library version: $core_version"
+    # Only echo the version, no logging (to avoid capturing log output)
     echo "$core_version"
 }
 
@@ -400,10 +398,10 @@ main() {
     log_info "Current version: $current_version"
 
     # Get core library version for reference
+    echo ""
+    log_step "Fetching core library version from github.com/livetemplate/livetemplate"
     core_version=$(get_core_library_version)
     core_major_minor=$(get_major_minor "$core_version")
-
-    echo ""
     log_info "Core library version: $core_version (major.minor: $core_major_minor)"
     log_info "Client must use major.minor: $core_major_minor"
 
