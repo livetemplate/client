@@ -270,6 +270,17 @@ export class LiveTemplateClient {
       return;
     }
 
+    // Check if this is an upload_complete response
+    if (uploadMessage.upload_name && uploadMessage.hasOwnProperty('success')) {
+      // UploadCompleteResponse - just log it, no tree update needed
+      if (uploadMessage.success) {
+        this.logger.info(`Upload complete: ${uploadMessage.upload_name}`);
+      } else {
+        this.logger.error(`Upload failed: ${uploadMessage.upload_name}`, uploadMessage.error);
+      }
+      return;
+    }
+
     if (!this.isInitialized) {
       this.loadingIndicator.hide();
       this.formDisabler.enable(this.wrapperElement);
