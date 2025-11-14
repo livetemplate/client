@@ -31,6 +31,7 @@ export class UploadHandler {
   private onProgress?: (entry: UploadEntry) => void;
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
+  private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
   constructor(
     private sendMessage: (message: any) => void,
@@ -58,7 +59,7 @@ export class UploadHandler {
       if (!uploadName) return;
 
       // Remove existing listener if any
-      const existingHandler = (input as any)._lvtUploadHandler;
+      const existingHandler = this.inputHandlers.get(input);
       if (existingHandler) {
         input.removeEventListener("change", existingHandler);
       }
@@ -72,7 +73,8 @@ export class UploadHandler {
       };
 
       input.addEventListener("change", handler);
-      (input as any)._lvtUploadHandler = handler;
+      // Store handler in WeakMap to prevent memory leaks
+      this.inputHandlers.set(input, handler);
     });
   }
 
@@ -118,14 +120,24 @@ export class UploadHandler {
     // Clear pending files
     this.pendingFiles.delete(upload_name);
 
+    // Build a map from file name to file object for lookup
+    const fileMap = new Map<string, File>();
+    for (const file of files) {
+      fileMap.set(file.name, file);
+    }
+
     // Create upload entries
     const entries: UploadEntry[] = [];
 
-    for (let i = 0; i < entryInfos.length; i++) {
-      const info = entryInfos[i];
-      const file = files[i];
+    for (const info of entryInfos) {
+      const file = fileMap.get(info.client_name);
 
-      if (!file) continue;
+      if (!file) {
+        console.warn(
+          `No file found for entry ${info.entry_id} (client_name: ${info.client_name})`
+        );
+        continue;
+      }
 
       const entry: UploadEntry = {
         id: info.entry_id,
@@ -172,8 +184,8 @@ export class UploadHandler {
         throw new Error(`Unknown uploader: ${meta.uploader}`);
       }
 
-      // Start external upload
-      await uploader.upload(entry, meta);
+      // Start external upload with progress callback
+      await uploader.upload(entry, meta, this.onProgress);
 
       // Notify server of completion
       const completeMessage: UploadCompleteMessage = {
@@ -187,12 +199,17 @@ export class UploadHandler {
       if (this.onComplete) {
         this.onComplete(entry.uploadName, [entry]);
       }
+
+      // Schedule cleanup after completion
+      this.cleanupEntries(entry.uploadName);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
       if (this.onError) {
         this.onError(entry, errorMsg);
       }
+      // Schedule cleanup after error
+      this.cleanupEntries(entry.uploadName);
     }
   }
 
@@ -203,8 +220,15 @@ export class UploadHandler {
     const { file, id } = entry;
     let offset = 0;
 
+    // Create abort controller for cancellation
+    entry.abortController = new AbortController();
+
     try {
       while (offset < file.size) {
+        // Check if upload was cancelled
+        if (entry.abortController.signal.aborted) {
+          throw new Error("Upload cancelled");
+        }
         // Read chunk
         const end = Math.min(offset + this.chunkSize, file.size);
         const chunk = file.slice(offset, end);
@@ -246,12 +270,17 @@ export class UploadHandler {
       if (this.onComplete) {
         this.onComplete(entry.uploadName, [entry]);
       }
+
+      // Schedule cleanup after completion
+      this.cleanupEntries(entry.uploadName);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
       if (this.onError) {
         this.onError(entry, errorMsg);
       }
+      // Schedule cleanup after error
+      this.cleanupEntries(entry.uploadName);
     }
   }
 
@@ -310,6 +339,32 @@ export class UploadHandler {
    */
   registerUploader(name: string, uploader: Uploader): void {
     this.uploaders.set(name, uploader);
+  }
+
+  /**
+   * Clean up completed or errored upload entries to prevent memory leaks
+   * Automatically called after completion/error, but can be called manually
+   * @param uploadName - Optional upload name to clean specific uploads
+   * @param delay - Optional delay in ms before cleanup (default: 5000ms)
+   */
+  cleanupEntries(uploadName?: string, delay: number = 5000): void {
+    setTimeout(() => {
+      const entriesToRemove: string[] = [];
+
+      for (const [id, entry] of this.entries) {
+        // Skip if uploadName is specified and doesn't match
+        if (uploadName && entry.uploadName !== uploadName) continue;
+
+        // Remove completed or errored entries
+        if (entry.done || entry.error) {
+          entriesToRemove.push(id);
+        }
+      }
+
+      for (const id of entriesToRemove) {
+        this.entries.delete(id);
+      }
+    }, delay);
   }
 
   /**

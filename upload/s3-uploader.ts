@@ -2,13 +2,22 @@
  * S3Uploader - Handles direct uploads to S3 using presigned URLs
  */
 
-import type { ExternalUploadMeta, UploadEntry, Uploader } from "./types";
+import type {
+  ExternalUploadMeta,
+  UploadEntry,
+  UploadProgressCallback,
+  Uploader,
+} from "./types";
 
 export class S3Uploader implements Uploader {
   /**
    * Upload a file directly to S3 using presigned PUT URL
    */
-  async upload(entry: UploadEntry, meta: ExternalUploadMeta): Promise<void> {
+  async upload(
+    entry: UploadEntry,
+    meta: ExternalUploadMeta,
+    onProgress?: UploadProgressCallback
+  ): Promise<void> {
     const { file } = entry;
 
     // Create abort controller for cancellation
@@ -18,11 +27,15 @@ export class S3Uploader implements Uploader {
       // Create XMLHttpRequest for progress tracking
       const xhr = new XMLHttpRequest();
 
-      // Track upload progress
+      // Track upload progress and notify handler
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
           entry.bytesUploaded = e.loaded;
           entry.progress = Math.round((e.loaded / e.total) * 100);
+          // Notify progress callback
+          if (onProgress) {
+            onProgress(entry);
+          }
         }
       });
 

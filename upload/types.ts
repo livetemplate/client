@@ -107,5 +107,9 @@ export interface UploadHandlerOptions {
 }
 
 export interface Uploader {
-  upload(entry: UploadEntry, meta: ExternalUploadMeta): Promise<void>;
+  upload(
+    entry: UploadEntry,
+    meta: ExternalUploadMeta,
+    onProgress?: UploadProgressCallback
+  ): Promise<void>;
 }

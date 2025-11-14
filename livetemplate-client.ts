@@ -261,10 +261,12 @@ export class LiveTemplateClient {
     // Check if this is an upload_start response
     if (uploadMessage.upload_name && uploadMessage.entries) {
       const startResponse = uploadMessage as UploadStartResponse;
-      // Need to get the files from the file input
-      // The UploadHandler will have initiated the startUpload, so we need to pass files
-      // This will be handled by the UploadHandler's internal file tracking
-      this.handleUploadStartResponse(startResponse);
+      // Handle upload start response with error handling
+      try {
+        this.handleUploadStartResponse(startResponse);
+      } catch (error) {
+        this.logger.error("Error handling upload start response:", error);
+      }
       return;
     }
 
