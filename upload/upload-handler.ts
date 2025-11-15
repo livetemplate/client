@@ -212,6 +212,9 @@ export class UploadHandler {
         this.onComplete(entry.uploadName, [entry]);
       }
 
+      // Clear the file input to prevent re-upload of the same file
+      this.clearFileInput(entry.uploadName);
+
       // Schedule cleanup after completion
       this.cleanupEntries(entry.uploadName);
     } catch (error) {
@@ -282,6 +285,9 @@ export class UploadHandler {
       if (this.onComplete) {
         this.onComplete(entry.uploadName, [entry]);
       }
+
+      // Clear the file input to prevent re-upload of the same file
+      this.clearFileInput(entry.uploadName);
 
       // Schedule cleanup after completion
       this.cleanupEntries(entry.uploadName);
@@ -379,6 +385,22 @@ export class UploadHandler {
    */
   registerUploader(name: string, uploader: Uploader): void {
     this.uploaders.set(name, uploader);
+  }
+
+  /**
+   * Clear file input to prevent re-upload of the same file
+   * Called after successful upload completion
+   */
+  private clearFileInput(uploadName: string): void {
+    // Find all file inputs with this upload name
+    const inputs = document.querySelectorAll<HTMLInputElement>(
+      `input[type="file"][lvt-upload="${uploadName}"]`
+    );
+
+    inputs.forEach((input) => {
+      // Clear the file input value
+      input.value = '';
+    });
   }
 
   /**
