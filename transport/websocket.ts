@@ -57,7 +57,7 @@ export class WebSocketTransport {
   }
 
   send(data: string): void {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+    if (this.socket && this.socket.readyState === 1) {  // WebSocket.OPEN = 1
       this.socket.send(data);
     }
   }

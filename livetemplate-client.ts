@@ -386,7 +386,7 @@ export class LiveTemplateClient {
     }
 
     const readyState = this.webSocketManager.getReadyState();
-    return readyState === WebSocket.OPEN;
+    return readyState === 1; // WebSocket.OPEN = 1
   }
 
   /**
@@ -414,7 +414,7 @@ export class LiveTemplateClient {
       this.logger.debug("Using HTTP mode for send");
       (window as any).__lvtSendPath = "http";
       this.sendHTTP(message);
-    } else if (readyState === WebSocket.OPEN) {
+    } else if (readyState === 1) { // WebSocket.OPEN = 1
       // WebSocket mode
       this.logger.debug("Sending via WebSocket");
       (window as any).__lvtSendPath = "websocket";
