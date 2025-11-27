@@ -68,8 +68,6 @@ class MockWebSocket {
   }
 }
 
-(global as any).WebSocket = MockWebSocket;
-
 describe("WebSocketTransport", () => {
   let transport: WebSocketTransport;
   let mockSocket: MockWebSocket | null = null;

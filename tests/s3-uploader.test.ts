@@ -43,7 +43,7 @@ describe("S3Uploader", () => {
     uploader = new S3Uploader();
   });
 
-  const createEntry = (overrides: Partial<UploadEntry> = {}): UploadEntry => ({
+  const createMockEntry = (overrides: Partial<UploadEntry> = {}): UploadEntry => ({
     id: "test-entry-1",
     file: new File(["test content"], "test.txt", { type: "text/plain" }),
     uploadName: "test-upload",
@@ -54,7 +54,7 @@ describe("S3Uploader", () => {
     ...overrides,
   });
 
-  const createMeta = (overrides: Partial<ExternalUploadMeta> = {}): ExternalUploadMeta => ({
+  const createMockMeta = (overrides: Partial<ExternalUploadMeta> = {}): ExternalUploadMeta => ({
     uploader: "s3",
     url: "https://s3.example.com/bucket/key?presigned=signature",
     ...overrides,
@@ -62,8 +62,8 @@ describe("S3Uploader", () => {
 
   describe("upload", () => {
     it("uploads file to presigned URL", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
 
       const uploadPromise = uploader.upload(entry, meta);
 
@@ -81,8 +81,8 @@ describe("S3Uploader", () => {
     });
 
     it("sets custom headers", async () => {
-      const entry = createEntry();
-      const meta = createMeta({
+      const entry = createMockEntry();
+      const meta = createMockMeta({
         headers: {
           "Content-Type": "text/plain",
           "x-amz-acl": "public-read",
@@ -100,8 +100,8 @@ describe("S3Uploader", () => {
     });
 
     it("tracks upload progress", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
       const onProgress = jest.fn();
 
       const uploadPromise = uploader.upload(entry, meta, onProgress);
@@ -124,8 +124,8 @@ describe("S3Uploader", () => {
     });
 
     it("handles upload failure with status code", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
 
       const uploadPromise = uploader.upload(entry, meta);
 
@@ -138,8 +138,8 @@ describe("S3Uploader", () => {
     });
 
     it("handles network error", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
 
       const uploadPromise = uploader.upload(entry, meta);
 
@@ -150,8 +150,8 @@ describe("S3Uploader", () => {
     });
 
     it("supports abort/cancellation", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
 
       const uploadPromise = uploader.upload(entry, meta);
 
@@ -166,8 +166,8 @@ describe("S3Uploader", () => {
     });
 
     it("does not call progress callback for non-computable progress", async () => {
-      const entry = createEntry();
-      const meta = createMeta();
+      const entry = createMockEntry();
+      const meta = createMockMeta();
       const onProgress = jest.fn();
 
       const uploadPromise = uploader.upload(entry, meta, onProgress);

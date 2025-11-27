@@ -1,4 +1,4 @@
-import { createLogger, Logger, LogLevel } from "../utils/logger";
+import { createLogger } from "../utils/logger";
 
 describe("Logger", () => {
   let mockConsole: {

@@ -1,14 +1,16 @@
 import { UploadHandler } from "../upload/upload-handler";
 import type { UploadEntry, UploadStartResponse } from "../upload/types";
 
-// Mock FileReader
+// Mock FileReader to simulate async file reading behavior.
+// The UploadHandler uses FileReader.readAsDataURL() to convert file chunks
+// to base64 for WebSocket transmission. This mock returns a fixed base64 string
+// after a 0ms timeout to simulate the async nature of the real FileReader API.
 class MockFileReader {
   onload: (() => void) | null = null;
   onerror: ((error: Error) => void) | null = null;
   result: string = "";
 
   readAsDataURL(blob: Blob) {
-    // Simulate async read
     setTimeout(() => {
       this.result = "data:application/octet-stream;base64,dGVzdCBjb250ZW50";
       if (this.onload) this.onload();
@@ -33,7 +35,7 @@ describe("UploadHandler", () => {
     jest.useRealTimers();
   });
 
-  const createFile = (name = "test.txt", content = "test content", type = "text/plain"): File => {
+  const createMockFile = (name = "test.txt", content = "test content", type = "text/plain"): File => {
     return new File([content], name, { type });
   };
 
@@ -47,10 +49,9 @@ describe("UploadHandler", () => {
       handler.initializeFileInputs(document.body);
 
       const avatarInput = document.getElementById("avatar-input") as HTMLInputElement;
-      const regularInput = document.getElementById("regular-input") as HTMLInputElement;
 
       // Create a file and dispatch change event
-      const file = createFile();
+      const file = createMockFile();
       Object.defineProperty(avatarInput, "files", { value: [file] });
 
       avatarInput.dispatchEvent(new Event("change"));
@@ -70,7 +71,7 @@ describe("UploadHandler", () => {
       handler.initializeFileInputs(document.body);
 
       const input = document.getElementById("test-input") as HTMLInputElement;
-      const file = createFile();
+      const file = createMockFile();
       Object.defineProperty(input, "files", { value: [file] });
 
       input.dispatchEvent(new Event("change"));
@@ -98,7 +99,7 @@ describe("UploadHandler", () => {
       handler.initializeFileInputs(document.body);
 
       const input = document.getElementById("test-input") as HTMLInputElement;
-      const file = createFile();
+      const file = createMockFile();
       Object.defineProperty(input, "files", { value: [file] });
 
       input.dispatchEvent(new Event("change"));
@@ -110,8 +111,8 @@ describe("UploadHandler", () => {
   describe("startUpload", () => {
     it("sends upload_start message with file metadata", async () => {
       const files = [
-        createFile("doc1.pdf", "content1", "application/pdf"),
-        createFile("doc2.txt", "content2", "text/plain"),
+        createMockFile("doc1.pdf", "content1", "application/pdf"),
+        createMockFile("doc2.txt", "content2", "text/plain"),
       ];
 
       await handler.startUpload("documents", files);
@@ -142,7 +143,7 @@ describe("UploadHandler", () => {
 
   describe("handleUploadStartResponse", () => {
     it("creates upload entries from server response", async () => {
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -169,7 +170,7 @@ describe("UploadHandler", () => {
       const onError = jest.fn();
       handler = new UploadHandler(mockSendMessage, { onError });
 
-      const file = createFile("large.zip");
+      const file = createMockFile("large.zip");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -194,7 +195,7 @@ describe("UploadHandler", () => {
     });
 
     it("starts chunked upload when auto_upload is true", async () => {
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -227,7 +228,7 @@ describe("UploadHandler", () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 
       // Start upload but don't provide matching file
-      await handler.startUpload("test", [createFile("other.txt")]);
+      await handler.startUpload("test", [createMockFile("other.txt")]);
 
       const response: UploadStartResponse = {
         upload_name: "test",
@@ -273,7 +274,7 @@ describe("UploadHandler", () => {
       const onProgress = jest.fn();
       handler = new UploadHandler(mockSendMessage, { onProgress });
 
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -326,7 +327,7 @@ describe("UploadHandler", () => {
 
   describe("cancelUpload", () => {
     it("cancels upload and sends cancel message", async () => {
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -364,7 +365,7 @@ describe("UploadHandler", () => {
 
   describe("triggerPendingUploads", () => {
     it("starts uploads for pending entries", async () => {
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
@@ -416,8 +417,8 @@ describe("UploadHandler", () => {
 
   describe("getEntries", () => {
     it("returns entries for specified upload name", async () => {
-      const file1 = createFile("file1.txt");
-      const file2 = createFile("file2.txt");
+      const file1 = createMockFile("file1.txt");
+      const file2 = createMockFile("file2.txt");
 
       await handler.startUpload("upload1", [file1]);
       await handler.startUpload("upload2", [file2]);
@@ -448,7 +449,7 @@ describe("UploadHandler", () => {
 
   describe("cleanupEntries", () => {
     it("removes completed entries after delay", async () => {
-      const file = createFile("test.txt");
+      const file = createMockFile("test.txt");
       await handler.startUpload("test", [file]);
 
       const response: UploadStartResponse = {
