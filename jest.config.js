@@ -6,6 +6,13 @@ module.exports = {
   testMatch: ['**/*.test.ts', '**/*.spec.ts'],
   collectCoverageFrom: [
     'livetemplate-client.ts',
+    'dom/**/*.ts',
+    'state/**/*.ts',
+    'transport/**/*.ts',
+    'upload/**/*.ts',
+    'utils/**/*.ts',
+    '!**/index.ts',
+    '!**/types.ts',
     '!tests/**',
     '!dist/**'
   ],
