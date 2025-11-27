@@ -9,6 +9,7 @@
     "build": "tsc && npm run build:browser",
     "build:browser": "esbuild livetemplate-client.ts --bundle --format=iife --global-name=LiveTemplateClient --outfile=dist/livetemplate-client.browser.js --sourcemap --minify --target=es2018 --legal-comments=none",
     "test": "jest --no-cache",
+    "test:coverage": "jest --coverage",
     "test:reconstruction": "jest test-reconstruction",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build"
