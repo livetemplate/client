@@ -17,6 +17,7 @@ import { ObserverManager } from "./dom/observer-manager";
 import { ModalManager } from "./dom/modal-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
+import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { WebSocketManager } from "./transport/websocket";
@@ -349,6 +350,9 @@ export class LiveTemplateClient {
 
     // Set up modal delegation
     this.eventDelegator.setupModalDelegation();
+
+    // Set up reactive attribute listeners for lvt-{action}-on:{event} attributes
+    setupReactiveAttributeListeners();
 
     // Initialize focus tracking
     this.focusManager.attach(this.wrapperElement);
