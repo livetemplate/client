@@ -753,6 +753,10 @@ export class EventDelegator {
         }
 
         // Check for attribute changes that might affect visibility
+        // We intentionally check "class" changes to handle CSS-based visibility
+        // (e.g., Tailwind's "hidden" class, Bootstrap's "d-none", etc.)
+        // This may cause some extra processing but ensures visibility changes
+        // via class toggles are detected.
         if (mutation.type === "attributes") {
           const target = mutation.target as Element;
           if (target.hasAttribute("lvt-autofocus") ||

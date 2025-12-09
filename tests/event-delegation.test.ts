@@ -313,5 +313,35 @@ describe("EventDelegator", () => {
       const input = document.getElementById("hidden-search") as HTMLInputElement;
       expect(input.getAttribute("data-lvt-autofocused")).toBeNull();
     });
+
+    it("marks element for autofocus when it becomes visible", async () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-autofocus-toggle");
+      wrapper.innerHTML = `
+        <input id="toggle-input" type="text" lvt-autofocus style="display: none" />
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupAutofocusDelegation();
+
+      const input = document.getElementById("toggle-input") as HTMLInputElement;
+
+      // Initially hidden, should not be marked
+      expect(input.getAttribute("data-lvt-autofocused")).toBeNull();
+
+      // Make visible
+      input.style.display = "block";
+
+      // Wait for MutationObserver to process
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should now be marked for autofocus
+      expect(input.getAttribute("data-lvt-autofocused")).toBe("true");
+    });
   });
 });
