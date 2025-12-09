@@ -351,6 +351,12 @@ export class LiveTemplateClient {
     // Set up modal delegation
     this.eventDelegator.setupModalDelegation();
 
+    // Set up focus trap delegation for lvt-focus-trap attribute
+    this.eventDelegator.setupFocusTrapDelegation();
+
+    // Set up autofocus delegation for lvt-autofocus attribute
+    this.eventDelegator.setupAutofocusDelegation();
+
     // Set up reactive attribute listeners for lvt-{action}-on:{event} attributes
     setupReactiveAttributeListeners();
 

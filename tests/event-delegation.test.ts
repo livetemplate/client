@@ -146,4 +146,202 @@ describe("EventDelegator", () => {
       })
     );
   });
+
+  describe("focus trap", () => {
+    it("sets up keydown listener for focus trap", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-focus-trap");
+      wrapper.innerHTML = `
+        <div id="modal" lvt-focus-trap>
+          <button id="first">First</button>
+          <button id="last">Last</button>
+        </div>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupFocusTrapDelegation();
+
+      // Verify listener was registered
+      const listenerKey = `__lvt_focus_trap_wrapper-focus-trap`;
+      expect((document as any)[listenerKey]).toBeDefined();
+    });
+
+    it("prevents default on Tab at boundary and cycles focus", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-focus-trap-cycle");
+      wrapper.innerHTML = `
+        <div id="modal" lvt-focus-trap>
+          <button id="first">First</button>
+          <button id="last">Last</button>
+        </div>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupFocusTrapDelegation();
+
+      const firstButton = document.getElementById("first") as HTMLElement;
+      const lastButton = document.getElementById("last") as HTMLElement;
+
+      // Focus the last element
+      lastButton.focus();
+
+      // Create a Tab event that can be prevented
+      const tabEvent = new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      });
+
+      // Spy on preventDefault
+      const preventDefaultSpy = jest.spyOn(tabEvent, "preventDefault");
+
+      document.dispatchEvent(tabEvent);
+
+      // In JSDOM, the event should trigger our handler which calls preventDefault and focus
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(document.activeElement).toBe(firstButton);
+    });
+
+    it("prevents default on Shift+Tab at boundary and cycles focus backwards", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-focus-trap-shift");
+      wrapper.innerHTML = `
+        <div id="modal" lvt-focus-trap>
+          <button id="first">First</button>
+          <button id="last">Last</button>
+        </div>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupFocusTrapDelegation();
+
+      const firstButton = document.getElementById("first") as HTMLElement;
+      const lastButton = document.getElementById("last") as HTMLElement;
+
+      // Focus the first element
+      firstButton.focus();
+
+      // Create a Shift+Tab event
+      const shiftTabEvent = new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+
+      const preventDefaultSpy = jest.spyOn(shiftTabEvent, "preventDefault");
+
+      document.dispatchEvent(shiftTabEvent);
+
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(document.activeElement).toBe(lastButton);
+    });
+  });
+
+  describe("autofocus", () => {
+    it("marks element with lvt-autofocus for focusing", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-autofocus");
+      wrapper.innerHTML = `
+        <input id="search" type="text" lvt-autofocus />
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupAutofocusDelegation();
+
+      // The element should be marked for autofocus (actual focus happens in RAF)
+      const input = document.getElementById("search") as HTMLInputElement;
+      expect(input.getAttribute("data-lvt-autofocused")).toBe("true");
+    });
+
+    it("sets up mutation observer for autofocus elements", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-autofocus-observer");
+      wrapper.innerHTML = `
+        <div id="container"></div>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupAutofocusDelegation();
+
+      // Verify observer is attached
+      const observerKey = `__lvt_autofocus_observer_wrapper-autofocus-observer`;
+      expect((wrapper as any)[observerKey]).toBeDefined();
+    });
+
+    it("does not mark hidden elements for autofocus", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-autofocus-hidden");
+      wrapper.innerHTML = `
+        <input id="hidden-search" type="text" lvt-autofocus style="display: none" />
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupAutofocusDelegation();
+
+      // Hidden element should not be marked for autofocus
+      const input = document.getElementById("hidden-search") as HTMLInputElement;
+      expect(input.getAttribute("data-lvt-autofocused")).toBeNull();
+    });
+
+    it("marks element for autofocus when it becomes visible", async () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-autofocus-toggle");
+      wrapper.innerHTML = `
+        <input id="toggle-input" type="text" lvt-autofocus style="display: none" />
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupAutofocusDelegation();
+
+      const input = document.getElementById("toggle-input") as HTMLInputElement;
+
+      // Initially hidden, should not be marked
+      expect(input.getAttribute("data-lvt-autofocused")).toBeNull();
+
+      // Make visible
+      input.style.display = "block";
+
+      // Wait for MutationObserver to process
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should now be marked for autofocus
+      expect(input.getAttribute("data-lvt-autofocused")).toBe("true");
+    });
+  });
 });
