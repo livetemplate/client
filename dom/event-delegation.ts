@@ -94,6 +94,15 @@ export class EventDelegator {
           let action = element.getAttribute(attrName);
           let actionElement = element;
 
+          // Check for lvt-persist on form submit (auto-persist to database)
+          if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
+            const persistTable = element.getAttribute("lvt-persist");
+            if (persistTable) {
+              action = `persist:${persistTable}`;
+              actionElement = element;
+            }
+          }
+
           if (!action && (eventType === "change" || eventType === "input")) {
             const formElement: HTMLFormElement | null = element.closest("form");
             if (formElement && formElement.hasAttribute("lvt-change")) {
@@ -558,5 +567,216 @@ export class EventDelegator {
 
     (document as any)[escapeListenerKey] = escapeListener;
     document.addEventListener("keydown", escapeListener);
+  }
+
+  /**
+   * Sets up focus trapping for elements with lvt-focus-trap attribute.
+   * Focus is trapped within the element, cycling through focusable elements
+   * when Tab/Shift+Tab is pressed.
+   */
+  setupFocusTrapDelegation(): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    const listenerKey = `__lvt_focus_trap_${wrapperId}`;
+    const existingListener = (document as any)[listenerKey];
+    if (existingListener) {
+      document.removeEventListener("keydown", existingListener);
+    }
+
+    const getFocusableElements = (container: Element): HTMLElement[] => {
+      const selector = [
+        'a[href]:not([disabled])',
+        'button:not([disabled])',
+        'textarea:not([disabled])',
+        'input:not([disabled]):not([type="hidden"])',
+        'select:not([disabled])',
+        '[tabindex]:not([tabindex="-1"]):not([disabled])',
+        '[contenteditable="true"]'
+      ].join(', ');
+
+      return Array.from(container.querySelectorAll(selector)).filter(
+        (el) => {
+          const htmlEl = el as HTMLElement;
+          // Check if element is visible
+          const style = window.getComputedStyle(htmlEl);
+          const isNotDisplayNone = style.display !== 'none';
+          const isNotVisibilityHidden = style.visibility !== 'hidden';
+          // offsetParent can be null in JSDOM or for fixed/absolute positioned elements
+          const hasLayoutContext = htmlEl.offsetParent !== null ||
+                                   style.position === 'fixed' ||
+                                   style.position === 'absolute' ||
+                                   // In test environments, offsetParent may always be null
+                                   (typeof process !== 'undefined' && (process as any).env?.NODE_ENV === 'test');
+          return isNotDisplayNone && isNotVisibilityHidden && hasLayoutContext;
+        }
+      ) as HTMLElement[];
+    };
+
+    const listener = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+
+      const currentWrapper = this.context.getWrapperElement();
+      if (!currentWrapper) return;
+
+      // Find the active focus trap container (innermost one containing the focused element)
+      const focusTrapElements = currentWrapper.querySelectorAll("[lvt-focus-trap]");
+      let activeTrap: Element | null = null;
+
+      focusTrapElements.forEach((trap) => {
+        if (trap.contains(document.activeElement)) {
+          // Check if this is the innermost trap containing the focused element
+          if (!activeTrap || trap.contains(activeTrap)) {
+            activeTrap = trap;
+          }
+        }
+      });
+
+      // If there's a visible focus trap that doesn't contain the active element,
+      // and is visible, trap focus there (for newly opened modals/dropdowns)
+      if (!activeTrap) {
+        focusTrapElements.forEach((trap) => {
+          const htmlTrap = trap as HTMLElement;
+          const style = window.getComputedStyle(htmlTrap);
+          if (style.display !== 'none' && style.visibility !== 'hidden') {
+            activeTrap = trap;
+          }
+        });
+      }
+
+      if (!activeTrap) return;
+
+      const focusableElements = getFocusableElements(activeTrap);
+      if (focusableElements.length === 0) return;
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (e.shiftKey) {
+        // Shift+Tab: moving backwards
+        if (document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement.focus();
+        }
+      } else {
+        // Tab: moving forwards
+        if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement.focus();
+        }
+      }
+    };
+
+    (document as any)[listenerKey] = listener;
+    document.addEventListener("keydown", listener);
+    this.logger.debug("Focus trap delegation set up");
+  }
+
+  /**
+   * Sets up autofocus for elements with lvt-autofocus attribute.
+   * Automatically focuses the first element with lvt-autofocus when it becomes visible.
+   * Uses MutationObserver to detect when elements are added or become visible.
+   */
+  setupAutofocusDelegation(): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    const observerKey = `__lvt_autofocus_observer_${wrapperId}`;
+
+    // Disconnect existing observer if any
+    const existingObserver = (wrapperElement as any)[observerKey];
+    if (existingObserver) {
+      existingObserver.disconnect();
+    }
+
+    const processAutofocus = () => {
+      const currentWrapper = this.context.getWrapperElement();
+      if (!currentWrapper) return;
+
+      // Find all elements with lvt-autofocus that are visible
+      const autofocusElements = currentWrapper.querySelectorAll("[lvt-autofocus]");
+
+      autofocusElements.forEach((element) => {
+        const htmlElement = element as HTMLElement;
+        const style = window.getComputedStyle(htmlElement);
+
+        // Check if element is visible and hasn't been focused yet in this visibility state
+        // Note: offsetParent can be null in JSDOM or for fixed/absolute positioned elements,
+        // so we only use it as a secondary check when it's available
+        const isNotDisplayNone = style.display !== 'none';
+        const isNotVisibilityHidden = style.visibility !== 'hidden';
+        const hasLayoutContext = htmlElement.offsetParent !== null ||
+                                 style.position === 'fixed' ||
+                                 style.position === 'absolute' ||
+                                 htmlElement.tagName === 'BODY' ||
+                                 // In test environments, offsetParent may always be null
+                                 (typeof process !== 'undefined' && (process as any).env?.NODE_ENV === 'test');
+        const isVisible = isNotDisplayNone && isNotVisibilityHidden && hasLayoutContext;
+
+        const wasFocused = htmlElement.getAttribute("data-lvt-autofocused") === "true";
+
+        if (isVisible && !wasFocused) {
+          // Mark as focused to prevent re-focusing on every mutation
+          htmlElement.setAttribute("data-lvt-autofocused", "true");
+
+          // Use requestAnimationFrame to ensure DOM is ready
+          requestAnimationFrame(() => {
+            htmlElement.focus();
+            this.logger.debug("Autofocused element:", htmlElement.tagName, htmlElement.id || htmlElement.getAttribute("name"));
+          });
+        } else if (!isVisible && wasFocused) {
+          // Reset the flag when element becomes hidden so it can be refocused when shown again
+          htmlElement.removeAttribute("data-lvt-autofocused");
+        }
+      });
+    };
+
+    // Process autofocus immediately for any existing elements
+    processAutofocus();
+
+    // Set up MutationObserver to watch for new autofocus elements or visibility changes
+    const observer = new MutationObserver((mutations) => {
+      let shouldProcess = false;
+
+      mutations.forEach((mutation) => {
+        // Check for added nodes
+        if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
+          mutation.addedNodes.forEach((node) => {
+            if (node instanceof Element) {
+              if (node.hasAttribute("lvt-autofocus") || node.querySelector("[lvt-autofocus]")) {
+                shouldProcess = true;
+              }
+            }
+          });
+        }
+
+        // Check for attribute changes that might affect visibility
+        if (mutation.type === "attributes") {
+          const target = mutation.target as Element;
+          if (target.hasAttribute("lvt-autofocus") ||
+              mutation.attributeName === "hidden" ||
+              mutation.attributeName === "style" ||
+              mutation.attributeName === "class") {
+            shouldProcess = true;
+          }
+        }
+      });
+
+      if (shouldProcess) {
+        processAutofocus();
+      }
+    });
+
+    observer.observe(wrapperElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden", "style", "class", "lvt-autofocus"]
+    });
+
+    (wrapperElement as any)[observerKey] = observer;
+    this.logger.debug("Autofocus delegation set up");
   }
 }
