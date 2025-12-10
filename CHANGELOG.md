@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.0] - 2025-12-10
+
+### Changes
+
+- feat: add lvt-focus-trap and lvt-autofocus attributes (#7) (7b14402)
+- feat: add reactive attributes for action lifecycle events (#6) (46e2065)
+
+
+
 ## [v0.4.1] - 2025-11-27
 
 ### Changes
