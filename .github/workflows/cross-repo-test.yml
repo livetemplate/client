@@ -122,3 +122,68 @@ jobs:
           go test ./examples/todos-components/... -v -count=1 -timeout=5m || true
           # Run lvt e2e tests
           go test ./lvt/e2e/... -v -count=1 -timeout=10m
+
+  test-examples:
+    needs: build-client
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - name: Download built client
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client-dist
+
+      - name: Checkout examples repo
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/examples
+          path: examples
+
+      - name: Checkout lvt repo (for testing package)
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/lvt
+          path: lvt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Copy built client to lvt testing
+        run: |
+          cp client-dist/livetemplate-client.browser.js lvt/testing/livetemplate-client.browser.js
+          echo "Client copied to lvt/testing/"
+          ls -la lvt/testing/livetemplate-client.browser.js
+
+      - name: Pull Chrome Docker image
+        run: docker pull chromedp/headless-shell:latest
+
+      - name: Run examples tests
+        working-directory: examples
+        env:
+          LVT_DEV_MODE: "true"
+        run: |
+          # Use local lvt with updated client for all examples
+          LVT_PATH=$(realpath ../lvt)
+
+          # Test each working example
+          for example in counter chat todos graceful-shutdown testing/01_basic; do
+            echo "Testing: $example"
+            cd "$example"
+
+            # Add replace directive to use local lvt
+            go mod edit -replace github.com/livetemplate/lvt="$LVT_PATH"
+            go mod tidy
+
+            # Run tests
+            go test -v -count=1 -timeout=5m ./... || exit 1
+
+            cd - > /dev/null
+          done
+
+          echo "All examples tests passed!"
