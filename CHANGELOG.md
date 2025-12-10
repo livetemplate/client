@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changes
 
+
+
+
+## [v0.7.0] - 2025-12-10
+
+### Changes
+
 - feat: add lvt-focus-trap and lvt-autofocus attributes (#7) (7b14402)
 - feat: add reactive attributes for action lifecycle events (#6) (46e2065)
 
