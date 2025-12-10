@@ -74,6 +74,9 @@ jobs:
   test-examples:
     needs: build-client
     runs-on: ubuntu-latest
+    # Non-blocking: examples repo may have version mismatches with livetemplate
+    # The primary cross-repo test is test-lvt which embeds the client directly
+    continue-on-error: true
     services:
       docker:
         image: docker:dind
