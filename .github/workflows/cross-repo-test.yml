@@ -1,0 +1,124 @@
+name: Cross-Repository Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client
+        run: npm run build
+
+      - name: Upload built client
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: dist/
+          retention-days: 1
+
+  test-lvt:
+    needs: build-client
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - name: Download built client
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client-dist
+
+      - name: Checkout lvt repo
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/lvt
+          path: lvt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: lvt/go.sum
+
+      - name: Copy built client to lvt testing
+        run: |
+          cp client-dist/livetemplate-client.browser.js lvt/testing/livetemplate-client.browser.js
+          echo "Client copied to lvt/testing/"
+          ls -la lvt/testing/livetemplate-client.browser.js
+
+      - name: Pull Chrome Docker image
+        run: docker pull chromedp/headless-shell:latest
+
+      - name: Run lvt e2e tests
+        working-directory: lvt
+        run: |
+          go test ./e2e/... -v -count=1 -timeout=10m
+
+  test-livetemplate:
+    needs: build-client
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - name: Download built client
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client-dist
+
+      - name: Checkout livetemplate repo
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/livetemplate
+          path: livetemplate
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: livetemplate/go.sum
+
+      - name: Copy built client to livetemplate
+        run: |
+          # Copy to lvt/testing for embedded client
+          cp client-dist/livetemplate-client.browser.js livetemplate/lvt/testing/livetemplate-client.browser.js
+          # Also copy to client/dist for dev mode serving
+          mkdir -p livetemplate/client/dist
+          cp client-dist/livetemplate-client.browser.js livetemplate/client/dist/
+          echo "Client copied to livetemplate"
+          ls -la livetemplate/lvt/testing/livetemplate-client.browser.js
+          ls -la livetemplate/client/dist/
+
+      - name: Pull Chrome Docker image
+        run: docker pull chromedp/headless-shell:latest
+
+      - name: Run livetemplate example tests
+        working-directory: livetemplate
+        env:
+          LVT_DEV_MODE: "true"
+        run: |
+          # Run todos example tests
+          go test ./examples/todos/... -v -count=1 -timeout=5m || true
+          # Run todos-components example tests
+          go test ./examples/todos-components/... -v -count=1 -timeout=5m || true
+          # Run lvt e2e tests
+          go test ./lvt/e2e/... -v -count=1 -timeout=10m
