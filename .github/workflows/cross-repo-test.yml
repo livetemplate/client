@@ -1,0 +1,140 @@
+name: Cross-Repository Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client
+        run: npm run build
+
+      - name: Upload built client
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: dist/
+          retention-days: 1
+
+  test-lvt:
+    needs: build-client
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - name: Download built client
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client-dist
+
+      - name: Checkout lvt repo
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/lvt
+          path: lvt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: lvt/go.sum
+
+      - name: Copy built client to lvt testing
+        run: |
+          cp client-dist/livetemplate-client.browser.js lvt/testing/livetemplate-client.browser.js
+          echo "Client copied to lvt/testing/"
+          ls -la lvt/testing/livetemplate-client.browser.js
+
+      - name: Pull Chrome Docker image
+        run: docker pull chromedp/headless-shell:latest
+
+      - name: Run lvt e2e tests
+        working-directory: lvt
+        run: |
+          go test ./e2e/... -v -count=1 -timeout=10m
+
+  test-examples:
+    needs: build-client
+    runs-on: ubuntu-latest
+    # Non-blocking: examples repo may have version mismatches with livetemplate
+    # The primary cross-repo test is test-lvt which embeds the client directly
+    continue-on-error: true
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - name: Download built client
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client-dist
+
+      - name: Checkout examples repo
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/examples
+          path: examples
+
+      - name: Checkout lvt repo (for testing package)
+        uses: actions/checkout@v4
+        with:
+          repository: livetemplate/lvt
+          path: lvt
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Copy built client to lvt testing
+        run: |
+          cp client-dist/livetemplate-client.browser.js lvt/testing/livetemplate-client.browser.js
+          echo "Client copied to lvt/testing/"
+          ls -la lvt/testing/livetemplate-client.browser.js
+
+      - name: Pull Chrome Docker image
+        run: docker pull chromedp/headless-shell:latest
+
+      - name: Run examples tests
+        working-directory: examples
+        env:
+          LVT_DEV_MODE: "true"
+        run: |
+          # Use local lvt with updated client for all examples
+          LVT_PATH=$(realpath ../lvt)
+
+          # Test each working example
+          for example in counter chat todos graceful-shutdown testing/01_basic; do
+            echo "Testing: $example"
+            cd "$example"
+
+            # Add replace directive to use local lvt
+            go mod edit -replace github.com/livetemplate/lvt="$LVT_PATH"
+            go mod tidy
+
+            # Run tests
+            go test -v -count=1 -timeout=5m ./... || exit 1
+
+            cd - > /dev/null
+          done
+
+          echo "All examples tests passed!"

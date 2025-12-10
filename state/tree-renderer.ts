@@ -172,6 +172,20 @@ export class TreeRenderer {
       if ("s" in value && Array.isArray((value as TreeNode).s)) {
         return this.reconstructFromTree(value as TreeNode, statePath || "");
       }
+
+      // Handle objects with only numeric keys (dynamics without statics)
+      // This occurs when server sends partial updates for nested TreeNodes
+      const keys = Object.keys(value);
+      const numericKeys = keys.filter((k) => /^\d+$/.test(k)).sort((a, b) => parseInt(a) - parseInt(b));
+      if (numericKeys.length > 0 && numericKeys.length === keys.length) {
+        // All keys are numeric - render each dynamic value in order
+        return numericKeys
+          .map((k) => {
+            const itemStatePath = statePath ? `${statePath}.${k}` : k;
+            return this.renderValue((value as Record<string, unknown>)[k], k, itemStatePath);
+          })
+          .join("");
+      }
     }
 
     if (Array.isArray(value)) {

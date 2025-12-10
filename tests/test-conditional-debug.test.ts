@@ -199,7 +199,19 @@ describe('Conditional Rendering Debug Tests', () => {
         name: 'Empty object',
         value: {},
         shouldBeTree: false,
-        expectedHTML: '[object Object]' // Will fail, but documents behavior
+        expectedHTML: '' // Empty object renders as empty string now
+      },
+      {
+        name: 'Object with only numeric keys (dynamics without statics)',
+        value: { "0": "dynamic value" },
+        shouldBeTree: false,
+        expectedHTML: 'dynamic value' // Should render the dynamic values directly
+      },
+      {
+        name: 'Object with multiple numeric keys',
+        value: { "0": "first", "1": "second" },
+        shouldBeTree: false,
+        expectedHTML: 'firstsecond' // Should concatenate values in order
       }
     ];
 
