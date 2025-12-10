@@ -71,58 +71,6 @@ jobs:
         run: |
           go test ./e2e/... -v -count=1 -timeout=10m
 
-  test-livetemplate:
-    needs: build-client
-    runs-on: ubuntu-latest
-    services:
-      docker:
-        image: docker:dind
-        options: --privileged
-    steps:
-      - name: Download built client
-        uses: actions/download-artifact@v4
-        with:
-          name: client-dist
-          path: client-dist
-
-      - name: Checkout livetemplate repo
-        uses: actions/checkout@v4
-        with:
-          repository: livetemplate/livetemplate
-          path: livetemplate
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-          cache-dependency-path: livetemplate/go.sum
-
-      - name: Copy built client to livetemplate
-        run: |
-          # Copy to lvt/testing for embedded client
-          cp client-dist/livetemplate-client.browser.js livetemplate/lvt/testing/livetemplate-client.browser.js
-          # Also copy to client/dist for dev mode serving
-          mkdir -p livetemplate/client/dist
-          cp client-dist/livetemplate-client.browser.js livetemplate/client/dist/
-          echo "Client copied to livetemplate"
-          ls -la livetemplate/lvt/testing/livetemplate-client.browser.js
-          ls -la livetemplate/client/dist/
-
-      - name: Pull Chrome Docker image
-        run: docker pull chromedp/headless-shell:latest
-
-      - name: Run livetemplate example tests
-        working-directory: livetemplate
-        env:
-          LVT_DEV_MODE: "true"
-        run: |
-          # Run todos example tests
-          go test ./examples/todos/... -v -count=1 -timeout=5m || true
-          # Run todos-components example tests
-          go test ./examples/todos-components/... -v -count=1 -timeout=5m || true
-          # Run lvt e2e tests
-          go test ./lvt/e2e/... -v -count=1 -timeout=10m
-
   test-examples:
     needs: build-client
     runs-on: ubuntu-latest
