@@ -7,6 +7,17 @@ interface RangeStateEntry {
 }
 
 /**
+ * Deep clone an object. Uses structuredClone if available (Node 17+, modern browsers),
+ * falls back to JSON.parse/stringify for older environments.
+ */
+function deepClone<T>(obj: T): T {
+  if (typeof structuredClone === "function") {
+    return structuredClone(obj);
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
+
+/**
  * Handles tree state management and HTML reconstruction logic for LiveTemplate.
  */
 export class TreeRenderer {
@@ -38,7 +49,7 @@ export class TreeRenderer {
 
         if (existingIsRange) {
           // Apply differential operations to existing range structure
-          this.treeState[key] = JSON.parse(JSON.stringify(existing));
+          this.treeState[key] = deepClone(existing);
           this.applyDifferentialOpsToRange(this.treeState[key], value, key);
         } else {
           // No existing range, store operations directly (will use rangeState later)
@@ -121,7 +132,7 @@ export class TreeRenderer {
       if (isDifferentialOps && existingIsRange) {
         // Deep clone the range structure before modifying to avoid mutating the original
         // (shallow copy {...existing} keeps shared references to nested objects)
-        merged[key] = JSON.parse(JSON.stringify(merged[key]));
+        merged[key] = deepClone(merged[key]);
         // Apply differential operations to the cloned range
         this.logger.debug(
           `[deepMerge] Applying diff ops at path ${fieldPath}`,
@@ -146,7 +157,8 @@ export class TreeRenderer {
   }
 
   /**
-   * Applies differential operations directly to a range structure in-place.
+   * Applies differential operations to the provided range structure in-place.
+   * The caller is responsible for passing the object to be mutated (typically a clone).
    * This is called when merging nested updates that contain range operations.
    */
   private applyDifferentialOpsToRange(
@@ -154,14 +166,27 @@ export class TreeRenderer {
     operations: any[],
     statePath: string
   ): void {
+    // Validate rangeStructure before proceeding
+    if (
+      !rangeStructure ||
+      typeof rangeStructure !== "object" ||
+      !Array.isArray(rangeStructure.d) ||
+      !Array.isArray(rangeStructure.s)
+    ) {
+      this.logger.error(
+        `[applyDiffOpsToRange] Invalid rangeStructure at path ${statePath}`,
+        { rangeStructure }
+      );
+      return;
+    }
+
     const currentItems = rangeStructure.d;
-    const statics = rangeStructure.s;
 
     // Ensure rangeState is synchronized
     if (!this.rangeState[statePath]) {
       this.rangeState[statePath] = {
         items: currentItems,
-        statics: statics,
+        statics: rangeStructure.s,
       };
     }
     // Also check for idKey metadata
@@ -173,7 +198,9 @@ export class TreeRenderer {
       this.rangeIdKeys[statePath] = rangeStructure.m.idKey;
     }
 
-    this.logger.debug(`[applyDiffOpsToRange] path=${statePath}, idKey=${this.rangeIdKeys[statePath]}, items=${currentItems?.length}, ops=${operations.length}`);
+    this.logger.debug(
+      `[applyDiffOpsToRange] path=${statePath}, idKey=${this.rangeIdKeys[statePath]}, items=${currentItems.length}, ops=${operations.length}`
+    );
 
     for (const operation of operations) {
       if (!Array.isArray(operation) || operation.length < 2) {
@@ -188,7 +215,7 @@ export class TreeRenderer {
           const removeIndex = this.findItemIndexByKey(
             currentItems,
             key,
-            statics,
+            rangeStructure.s,
             statePath
           );
           this.logger.debug(
@@ -206,7 +233,7 @@ export class TreeRenderer {
           const updateIndex = this.findItemIndexByKey(
             currentItems,
             operation[1],
-            statics,
+            rangeStructure.s,
             statePath
           );
           const changes = operation[2];
@@ -249,7 +276,7 @@ export class TreeRenderer {
           const targetIndex = this.findItemIndexByKey(
             currentItems,
             operation[1],
-            statics,
+            rangeStructure.s,
             statePath
           );
           if (targetIndex >= 0) {
@@ -266,7 +293,7 @@ export class TreeRenderer {
           const itemsByKey = new Map<string, any>();
 
           for (const item of currentItems) {
-            const itemKey = this.getItemKey(item, statics, statePath);
+            const itemKey = this.getItemKey(item, rangeStructure.s, statePath);
             if (itemKey) {
               itemsByKey.set(itemKey, item);
             }
