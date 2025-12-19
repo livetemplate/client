@@ -35,6 +35,8 @@ import type {
 } from "./types";
 import { createLogger, Logger } from "./utils/logger";
 export { loadAndApplyUpdate, compareHTML } from "./utils/testing";
+export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
+export { checkLvtConfirm, extractLvtData } from "./utils/confirm";
 
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
