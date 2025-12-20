@@ -434,20 +434,14 @@ export class TreeRenderer {
     }
 
     if (typeof value === "object") {
-      this.logger.error(
-        "Object value reached string conversion; this will render as [object Object]."
+      // Plain data objects (without tree structure) are state values that shouldn't be rendered.
+      // This happens when state contains objects like EditingItem that are used by server-side
+      // templates but aren't meant to be rendered directly in the DOM.
+      // Skip them silently instead of converting to "[object Object]".
+      this.logger.debug(
+        "Skipping plain object value (not a tree node) - this is normal for state-only data"
       );
-
-      if (this.logger.isDebugEnabled()) {
-        this.logger.debug("Value diagnostics:", {
-          valueType: typeof value,
-          isArray: Array.isArray(value),
-          keys: Object.keys(value as Record<string, unknown>),
-          hasStatics: Boolean((value as any).s),
-          hasDynamics: Boolean((value as any).d),
-          value,
-        });
-      }
+      return "";
     }
 
     return String(value);
