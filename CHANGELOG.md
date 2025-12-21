@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changes
 
+- fix: support heterogeneous range items with per-item statics (#12)
 - fix: handle plain data objects gracefully in tree renderer (#11) (c64fb24)
 - feat: client updates for livepage features (#10) (cb6af54)
 - fix: apply differential ops to existing range structures (#9) (50a3ebc)

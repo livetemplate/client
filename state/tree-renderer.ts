@@ -652,7 +652,8 @@ export class TreeRenderer {
       return this.renderItemsWithStatics(
         currentItems,
         rangeStructure.s,
-        rangeStructure.sm
+        rangeStructure.sm,
+        statePath
       );
     }
 
@@ -683,13 +684,19 @@ export class TreeRenderer {
   private renderItemsWithStatics(
     items: any[],
     statics: string[],
-    staticsMap?: Record<string, string[]>
+    staticsMap?: Record<string, string[]>,
+    statePath?: string
   ): string {
     const result = items
-      .map((item: any) => {
+      .map((item: any, itemIdx: number) => {
         // Get per-item statics from StaticsMap if available, otherwise use shared statics
         let itemStatics = statics;
-        if (staticsMap && item._sk && staticsMap[item._sk]) {
+        if (
+          staticsMap &&
+          typeof staticsMap === "object" &&
+          item._sk &&
+          staticsMap[item._sk]
+        ) {
           itemStatics = staticsMap[item._sk];
         }
 
@@ -701,7 +708,10 @@ export class TreeRenderer {
           if (i < itemStatics.length - 1) {
             const fieldKey = i.toString();
             if (item[fieldKey] !== undefined) {
-              html += this.renderValue(item[fieldKey]);
+              const itemStatePath = statePath
+                ? `${statePath}.${itemIdx}.${fieldKey}`
+                : `${itemIdx}.${fieldKey}`;
+              html += this.renderValue(item[fieldKey], fieldKey, itemStatePath);
             }
           }
         }
