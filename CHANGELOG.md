@@ -5,6 +5,20 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.2] - 2025-12-20
+
+### Changes
+
+- fix: support heterogeneous range items with per-item statics (#12)
+- fix: handle plain data objects gracefully in tree renderer (#11) (c64fb24)
+- feat: client updates for livepage features (#10) (cb6af54)
+- fix: apply differential ops to existing range structures (#9) (50a3ebc)
+- fix: handle objects with only numeric keys in renderValue (#8) (b1c7827)
+- feat: add lvt-focus-trap and lvt-autofocus attributes (#7) (7b14402)
+- feat: add reactive attributes for action lifecycle events (#6) (46e2065)
+
+
+
 ## [v0.7.1] - 2025-12-14
 
 ### Changes

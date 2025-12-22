@@ -4,6 +4,7 @@ import type { Logger } from "../utils/logger";
 interface RangeStateEntry {
   items: any[];
   statics: any[];
+  staticsMap?: Record<string, string[]>;
 }
 
 /**
@@ -187,6 +188,7 @@ export class TreeRenderer {
       this.rangeState[statePath] = {
         items: currentItems,
         statics: rangeStructure.s,
+        staticsMap: rangeStructure.sm,
       };
     }
     // Also check for idKey metadata
@@ -319,6 +321,7 @@ export class TreeRenderer {
     this.rangeState[statePath] = {
       items: currentItems,
       statics: rangeStructure.s,
+      staticsMap: rangeStructure.sm,
     };
   }
 
@@ -381,6 +384,7 @@ export class TreeRenderer {
           this.rangeState[stateKey] = {
             items: value.d,
             statics: value.s,
+            staticsMap: value.sm,
           };
           if (
             value.m &&
@@ -452,7 +456,7 @@ export class TreeRenderer {
     fieldKey?: string,
     statePath?: string
   ): string {
-    const { d: dynamics, s: statics } = rangeNode;
+    const { d: dynamics, s: statics, sm: staticsMap } = rangeNode;
 
     if (!dynamics || !Array.isArray(dynamics)) {
       return "";
@@ -467,15 +471,24 @@ export class TreeRenderer {
       return "";
     }
 
+    // Check if we have per-item statics via StaticsMap
+    const hasStaticsMap = staticsMap && typeof staticsMap === "object";
+
     if (statics && Array.isArray(statics)) {
       return dynamics
         .map((item: any, itemIdx: number) => {
+          // Get per-item statics from StaticsMap if available, otherwise use shared statics
+          let itemStatics = statics;
+          if (hasStaticsMap && item._sk && staticsMap[item._sk]) {
+            itemStatics = staticsMap[item._sk];
+          }
+
           let html = "";
 
-          for (let i = 0; i < statics.length; i++) {
-            html += statics[i];
+          for (let i = 0; i < itemStatics.length; i++) {
+            html += itemStatics[i];
 
-            if (i < statics.length - 1) {
+            if (i < itemStatics.length - 1) {
               const localKey = i.toString();
               if (item[localKey] !== undefined) {
                 const itemStatePath = statePath
@@ -625,16 +638,23 @@ export class TreeRenderer {
     this.rangeState[statePath] = {
       items: currentItems,
       statics: rangeData.statics,
+      staticsMap: rangeData.staticsMap,
     };
 
     this.treeState[statePath] = {
       d: currentItems,
       s: rangeData.statics,
+      sm: rangeData.staticsMap,
     };
 
     const rangeStructure = this.getCurrentRangeStructure(statePath);
     if (rangeStructure && rangeStructure.s) {
-      return this.renderItemsWithStatics(currentItems, rangeStructure.s);
+      return this.renderItemsWithStatics(
+        currentItems,
+        rangeStructure.s,
+        rangeStructure.sm,
+        statePath
+      );
     }
 
     return currentItems.map((item) => this.renderValue(item)).join("");
@@ -645,6 +665,7 @@ export class TreeRenderer {
       return {
         d: this.rangeState[stateKey].items,
         s: this.rangeState[stateKey].statics,
+        sm: this.rangeState[stateKey].staticsMap,
       };
     }
 
@@ -660,18 +681,37 @@ export class TreeRenderer {
     return null;
   }
 
-  private renderItemsWithStatics(items: any[], statics: string[]): string {
+  private renderItemsWithStatics(
+    items: any[],
+    statics: string[],
+    staticsMap?: Record<string, string[]>,
+    statePath?: string
+  ): string {
     const result = items
-      .map((item: any) => {
+      .map((item: any, itemIdx: number) => {
+        // Get per-item statics from StaticsMap if available, otherwise use shared statics
+        let itemStatics = statics;
+        if (
+          staticsMap &&
+          typeof staticsMap === "object" &&
+          item._sk &&
+          staticsMap[item._sk]
+        ) {
+          itemStatics = staticsMap[item._sk];
+        }
+
         let html = "";
 
-        for (let i = 0; i < statics.length; i++) {
-          html += statics[i];
+        for (let i = 0; i < itemStatics.length; i++) {
+          html += itemStatics[i];
 
-          if (i < statics.length - 1) {
+          if (i < itemStatics.length - 1) {
             const fieldKey = i.toString();
             if (item[fieldKey] !== undefined) {
-              html += this.renderValue(item[fieldKey]);
+              const itemStatePath = statePath
+                ? `${statePath}.${itemIdx}.${fieldKey}`
+                : `${itemIdx}.${fieldKey}`;
+              html += this.renderValue(item[fieldKey], fieldKey, itemStatePath);
             }
           }
         }
