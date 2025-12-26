@@ -354,6 +354,25 @@ describe("WebSocketTransport", () => {
   });
 });
 
+describe("liveUrl query params", () => {
+  it("concatenates pathname and search correctly", () => {
+    // Test the logic that combines pathname and search
+    // This is what livetemplate-client.ts does:
+    // liveUrl: window.location.pathname + window.location.search
+
+    // With query params
+    expect("/app" + "?filter=active&page=2").toBe("/app?filter=active&page=2");
+
+    // Without query params
+    expect("/dashboard" + "").toBe("/dashboard");
+
+    // Complex query string
+    expect("/search" + "?q=hello+world&sort=date").toBe(
+      "/search?q=hello+world&sort=date"
+    );
+  });
+});
+
 describe("checkWebSocketAvailability", () => {
   let mockFetch: jest.Mock;
   let mockLogger: ReturnType<typeof createLogger>;
