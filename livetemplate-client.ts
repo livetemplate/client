@@ -90,7 +90,7 @@ export class LiveTemplateClient {
     this.options = {
       autoReconnect: false, // Disable autoReconnect by default to avoid connection loops
       reconnectDelay: 1000,
-      liveUrl: window.location.pathname, // Connect to current page
+      liveUrl: window.location.pathname + window.location.search, // Connect to current page (including query params)
       ...restOptions,
     };
 

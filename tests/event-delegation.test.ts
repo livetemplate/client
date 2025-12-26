@@ -96,6 +96,58 @@ describe("EventDelegator", () => {
     expect(context.send).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves password field values as strings (not parsed to numbers)", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-password");
+    wrapper.innerHTML = `
+      <form id="login-form" lvt-submit="login">
+        <input type="text" name="username" value="testuser" />
+        <input type="password" name="password" value="12345" />
+        <button type="submit" id="submit">Login</button>
+      </form>
+    `;
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("login-form") as HTMLFormElement;
+    const submitButton = document.getElementById("submit") as HTMLButtonElement;
+
+    // Use a parseValue that would convert "12345" to number
+    const context = createContext(wrapper, {
+      parseValue: (value: string) => {
+        const num = Number(value);
+        return !isNaN(num) && value.trim() !== "" ? num : value;
+      },
+    });
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    expect(context.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "login",
+        data: expect.objectContaining({
+          username: "testuser",
+          password: "12345", // Should remain a string, not converted to 12345 (number)
+        }),
+      })
+    );
+
+    // Verify password is specifically a string type
+    const sentData = context.send.mock.calls[0][0].data;
+    expect(typeof sentData.password).toBe("string");
+  });
+
   it("handles form submissions and records active submission state", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-3");

@@ -207,7 +207,7 @@ export class WebSocketManager {
   }
 
   private getLiveUrl(): string {
-    return this.config.options.liveUrl || window.location.pathname;
+    return this.config.options.liveUrl || window.location.pathname + window.location.search;
   }
 }
 
