@@ -164,10 +164,20 @@ export class EventDelegator {
                   message.data[name] = false;
                 });
 
+                // Get password field names to skip parseValue for them
+                const passwordFields = new Set(
+                  Array.from(
+                    targetElement.querySelectorAll('input[type="password"][name]')
+                  ).map((el) => (el as HTMLInputElement).name)
+                );
+
                 formData.forEach((value, key) => {
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
                     this.logger.debug("Converted checkbox", key, "to true");
+                  } else if (passwordFields.has(key)) {
+                    // Never parse password values - always keep as string
+                    message.data[key] = value as string;
                   } else {
                     message.data[key] = this.context.parseValue(
                       value as string
