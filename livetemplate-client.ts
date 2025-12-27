@@ -179,6 +179,11 @@ export class LiveTemplateClient {
       onConnected: () => {
         this.ws = this.webSocketManager.getSocket();
         this.logger.info("WebSocket connected");
+
+        // Clear flash-related query params from URL to prevent stale flash on reload
+        // This handles the redirect pattern: /auth?error=invalid_credentials
+        this.clearFlashQueryParams();
+
         this.options.onConnect?.();
         this.wrapperElement?.dispatchEvent(new Event("lvt:connected"));
       },
@@ -381,6 +386,29 @@ export class LiveTemplateClient {
     this.formLifecycleManager.reset();
     this.loadingIndicator.hide();
     this.formDisabler.enable(this.wrapperElement);
+  }
+
+  /**
+   * Clear flash-related query parameters (error, success) from the URL.
+   * This prevents stale flash messages from reappearing on page reload.
+   * Uses history.replaceState to update URL without triggering navigation.
+   */
+  private clearFlashQueryParams(): void {
+    const url = new URL(window.location.href);
+    const flashParams = ["error", "success"];
+    let hasFlashParams = false;
+
+    for (const param of flashParams) {
+      if (url.searchParams.has(param)) {
+        url.searchParams.delete(param);
+        hasFlashParams = true;
+      }
+    }
+
+    if (hasFlashParams) {
+      this.logger.debug("Clearing flash query params from URL");
+      window.history.replaceState(null, "", url.toString());
+    }
   }
 
   /**
