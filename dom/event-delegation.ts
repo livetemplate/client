@@ -510,16 +510,15 @@ export class EventDelegator {
     }
 
     const closeListener = (e: Event) => {
-      const currentWrapper = this.context.getWrapperElement();
-      if (!currentWrapper) return;
-
       const target = (e.target as Element)?.closest("[lvt-modal-close]");
-      if (!target || !currentWrapper.contains(target)) {
-        return;
-      }
+      if (!target) return;
 
       const modalId = target.getAttribute("lvt-modal-close");
       if (!modalId) return;
+
+      // Verify the modal exists
+      const modal = document.getElementById(modalId);
+      if (!modal) return;
 
       e.preventDefault();
       this.context.closeModal(modalId);
