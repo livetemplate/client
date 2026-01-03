@@ -509,17 +509,19 @@ export class EventDelegator {
       document.removeEventListener("click", existingCloseListener);
     }
 
+    // Close listener is intentionally NOT scoped to wrapper (unlike openListener).
+    // Close buttons may be inside modals rendered in portals outside the wrapper.
+    // Instead, we verify the target modal exists by ID.
     const closeListener = (e: Event) => {
-      const currentWrapper = this.context.getWrapperElement();
-      if (!currentWrapper) return;
-
       const target = (e.target as Element)?.closest("[lvt-modal-close]");
-      if (!target || !currentWrapper.contains(target)) {
-        return;
-      }
+      if (!target) return;
 
       const modalId = target.getAttribute("lvt-modal-close");
       if (!modalId) return;
+
+      // Verify the modal exists before attempting to close
+      const modal = document.getElementById(modalId);
+      if (!modal) return;
 
       e.preventDefault();
       this.context.closeModal(modalId);
