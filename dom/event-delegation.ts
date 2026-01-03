@@ -538,11 +538,19 @@ export class EventDelegator {
 
     const backdropListener = (e: Event) => {
       const target = e.target as Element;
+      // Only trigger if clicked directly on the backdrop element itself
       if (!target.hasAttribute("data-modal-backdrop")) return;
 
       const modalId = target.getAttribute("data-modal-id");
       if (modalId) {
-        this.context.closeModal(modalId);
+        const modal = document.getElementById(modalId);
+        const closeAction = modal?.getAttribute("data-modal-close-action");
+        if (closeAction) {
+          // Dispatch action instead of just hiding
+          this.context.send({ action: closeAction, data: {} });
+        } else {
+          this.context.closeModal(modalId);
+        }
       }
     };
 
@@ -566,7 +574,13 @@ export class EventDelegator {
       if (openModals.length > 0) {
         const lastModal = openModals[openModals.length - 1];
         if (lastModal.id) {
-          this.context.closeModal(lastModal.id);
+          const closeAction = lastModal.getAttribute("data-modal-close-action");
+          if (closeAction) {
+            // Dispatch action instead of just hiding
+            this.context.send({ action: closeAction, data: {} });
+          } else {
+            this.context.closeModal(lastModal.id);
+          }
         }
       }
     };
