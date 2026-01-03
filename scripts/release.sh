@@ -409,17 +409,15 @@ main() {
     echo ""
     echo "Select version bump type:"
     echo "  1) patch (bug fixes)        → $(bump_version "$current_version" patch)"
-    echo "  2) minor (sync with core)   → ${core_major_minor}.0"
-    echo "  3) major (sync with core)   → ${core_major_minor}.0"
-    echo "  4) custom version           → ${core_major_minor}.X"
+    echo "  2) sync with core           → ${core_version}"
+    echo "  3) custom version           → ${core_major_minor}.X"
     echo ""
-    read -rp "Enter choice [1-4]: " choice
+    read -rp "Enter choice [1-3]: " choice
 
     case $choice in
         1) new_version=$(bump_version "$current_version" patch) ;;
-        2) new_version="${core_major_minor}.0" ;;
-        3) new_version="${core_major_minor}.0" ;;
-        4)
+        2) new_version="${core_version}" ;;
+        3)
             read -rp "Enter patch version for ${core_major_minor}.X: " patch_ver
             if ! [[ $patch_ver =~ ^[0-9]+$ ]]; then
                 log_error "Invalid patch version. Must be a number"
@@ -435,6 +433,15 @@ main() {
 
     echo ""
     log_info "New version will be: $new_version"
+
+    # Check if tag already exists
+    if git tag --list "v$new_version" | grep -q "v$new_version"; then
+        log_error "Tag v$new_version already exists!"
+        echo ""
+        echo "Existing tags:"
+        git tag --list 'v*' | sort -V | tail -5
+        exit 1
+    fi
 
     # Validate version
     validate_version "$new_version"
