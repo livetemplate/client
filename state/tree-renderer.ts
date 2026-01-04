@@ -110,6 +110,21 @@ export class TreeRenderer {
       return update;
     }
 
+    // Detect range→non-range transition: when existing has a range structure
+    // (d and s arrays) but update does NOT have d, we must do a full replacement
+    // instead of merge. Otherwise, the old range items would be preserved and
+    // rendered with the new (else clause) statics, causing wrong content.
+    const existingIsRange =
+      Array.isArray(existing.d) && Array.isArray(existing.s);
+    const updateIsRange = Array.isArray(update.d) && Array.isArray(update.s);
+
+    if (existingIsRange && !updateIsRange) {
+      this.logger.debug(
+        `[deepMerge] Range→non-range transition at path ${currentPath}, replacing instead of merging`
+      );
+      return update;
+    }
+
     const merged: any = { ...existing };
 
     for (const [key, value] of Object.entries(update)) {
