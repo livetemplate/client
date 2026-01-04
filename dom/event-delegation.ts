@@ -536,22 +536,28 @@ export class EventDelegator {
       document.removeEventListener("click", existingBackdropListener);
     }
 
+    // Helper to close modal, dispatching action if data-modal-close-action is set
+    const closeModalWithAction = (modal: Element, modalId: string) => {
+      const closeAction = modal.getAttribute("data-modal-close-action");
+      if (closeAction) {
+        this.context.send({ action: closeAction, data: {} });
+      } else {
+        this.context.closeModal(modalId);
+      }
+    };
+
     const backdropListener = (e: Event) => {
       const target = e.target as Element;
       // Only trigger if clicked directly on the backdrop element itself
       if (!target.hasAttribute("data-modal-backdrop")) return;
 
       const modalId = target.getAttribute("data-modal-id");
-      if (modalId) {
-        const modal = document.getElementById(modalId);
-        const closeAction = modal?.getAttribute("data-modal-close-action");
-        if (closeAction) {
-          // Dispatch action instead of just hiding
-          this.context.send({ action: closeAction, data: {} });
-        } else {
-          this.context.closeModal(modalId);
-        }
-      }
+      if (!modalId) return;
+
+      const modal = document.getElementById(modalId);
+      if (!modal) return;
+
+      closeModalWithAction(modal, modalId);
     };
 
     (document as any)[backdropListenerKey] = backdropListener;
@@ -574,13 +580,7 @@ export class EventDelegator {
       if (openModals.length > 0) {
         const lastModal = openModals[openModals.length - 1];
         if (lastModal.id) {
-          const closeAction = lastModal.getAttribute("data-modal-close-action");
-          if (closeAction) {
-            // Dispatch action instead of just hiding
-            this.context.send({ action: closeAction, data: {} });
-          } else {
-            this.context.closeModal(lastModal.id);
-          }
+          closeModalWithAction(lastModal, lastModal.id);
         }
       }
     };
