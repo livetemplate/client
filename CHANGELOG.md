@@ -5,6 +5,18 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.10] - 2026-01-04
+
+### Changes
+
+- feat(modal): add data-modal-close-action attribute support (#15) (c8321b3)
+- fix(ci): increase max-turns and simplify review prompt (bba2fe7)
+- fix(ci): use stable claude-code-action v1 with correct inputs (eb2d2e4)
+- feat(modal): add data-modal-close-action attribute support (8bf64f4)
+- fix(ci): use correct input parameter for claude-code-action (50c8a1f)
+
+
+
 ## [v0.7.9] - 2026-01-03
 
 ### Changes
