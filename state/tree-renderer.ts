@@ -19,6 +19,28 @@ function deepClone<T>(obj: T): T {
 }
 
 /**
+ * Checks if a node is a valid range structure.
+ *
+ * A "range" in LiveTemplate represents a {{range .Items}}...{{end}} construct.
+ * It has:
+ * - `d` (dynamics): Array of rendered items
+ * - `s` (statics): Array of static HTML fragments between dynamic slots
+ *
+ * A "non-range" is any other tree node (e.g., an {{else}} clause with simple content).
+ *
+ * @param node - The tree node to check
+ * @returns true if the node has both `d` and `s` arrays (valid range structure)
+ */
+function isRangeNode(node: any): boolean {
+  return (
+    node != null &&
+    typeof node === "object" &&
+    Array.isArray(node.d) &&
+    Array.isArray(node.s)
+  );
+}
+
+/**
  * Handles tree state management and HTML reconstruction logic for LiveTemplate.
  */
 export class TreeRenderer {
@@ -107,6 +129,18 @@ export class TreeRenderer {
       existing === null ||
       Array.isArray(existing)
     ) {
+      return update;
+    }
+
+    // Detect range→non-range transition: when existing has a range structure
+    // but update does NOT, we must do a full replacement instead of merge.
+    // Otherwise, the old range items would be preserved and rendered with
+    // the new (else clause) statics, causing wrong content.
+    // See isRangeNode() for definition of "range" vs "non-range" structures.
+    if (isRangeNode(existing) && !isRangeNode(update)) {
+      this.logger.debug(
+        `[deepMerge] Range→non-range transition at path ${currentPath}, replacing instead of merging`
+      );
       return update;
     }
 
