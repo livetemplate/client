@@ -1,3 +1,22 @@
+/**
+ * TreeRenderer Tests - Range to Non-Range Transitions
+ *
+ * In LiveTemplate, tree structures represent rendered template content:
+ *
+ * "Range" structure: Represents a {{range .Items}}...{{end}} loop
+ *   - Has `d` (dynamics): Array of rendered items
+ *   - Has `s` (statics): Array of static HTML between dynamic slots
+ *   - Example: { d: [{0: "Item 1"}, {0: "Item 2"}], s: ["<li>", "</li>"] }
+ *
+ * "Non-range" structure: Any other content (e.g., {{else}} clause)
+ *   - Has numbered keys for dynamic content
+ *   - Has `s` for statics, but NO `d` array
+ *   - Example: { s: ["<p>No items</p>"], 0: "search query" }
+ *
+ * The bug these tests cover: When transitioning from range to non-range,
+ * the old merge behavior preserved the `d` array, causing old items to
+ * render with new statics (e.g., "No posts found matching [old post title]").
+ */
 import { TreeRenderer } from "../state/tree-renderer";
 import { createLogger } from "../utils/logger";
 
