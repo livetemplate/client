@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.11] - 2026-01-05
+
+### Changes
+
+- fix(tree-renderer): handle range→non-range transitions in deepMergeTreeNodes (#16) (f95a08b)
+
+
+
 ## [v0.7.10] - 2026-01-04
 
 ### Changes

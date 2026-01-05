@@ -1,6 +1,6 @@
 {
   "name": "@livetemplate/client",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "description": "TypeScript client for LiveTemplate tree-based updates",
   "main": "dist/livetemplate-client.js",
   "browser": "dist/livetemplate-client.browser.js",
