@@ -276,7 +276,10 @@ export class EventDelegator {
             const throttleValue = actionElement.getAttribute("lvt-throttle");
             const debounceValue = actionElement.getAttribute("lvt-debounce");
 
-            if (throttleValue || debounceValue) {
+            // Skip rate limiting for "search" event (clear button click) - it's a discrete action
+            const shouldRateLimit = (throttleValue || debounceValue) && eventType !== "search";
+
+            if (shouldRateLimit) {
               if (!rateLimitedHandlers.has(actionElement)) {
                 rateLimitedHandlers.set(actionElement, new Map());
               }
