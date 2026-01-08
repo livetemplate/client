@@ -36,6 +36,7 @@ export class EventDelegator {
       "submit",
       "change",
       "input",
+      "search", // Fired when clearing input type="search" via X button
       "keydown",
       "keyup",
       "focus",
