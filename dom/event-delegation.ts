@@ -58,6 +58,8 @@ export class EventDelegator {
         const currentWrapper = this.context.getWrapperElement();
         if (!currentWrapper) return;
 
+        const target = e.target as Element;
+
         if (eventType === "submit") {
           (window as any).__lvtSubmitListenerTriggered = true;
           (window as any).__lvtSubmitEventTarget = (
@@ -67,7 +69,6 @@ export class EventDelegator {
 
         this.logger.debug("Event listener triggered:", eventType, e.target);
 
-        const target = e.target as Element;
         if (!target) return;
 
         let element: Element | null = target;
@@ -105,11 +106,20 @@ export class EventDelegator {
             }
           }
 
-          if (!action && (eventType === "change" || eventType === "input")) {
-            const formElement: HTMLFormElement | null = element.closest("form");
-            if (formElement && formElement.hasAttribute("lvt-change")) {
-              action = formElement.getAttribute("lvt-change");
-              actionElement = formElement;
+          if (!action && (eventType === "change" || eventType === "input" || eventType === "search")) {
+            // For input/search events, also check lvt-change on the element itself
+            // This handles: typing (input), clearing via X button (search/input), blur (change)
+            if ((eventType === "input" || eventType === "search") && element.hasAttribute("lvt-change")) {
+              action = element.getAttribute("lvt-change");
+              actionElement = element;
+            }
+            // Check for form-level lvt-change
+            if (!action) {
+              const formElement: HTMLFormElement | null = element.closest("form");
+              if (formElement && formElement.hasAttribute("lvt-change")) {
+                action = formElement.getAttribute("lvt-change");
+                actionElement = formElement;
+              }
             }
           }
 
@@ -186,7 +196,7 @@ export class EventDelegator {
                   }
                 });
                 this.logger.debug("Form data collected:", message.data);
-              } else if (eventType === "change" || eventType === "input") {
+              } else if (eventType === "change" || eventType === "input" || eventType === "search") {
                 if (targetElement instanceof HTMLInputElement) {
                   const key = targetElement.name || "value";
                   message.data[key] = this.context.parseValue(
@@ -286,14 +296,27 @@ export class EventDelegator {
               const handlerCache = rateLimitedHandlers.get(actionElement)!;
               const cacheKey = `${eventType}:${action}`;
 
+              // Store callback reference on the element itself to avoid type issues with the Map
+              // This allows us to update the callback each event while reusing the debounced timer
+              const callbackRefKey = `__lvt_callback_${cacheKey}`;
+              const elementWithCallback = actionElement as HTMLElement & { [key: string]: { current: () => void } };
+              if (!elementWithCallback[callbackRefKey]) {
+                elementWithCallback[callbackRefKey] = { current: handleAction };
+              }
+              // Always update to the latest handleAction (with fresh closure capturing current values)
+              elementWithCallback[callbackRefKey].current = handleAction;
+
               let rateLimitedHandler = handlerCache.get(cacheKey);
               if (!rateLimitedHandler) {
+                // Create rate-limited function that calls the CURRENT callback via reference
+                // This way, when the debounce timer fires, it uses the latest captured values
+                const callLatest = () => elementWithCallback[callbackRefKey].current();
                 if (throttleValue) {
                   const limit = parseInt(throttleValue, 10);
-                  rateLimitedHandler = throttle(handleAction, limit);
+                  rateLimitedHandler = throttle(callLatest, limit);
                 } else if (debounceValue) {
                   const wait = parseInt(debounceValue, 10);
-                  rateLimitedHandler = debounce(handleAction, wait);
+                  rateLimitedHandler = debounce(callLatest, wait);
                 }
                 if (rateLimitedHandler) {
                   handlerCache.set(cacheKey, rateLimitedHandler);
@@ -807,4 +830,5 @@ export class EventDelegator {
     (wrapperElement as any)[observerKey] = observer;
     this.logger.debug("Autofocus delegation set up");
   }
+
 }
