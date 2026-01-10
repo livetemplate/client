@@ -5,6 +5,16 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.12] - 2026-01-10
+
+### Changes
+
+- fix(event-delegation): debounce captures latest input value (3d5b5e9)
+- fix(client): skip debounce for search event (clear button) (35adeb7)
+- fix(client): handle search event for input type="search" clear button (9afc00e)
+
+
+
 ## [v0.7.11] - 2026-01-05
 
 ### Changes
