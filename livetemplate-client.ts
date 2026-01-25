@@ -515,9 +515,15 @@ export class LiveTemplateClient {
    * @returns Parsed value with correct type
    */
   private parseValue(value: string): any {
-    // Try to parse as number
+    // Try to parse as number, but only if it's safe (won't lose precision)
     const num = parseFloat(value);
     if (!isNaN(num) && value.trim() === num.toString()) {
+      // Check if the number is within JavaScript's safe integer range
+      // Large integers (like UnixNano timestamps) lose precision as float64
+      if (Number.isInteger(num) && Math.abs(num) > Number.MAX_SAFE_INTEGER) {
+        // Keep as string to preserve precision
+        return value;
+      }
       return num;
     }
 
