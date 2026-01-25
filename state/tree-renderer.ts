@@ -792,6 +792,11 @@ export class TreeRenderer {
     statics: any[],
     statePath?: string
   ): string | null {
+    // First check for auto-generated _k field (always takes priority)
+    if (item._k && typeof item._k === "string") {
+      return item._k;
+    }
+
     if (!statePath || !this.rangeIdKeys[statePath]) {
       return null;
     }
