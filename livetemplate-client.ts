@@ -515,10 +515,22 @@ export class LiveTemplateClient {
    * @returns Parsed value with correct type
    */
   private parseValue(value: string): any {
+    // Trim once for consistent handling
+    const trimmed = value.trim();
+
     // Try to parse as number
-    const num = parseFloat(value);
-    if (!isNaN(num) && value.trim() === num.toString()) {
-      return num;
+    const num = parseFloat(trimmed);
+    if (!isNaN(num)) {
+      // Check range FIRST - large integers (like UnixNano timestamps) must stay as strings
+      // to preserve precision. JavaScript's Number can only safely represent integers
+      // up to 2^53-1 (MAX_SAFE_INTEGER = 9,007,199,254,740,991).
+      if (Number.isInteger(num) && Math.abs(num) > Number.MAX_SAFE_INTEGER) {
+        return trimmed;
+      }
+      // Only convert to number if string representation matches (no precision loss)
+      if (trimmed === num.toString()) {
+        return num;
+      }
     }
 
     // Try to parse as boolean
