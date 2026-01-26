@@ -518,16 +518,19 @@ export class LiveTemplateClient {
     // Trim once for consistent handling
     const trimmed = value.trim();
 
-    // Try to parse as number, but only if it's safe (won't lose precision)
+    // Try to parse as number
     const num = parseFloat(trimmed);
-    if (!isNaN(num) && trimmed === num.toString()) {
-      // Check if the number is within JavaScript's safe integer range
-      // Large integers (like UnixNano timestamps) lose precision as float64
+    if (!isNaN(num)) {
+      // Check range FIRST - large integers (like UnixNano timestamps) must stay as strings
+      // to preserve precision. JavaScript's Number can only safely represent integers
+      // up to 2^53-1 (MAX_SAFE_INTEGER = 9,007,199,254,740,991).
       if (Number.isInteger(num) && Math.abs(num) > Number.MAX_SAFE_INTEGER) {
-        // Keep as string (trimmed) to preserve precision while matching server expectations
         return trimmed;
       }
-      return num;
+      // Only convert to number if string representation matches (no precision loss)
+      if (trimmed === num.toString()) {
+        return num;
+      }
     }
 
     // Try to parse as boolean
