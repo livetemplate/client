@@ -41,6 +41,79 @@ function isRangeNode(node: any): boolean {
 }
 
 /**
+ * Checks if a node or any of its nested children contains a range structure.
+ *
+ * This is needed for detecting structure transitions like:
+ * - {{if .ShowList}}<ul>{{range .Items}}...{{end}}</ul>{{else}}<p>Hidden</p>{{end}}
+ *
+ * When ShowList changes from true to false, the outer node doesn't have `d` directly,
+ * but its child at position "0" does. We need to detect this nested range to know
+ * that a full replacement is required instead of a merge.
+ *
+ * @param node - The tree node to check
+ * @returns true if this node or any nested child has a range structure
+ */
+function hasRangeAnywhere(node: any): boolean {
+  if (node == null || typeof node !== "object" || Array.isArray(node)) {
+    return false;
+  }
+
+  // Check if this node itself is a range
+  if (isRangeNode(node)) {
+    return true;
+  }
+
+  // Check numeric keys (dynamic positions) for nested ranges
+  for (const key of Object.keys(node)) {
+    if (/^\d+$/.test(key)) {
+      const child = node[key];
+      if (child != null && typeof child === "object" && !Array.isArray(child)) {
+        if (hasRangeAnywhere(child)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Determines if a structure transition requires full replacement instead of merge.
+ *
+ * This handles cases where:
+ * 1. Old structure has a range (directly or nested) but new structure doesn't
+ * 2. New structure has statics (indicating a complete structure definition)
+ * 3. Old structure has dynamics that new structure doesn't have
+ *
+ * @param existing - The existing tree node
+ * @param update - The update tree node
+ * @returns true if the update should fully replace existing instead of merging
+ */
+function shouldFullReplace(existing: any, update: any): boolean {
+  // If update doesn't have statics, it's a partial update, not a replacement
+  if (!update.s || !Array.isArray(update.s)) {
+    return false;
+  }
+
+  // Check for range→non-range transition (including nested ranges)
+  if (hasRangeAnywhere(existing) && !hasRangeAnywhere(update)) {
+    return true;
+  }
+
+  // Check if existing has dynamics that update doesn't have
+  for (const key of Object.keys(existing)) {
+    if (/^\d+$/.test(key) && !(key in update)) {
+      // Existing has a dynamic position that update doesn't
+      // If update has statics, this is a structure change
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Handles tree state management and HTML reconstruction logic for LiveTemplate.
  */
 export class TreeRenderer {
@@ -132,14 +205,17 @@ export class TreeRenderer {
       return update;
     }
 
-    // Detect range→non-range transition: when existing has a range structure
-    // but update does NOT, we must do a full replacement instead of merge.
-    // Otherwise, the old range items would be preserved and rendered with
-    // the new (else clause) statics, causing wrong content.
-    // See isRangeNode() for definition of "range" vs "non-range" structures.
-    if (isRangeNode(existing) && !isRangeNode(update)) {
+    // Detect structure transitions that require full replacement instead of merge.
+    // This handles:
+    // 1. Direct range→non-range: existing has d/s arrays, update doesn't
+    // 2. Nested range→non-range: existing has range in a child, update doesn't
+    // 3. Structure changes: existing has dynamics that update doesn't have
+    //
+    // Without this check, old range data would be preserved and mixed with
+    // new statics, causing wrong content or memory leaks.
+    if (shouldFullReplace(existing, update)) {
       this.logger.debug(
-        `[deepMerge] Range→non-range transition at path ${currentPath}, replacing instead of merging`
+        `[deepMerge] Structure transition at path ${currentPath}, replacing instead of merging`
       );
       return update;
     }
