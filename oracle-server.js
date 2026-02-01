@@ -69,7 +69,7 @@ rl.on("close", () => {
   process.exit(0);
 });
 
-// Handle errors gracefully
+// Handle errors gracefully - use stdout to maintain JSON protocol
 process.on("uncaughtException", (err) => {
-  console.error(JSON.stringify({ html: "", tree: null, error: err.message }));
+  console.log(JSON.stringify({ html: "", tree: null, error: err.message }));
 });
