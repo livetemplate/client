@@ -73,5 +73,6 @@ rl.on("close", () => {
 // Exit after uncaught exception as process state may be corrupted
 process.on("uncaughtException", (err) => {
   console.log(JSON.stringify({ html: "", tree: null, error: err.message }));
+  rl.close();
   process.exit(1);
 });

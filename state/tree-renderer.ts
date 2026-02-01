@@ -352,14 +352,10 @@ export class TreeRenderer {
           );
           const changes = operation[2];
           if (updateIndex >= 0 && changes) {
-            // Deep merge changes instead of shallow spread to preserve statics.
-            // When the server sends partial updates like {"5": {"0": "new text"}},
-            // we need to merge this into the existing item's field 5, not replace it.
-            // Shallow spread would lose the statics ({"s": [...]}) that the client has cached.
-            currentItems[updateIndex] = this.deepMergeTreeNodes(
+            currentItems[updateIndex] = this.mergeRangeItem(
               currentItems[updateIndex],
               changes,
-              `${statePath}.item`
+              statePath
             );
           }
           break;
@@ -675,12 +671,10 @@ export class TreeRenderer {
           );
           const changes = operation[2];
           if (updateIndex >= 0 && changes) {
-            // Deep merge changes instead of shallow spread to preserve statics.
-            // See comment in applyDifferentialOpsToRange for detailed explanation.
-            currentItems[updateIndex] = this.deepMergeTreeNodes(
+            currentItems[updateIndex] = this.mergeRangeItem(
               currentItems[updateIndex],
               changes,
-              `${statePath || ""}.item`
+              statePath || ""
             );
           }
           break;
@@ -900,5 +894,15 @@ export class TreeRenderer {
     return items.findIndex(
       (item: any) => this.getItemKey(item, statics, statePath) === key
     );
+  }
+
+  /**
+   * Merges changes into a range item using deep merge to preserve statics.
+   * When the server sends partial updates like {"5": {"0": "new text"}},
+   * we need to merge this into the existing item's field 5, not replace it.
+   * Shallow spread would lose the statics ({"s": [...]}) that the client has cached.
+   */
+  private mergeRangeItem(item: any, changes: any, statePath: string): any {
+    return this.deepMergeTreeNodes(item, changes, `${statePath}.item`);
   }
 }
