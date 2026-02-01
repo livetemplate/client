@@ -53,8 +53,10 @@ function isRangeNode(node: any): boolean {
  * @param node - The tree node to check
  * @returns true if this node or any nested child has a range structure
  */
-function hasRangeAnywhere(node: any): boolean {
-  if (node == null || typeof node !== "object" || Array.isArray(node)) {
+function hasRangeAnywhere(node: any, depth = 0): boolean {
+  // Depth limit to prevent potential stack overflow on deeply nested or malformed trees
+  const MAX_DEPTH = 50;
+  if (depth > MAX_DEPTH || node == null || typeof node !== "object" || Array.isArray(node)) {
     return false;
   }
 
@@ -68,7 +70,7 @@ function hasRangeAnywhere(node: any): boolean {
     if (/^\d+$/.test(key)) {
       const child = node[key];
       if (child != null && typeof child === "object" && !Array.isArray(child)) {
-        if (hasRangeAnywhere(child)) {
+        if (hasRangeAnywhere(child, depth + 1)) {
           return true;
         }
       }

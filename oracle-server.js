@@ -70,6 +70,8 @@ rl.on("close", () => {
 });
 
 // Handle errors gracefully - use stdout to maintain JSON protocol
+// Exit after uncaught exception as process state may be corrupted
 process.on("uncaughtException", (err) => {
   console.log(JSON.stringify({ html: "", tree: null, error: err.message }));
+  process.exit(1);
 });
