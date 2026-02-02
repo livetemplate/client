@@ -5,6 +5,16 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.2] - 2026-02-02
+
+### Changes
+
+- fix: use deep merge for update operations to preserve statics (#20) (a71c25d)
+- fix: preserve large integers as strings to prevent precision loss (#19) (8c13758)
+- feat: support auto-generated _k keys in range item matching (#18) (5d5f727)
+
+
+
 ## [v0.8.0] - 2026-01-18
 
 ### Changes
