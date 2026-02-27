@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.3] - 2026-02-27
+
+### Changes
+
+- chore: upgrade Go to 1.26 in CI workflows (#21) (dcf15f7)
+
+
+
 ## [v0.8.2] - 2026-02-02
 
 ### Changes
