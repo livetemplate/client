@@ -203,7 +203,8 @@ export class WebSocketManager {
     if (baseUrl) {
       return baseUrl;
     }
-    return `ws://${window.location.host}${liveUrl}`;
+    const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${wsScheme}//${window.location.host}${liveUrl}`;
   }
 
   private getLiveUrl(): string {
