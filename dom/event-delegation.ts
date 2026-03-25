@@ -106,6 +106,31 @@ export class EventDelegator {
             }
           }
 
+          // Auto-intercept forms without lvt-submit (progressive complexity).
+          // Resolve action from standard HTML: button name="action", form name, or default "".
+          if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
+            if (!element.hasAttribute("lvt-no-intercept")) {
+              const submitter = (e as SubmitEvent).submitter;
+              if (
+                submitter instanceof HTMLButtonElement &&
+                submitter.name === "action" &&
+                submitter.value
+              ) {
+                action = submitter.value;
+              } else if (element.name) {
+                action = element.name;
+              } else {
+                action = "";
+              }
+              actionElement = element;
+
+              // Collect data-* attributes from the submitter button
+              if (submitter) {
+                (element as any).__lvtSubmitter = submitter;
+              }
+            }
+          }
+
           if (!action && (eventType === "change" || eventType === "input" || eventType === "search")) {
             // For input/search events, also check lvt-change on the element itself
             // This handles: typing (input), clearing via X button (search/input), blur (change)
@@ -123,7 +148,7 @@ export class EventDelegator {
             }
           }
 
-          if (action && actionElement) {
+          if (action != null && actionElement) {
             if (eventType === "submit") {
               (window as any).__lvtActionFound = action;
               (window as any).__lvtActionElement = actionElement.tagName;
@@ -183,6 +208,8 @@ export class EventDelegator {
                 );
 
                 formData.forEach((value, key) => {
+                  // Exclude the "action" field used for routing (button name="action")
+                  if (key === "action") return;
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
                     this.logger.debug("Converted checkbox", key, "to true");
@@ -195,6 +222,19 @@ export class EventDelegator {
                     );
                   }
                 });
+
+                // Collect data-* attributes from the submitter button
+                const submitter = (targetElement as any).__lvtSubmitter as HTMLElement | undefined;
+                if (submitter) {
+                  Array.from(submitter.attributes).forEach((attr) => {
+                    if (attr.name.startsWith("data-") && attr.name !== "data-key") {
+                      const key = attr.name.slice(5);
+                      message.data[key] = this.context.parseValue(attr.value);
+                    }
+                  });
+                  delete (targetElement as any).__lvtSubmitter;
+                }
+
                 this.logger.debug("Form data collected:", message.data);
               } else if (eventType === "change" || eventType === "input" || eventType === "search") {
                 if (targetElement instanceof HTMLInputElement) {
