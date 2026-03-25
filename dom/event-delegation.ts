@@ -119,7 +119,7 @@ export class EventDelegator {
               } else if (element.name) {
                 action = element.name;
               } else {
-                action = "";
+                action = "submit";
               }
               actionElement = element;
 
