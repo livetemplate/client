@@ -13,6 +13,7 @@ import {
   handleScrollDirectives,
 } from "./dom/directives";
 import { EventDelegator } from "./dom/event-delegation";
+import { LinkInterceptor } from "./dom/link-interceptor";
 import { ObserverManager } from "./dom/observer-manager";
 import { ModalManager } from "./dom/modal-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
@@ -57,6 +58,7 @@ export class LiveTemplateClient {
     new WeakMap();
 
   private eventDelegator: EventDelegator;
+  private linkInterceptor: LinkInterceptor;
   private observerManager: ObserverManager;
   private modalManager: ModalManager;
   private formLifecycleManager: FormLifecycleManager;
@@ -163,6 +165,14 @@ export class LiveTemplateClient {
           this.uploadHandler.triggerPendingUploads(uploadName),
       },
       this.logger.child("EventDelegator")
+    );
+
+    this.linkInterceptor = new LinkInterceptor(
+      {
+        getWrapperElement: () => this.wrapperElement,
+        handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+      },
+      this.logger.child("LinkInterceptor")
     );
 
     this.observerManager = new ObserverManager(
@@ -364,6 +374,9 @@ export class LiveTemplateClient {
     // Set up autofocus delegation for lvt-autofocus attribute
     this.eventDelegator.setupAutofocusDelegation();
 
+    // Set up link interception for SPA navigation
+    this.linkInterceptor.setup(this.wrapperElement);
+
     // Set up reactive attribute listeners for lvt-{action}-on:{event} attributes
     setupReactiveAttributeListeners();
 
@@ -507,6 +520,37 @@ export class LiveTemplateClient {
     } catch (error) {
       this.logger.error("Failed to send HTTP request:", error);
     }
+  }
+
+  /**
+   * Handle navigation response from link interception.
+   * Extracts the wrapper content from the full HTML page and replaces
+   * the current wrapper content. Content comes from same-origin fetch
+   * responses only (link interceptor skips external origins).
+   */
+  private handleNavigationResponse(html: string): void {
+    if (!this.wrapperElement) return;
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const lvtId = this.wrapperElement.getAttribute("data-lvt-id");
+    const newWrapper = lvtId
+      ? doc.querySelector(`[data-lvt-id="${lvtId}"]`)
+      : null;
+
+    if (newWrapper) {
+      // Replace wrapper content with same-origin server response
+      // Safe: content is from our own server via same-origin fetch
+      this.wrapperElement.replaceChildren(...Array.from(newWrapper.childNodes).map(n => n.cloneNode(true)));
+    } else {
+      const body = doc.querySelector("body");
+      if (body) {
+        this.wrapperElement.replaceChildren(...Array.from(body.childNodes).map(n => n.cloneNode(true)));
+      }
+    }
+
+    this.eventDelegator.setupEventDelegation();
+    this.linkInterceptor.setup(this.wrapperElement);
   }
 
   /**

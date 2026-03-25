@@ -107,16 +107,15 @@ export class EventDelegator {
           }
 
           // Auto-intercept forms without lvt-submit (progressive complexity).
-          // Resolve action from standard HTML: button name="action", form name, or default "".
+          // Button name IS the action. Resolution order:
+          //   1. submitter.name (button name = action)
+          //   2. form.name (form name = action)
+          //   3. "" (server defaults to Submit())
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
             if (!element.hasAttribute("lvt-no-intercept")) {
               const submitter = (e as SubmitEvent).submitter;
-              if (
-                submitter instanceof HTMLButtonElement &&
-                submitter.name === "action" &&
-                submitter.value
-              ) {
-                action = submitter.value;
+              if (submitter instanceof HTMLButtonElement && submitter.name) {
+                action = submitter.name;
               } else if (element.name) {
                 action = element.name;
               } else {
@@ -124,9 +123,15 @@ export class EventDelegator {
               }
               actionElement = element;
 
-              // Collect data-* attributes from the submitter button
               if (submitter) {
                 (element as any).__lvtSubmitter = submitter;
+              }
+
+              // Dialog support: forms with method="dialog" inside <dialog>
+              // close the dialog AND route the action to the server.
+              const dialog = element.closest("dialog");
+              if (dialog && element.getAttribute("method")?.toLowerCase() === "dialog") {
+                (element as any).__lvtCloseDialog = dialog;
               }
             }
           }
@@ -207,9 +212,13 @@ export class EventDelegator {
                   ).map((el) => (el as HTMLInputElement).name)
                 );
 
+                // Determine which form field key is the action routing key
+                // (the submitter button's name, or "action"/"lvt-action" legacy fields)
+                const submitterForData = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
+                const actionFieldName = submitterForData?.name || "action";
+
                 formData.forEach((value, key) => {
-                  // Exclude the "action" field used for routing (button name="action")
-                  if (key === "action") return;
+                  if (key === actionFieldName || key === "action" || key === "lvt-action") return;
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
                     this.logger.debug("Converted checkbox", key, "to true");
@@ -223,10 +232,15 @@ export class EventDelegator {
                   }
                 });
 
-                // Collect data-* attributes from the submitter button
-                const submitter = (targetElement as any).__lvtSubmitter as HTMLElement | undefined;
-                if (submitter) {
-                  Array.from(submitter.attributes).forEach((attr) => {
+                // Collect data from the submitter button:
+                // - button value → data.value (e.g., <button name="delete" value="{{.ID}}">)
+                // - data-* attributes → data keys
+                const submitter2 = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
+                if (submitter2) {
+                  if (submitter2.value) {
+                    message.data.value = this.context.parseValue(submitter2.value);
+                  }
+                  Array.from(submitter2.attributes).forEach((attr) => {
                     if (attr.name.startsWith("data-") && attr.name !== "data-key") {
                       const key = attr.name.slice(5);
                       message.data[key] = this.context.parseValue(attr.value);
@@ -321,6 +335,15 @@ export class EventDelegator {
 
               this.context.send(message);
               this.logger.debug("send() called");
+
+              // Close dialog if this was a method="dialog" form inside <dialog>
+              if (targetElement instanceof HTMLFormElement) {
+                const dialogToClose = (targetElement as any).__lvtCloseDialog as HTMLDialogElement | undefined;
+                if (dialogToClose) {
+                  dialogToClose.close();
+                  delete (targetElement as any).__lvtCloseDialog;
+                }
+              }
             };
 
             const throttleValue = actionElement.getAttribute("lvt-throttle");

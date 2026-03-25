@@ -19,6 +19,15 @@ export class FormLifecycleManager {
     this.activeForm = form;
     this.activeButton = button;
     this.originalButtonText = originalButtonText;
+
+    // Auto aria-busy + fieldset disabled for loading states
+    if (form) {
+      form.setAttribute("aria-busy", "true");
+      const fieldset = form.querySelector("fieldset");
+      if (fieldset) {
+        fieldset.disabled = true;
+      }
+    }
   }
 
   handleResponse(meta: ResponseMetadata): void {
@@ -71,6 +80,14 @@ export class FormLifecycleManager {
   }
 
   private restoreFormState(): void {
+    if (this.activeForm) {
+      this.activeForm.removeAttribute("aria-busy");
+      const fieldset = this.activeForm.querySelector("fieldset");
+      if (fieldset) {
+        fieldset.disabled = false;
+      }
+    }
+
     if (this.activeButton && this.originalButtonText !== null) {
       this.activeButton.disabled = false;
       this.activeButton.textContent = this.originalButtonText;
