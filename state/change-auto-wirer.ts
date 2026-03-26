@@ -5,9 +5,14 @@ import type { Logger } from "../utils/logger";
 
 export type BindingType = "value" | "content" | "attribute";
 
+export interface ChangeMessage {
+  action: "change";
+  data: Record<string, string | boolean>;
+}
+
 export interface ChangeAutoWirerContext {
   getWrapperElement(): Element | null;
-  send(message: any): void;
+  send(message: ChangeMessage): void;
 }
 
 /**
@@ -51,8 +56,16 @@ export class ChangeAutoWirer {
     const wrapper = this.context.getWrapperElement();
     if (!wrapper) return;
 
+    // Evict stale entries for elements removed by morphdom
+    for (const el of this.elementCleanups.keys()) {
+      if (!el.isConnected) {
+        this.elementCleanups.get(el)!();
+        this.elementCleanups.delete(el);
+      }
+    }
+
     for (const [fieldName, bindingType] of this.boundFields) {
-      const escapedName = fieldName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const escapedName = this.escapeCSSSelector(fieldName);
       const elements = wrapper.querySelectorAll(`[name="${escapedName}"]`);
 
       for (const el of elements) {
@@ -163,6 +176,17 @@ export class ChangeAutoWirer {
    * Extract the unclosed tag fragment at the end of a static string.
    * Returns null if the string does not end inside an open tag.
    */
+  /**
+   * Escape a string for use in a CSS attribute selector.
+   * Uses CSS.escape when available (browsers), falls back to manual escaping.
+   */
+  private escapeCSSSelector(value: string): string {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
   private extractUnclosedTag(text: string): string | null {
     const lastOpen = text.lastIndexOf("<");
     const lastClose = text.lastIndexOf(">");
@@ -214,7 +238,7 @@ export class ChangeAutoWirer {
     const sendChange = () => {
       if (!this.enabled) return;
 
-      const value =
+      const value: string | boolean =
         bindingType === "attribute"
           ? (element as HTMLInputElement).checked
           : (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)

@@ -188,7 +188,7 @@ export class LiveTemplateClient {
     this.changeAutoWirer = new ChangeAutoWirer(
       {
         getWrapperElement: () => this.wrapperElement,
-        send: (message: any) => this.send(message),
+        send: (message) => this.send(message),
       },
       this.logger.child("ChangeAutoWirer")
     );
