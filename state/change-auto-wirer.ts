@@ -40,9 +40,9 @@ export class ChangeAutoWirer {
   }
 
   analyzeStatics(treeState: TreeNode): void {
-    const prevSize = this.boundFields.size;
+    this.boundFields.clear();
     this.walkTree(treeState);
-    if (this.boundFields.size > prevSize) {
+    if (this.boundFields.size > 0) {
       this.logger.debug(
         `Detected ${this.boundFields.size} bound field(s):`,
         Array.from(this.boundFields.keys())
@@ -173,21 +173,18 @@ export class ChangeAutoWirer {
     return null;
   }
 
-  /**
-   * Extract the unclosed tag fragment at the end of a static string.
-   * Returns null if the string does not end inside an open tag.
-   */
-  /**
-   * Escape a string for use in a CSS attribute selector.
-   * Uses CSS.escape when available (browsers), falls back to manual escaping.
-   */
   private escapeCSSSelector(value: string): string {
     if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
       return CSS.escape(value);
     }
+    // Fallback for test environments without CSS.escape
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
+  /**
+   * Extract the unclosed tag fragment at the end of a static string.
+   * Returns null if the string does not end inside an open tag.
+   */
   private extractUnclosedTag(text: string): string | null {
     const lastOpen = text.lastIndexOf("<");
     const lastClose = text.lastIndexOf(">");
