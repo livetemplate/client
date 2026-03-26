@@ -13,6 +13,7 @@ export interface ResponseMetadata {
   success: boolean;
   errors: { [key: string]: string };
   action?: string;
+  capabilities?: string[];
 }
 
 export interface UpdateResponse {

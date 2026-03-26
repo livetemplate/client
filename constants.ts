@@ -1,3 +1,5 @@
+export const DEFAULT_CHANGE_DEBOUNCE_MS = 300;
+
 export const FOCUSABLE_INPUTS = [
   "text",
   "textarea",

@@ -21,6 +21,7 @@ import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
+import { ChangeAutoWirer } from "./state/change-auto-wirer";
 import { WebSocketManager } from "./transport/websocket";
 import { UploadHandler } from "./upload/upload-handler";
 import type {
@@ -65,6 +66,7 @@ export class LiveTemplateClient {
   private loadingIndicator: LoadingIndicator;
   private formDisabler: FormDisabler;
   private uploadHandler: UploadHandler;
+  private changeAutoWirer: ChangeAutoWirer;
 
   // Initialization tracking for loading indicator
   private isInitialized: boolean = false;
@@ -181,6 +183,14 @@ export class LiveTemplateClient {
         send: (message: any) => this.send(message),
       },
       this.logger.child("ObserverManager")
+    );
+
+    this.changeAutoWirer = new ChangeAutoWirer(
+      {
+        getWrapperElement: () => this.wrapperElement,
+        send: (message: any) => this.send(message),
+      },
+      this.logger.child("ChangeAutoWirer")
     );
 
     this.webSocketManager = new WebSocketManager({
@@ -314,6 +324,13 @@ export class LiveTemplateClient {
     }
 
     if (this.wrapperElement) {
+      // On first message, set up change auto-wiring before updateDOM so that
+      // wireElements() inside updateDOM can wire inputs in a single pass.
+      if (this.messageCount === 0 && response.meta?.capabilities) {
+        this.changeAutoWirer.setCapabilities(response.meta.capabilities);
+        this.changeAutoWirer.analyzeStatics(response.tree);
+      }
+
       this.updateDOM(this.wrapperElement, response.tree, response.meta);
       this.messageCount++;
       (window as any).__wsMessageCount = this.messageCount;
@@ -396,6 +413,7 @@ export class LiveTemplateClient {
     this.ws = null;
     this.useHTTP = false;
     this.observerManager.teardown();
+    this.changeAutoWirer.teardown();
     this.formLifecycleManager.reset();
     this.loadingIndicator.hide();
     this.formDisabler.enable(this.wrapperElement);
@@ -762,6 +780,9 @@ export class LiveTemplateClient {
     // Initialize upload file inputs
     this.uploadHandler.initializeFileInputs(element);
 
+    // Auto-wire change listeners for bound form fields
+    this.changeAutoWirer.wireElements();
+
     // Handle form lifecycle if metadata is present
     if (meta) {
       this.formLifecycleManager.handleResponse(meta);
@@ -803,6 +824,7 @@ export class LiveTemplateClient {
     this.treeRenderer.reset();
     this.focusManager.reset();
     this.observerManager.teardown();
+    this.changeAutoWirer.teardown();
     this.formLifecycleManager.reset();
     this.loadingIndicator.hide();
     this.formDisabler.enable(this.wrapperElement);
