@@ -245,7 +245,8 @@ export class ChangeAutoWirer {
       if (!this.enabled) return;
 
       const value: string | boolean =
-        bindingType === "attribute"
+        bindingType === "attribute" &&
+        (element as HTMLInputElement).type === "checkbox"
           ? (element as HTMLInputElement).checked
           : (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)
               .value;

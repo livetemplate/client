@@ -463,6 +463,37 @@ describe("ChangeAutoWirer", () => {
       });
     });
 
+    it("handles radio buttons (sends value, not boolean)", () => {
+      const radio1 = document.createElement("input");
+      radio1.type = "radio";
+      radio1.setAttribute("name", "Color");
+      radio1.value = "red";
+      wrapper.appendChild(radio1);
+
+      const radio2 = document.createElement("input");
+      radio2.type = "radio";
+      radio2.setAttribute("name", "Color");
+      radio2.value = "blue";
+      wrapper.appendChild(radio2);
+
+      setupWirer({
+        s: ['<input type="radio" name="Color" ', ">"],
+        "0": "checked",
+      });
+
+      wirer.wireElements();
+
+      radio2.checked = true;
+      radio2.dispatchEvent(new Event("change", { bubbles: true }));
+
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).toHaveBeenCalledWith({
+        action: "change",
+        data: { Color: "blue" },
+      });
+    });
+
     it("handles textarea elements", () => {
       const textarea = document.createElement("textarea");
       textarea.setAttribute("name", "Bio");
