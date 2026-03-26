@@ -40,9 +40,9 @@ export class ChangeAutoWirer {
   }
 
   analyzeStatics(treeState: TreeNode): void {
-    this.boundFields.clear();
+    const prevSize = this.boundFields.size;
     this.walkTree(treeState);
-    if (this.boundFields.size > 0) {
+    if (this.boundFields.size > prevSize) {
       this.logger.debug(
         `Detected ${this.boundFields.size} bound field(s):`,
         Array.from(this.boundFields.keys())
@@ -238,7 +238,8 @@ export class ChangeAutoWirer {
   ): void {
     const customDebounce = element.getAttribute("lvt-debounce");
     const parsed = customDebounce ? parseInt(customDebounce, 10) : NaN;
-    const wait = Number.isNaN(parsed) ? DEFAULT_CHANGE_DEBOUNCE_MS : parsed;
+    const wait =
+      Number.isNaN(parsed) || parsed < 0 ? DEFAULT_CHANGE_DEBOUNCE_MS : parsed;
 
     const sendChange = () => {
       if (!this.enabled) return;

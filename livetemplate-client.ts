@@ -327,12 +327,12 @@ export class LiveTemplateClient {
       if (response.meta?.capabilities) {
         this.changeAutoWirer.setCapabilities(response.meta.capabilities);
       }
+      // Analyze statics before updateDOM so wireElements() inside updateDOM
+      // has bound fields to work with. Additive: new fields from conditionally
+      // rendered templates are detected as they appear in updates.
+      this.changeAutoWirer.analyzeStatics(response.tree);
 
       this.updateDOM(this.wrapperElement, response.tree, response.meta);
-
-      // Re-analyze full tree state after update so conditionally rendered
-      // fields are detected when they appear (and pruned when they disappear)
-      this.changeAutoWirer.analyzeStatics(this.treeRenderer.getTreeState());
       this.messageCount++;
       (window as any).__wsMessageCount = this.messageCount;
 
