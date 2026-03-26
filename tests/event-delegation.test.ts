@@ -608,6 +608,32 @@ describe("EventDelegator", () => {
       });
     });
 
+    it("type=submit orphan button triggers action (no form to submit)", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-12");
+      wrapper.innerHTML = `<button id="btn" type="submit" name="save">Save</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      // type="submit" outside a form has no form to submit —
+      // treated as an orphan button, triggers the named action.
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "save",
+        data: {},
+      });
+    });
+
     it("lvt-click takes priority over orphan button name", () => {
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-lvt-id", "wrapper-orphan-10");
