@@ -676,5 +676,30 @@ describe("EventDelegator", () => {
 
       expect(context.send).not.toHaveBeenCalled();
     });
+
+    it("clicking child element inside orphan button still extracts data", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-13");
+      wrapper.innerHTML = `<button id="btn" name="toggle" value="99" data-id="5"><span id="icon">★</span></button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      // Click the child <span>, not the button directly
+      document.getElementById("icon")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "toggle",
+        data: { value: "99", id: "5" },
+      });
+    });
   });
 });

@@ -27,7 +27,7 @@ export class EventDelegator {
     private readonly logger: Logger
   ) {}
 
-  private extractButtonData(button: HTMLButtonElement, data: Record<string, any>): void {
+  private extractButtonData(button: HTMLButtonElement | HTMLInputElement, data: Record<string, any>): void {
     if (button.value) {
       data.value = this.context.parseValue(button.value);
     }
@@ -131,9 +131,8 @@ export class EventDelegator {
               btn.name &&
               !btn.disabled &&
               btn.type !== "reset" &&
-              !btn.hasAttribute("form") &&
-              !btn.hasAttribute("commandfor") &&
-              !btn.closest("form")
+              btn.form === null &&
+              !btn.hasAttribute("commandfor")
             ) {
               action = btn.name;
               actionElement = btn;
@@ -296,8 +295,8 @@ export class EventDelegator {
                 }
               }
 
-              if (isOrphanButton && targetElement instanceof HTMLButtonElement) {
-                this.extractButtonData(targetElement, message.data);
+              if (isOrphanButton) {
+                this.extractButtonData(actionElement as HTMLButtonElement, message.data);
               }
 
               Array.from(targetElement.attributes).forEach((attr) => {
