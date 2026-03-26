@@ -324,12 +324,12 @@ export class LiveTemplateClient {
     }
 
     if (this.wrapperElement) {
-      // On first message, set up change auto-wiring before updateDOM so that
-      // wireElements() inside updateDOM can wire inputs in a single pass.
-      if (this.messageCount === 0 && response.meta?.capabilities) {
+      // Set capabilities once from initial render; analyze statics on every
+      // message so conditionally rendered fields are detected when they appear.
+      if (response.meta?.capabilities) {
         this.changeAutoWirer.setCapabilities(response.meta.capabilities);
-        this.changeAutoWirer.analyzeStatics(response.tree);
       }
+      this.changeAutoWirer.analyzeStatics(response.tree);
 
       this.updateDOM(this.wrapperElement, response.tree, response.meta);
       this.messageCount++;

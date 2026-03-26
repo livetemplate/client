@@ -23,7 +23,7 @@ export interface ChangeAutoWirerContext {
 export class ChangeAutoWirer {
   private boundFields: Map<string, BindingType> = new Map();
   private enabled: boolean = false;
-  private wiredElements: WeakSet<Element> = new WeakSet();
+  private wiredElements: Set<Element> = new Set();
   private elementCleanups: Map<Element, () => void> = new Map();
 
   constructor(
@@ -40,9 +40,9 @@ export class ChangeAutoWirer {
   }
 
   analyzeStatics(treeState: TreeNode): void {
-    this.boundFields.clear();
+    const prevSize = this.boundFields.size;
     this.walkTree(treeState);
-    if (this.boundFields.size > 0) {
+    if (this.boundFields.size > prevSize) {
       this.logger.debug(
         `Detected ${this.boundFields.size} bound field(s):`,
         Array.from(this.boundFields.keys())
@@ -56,11 +56,12 @@ export class ChangeAutoWirer {
     const wrapper = this.context.getWrapperElement();
     if (!wrapper) return;
 
-    // Evict stale entries for elements removed by morphdom
+    // Evict stale entries for elements removed by morphdom so they can be re-wired
     for (const el of this.elementCleanups.keys()) {
       if (!el.isConnected) {
         this.elementCleanups.get(el)!();
         this.elementCleanups.delete(el);
+        this.wiredElements.delete(el);
       }
     }
 
@@ -100,7 +101,7 @@ export class ChangeAutoWirer {
       cleanup();
     }
     this.elementCleanups.clear();
-    this.wiredElements = new WeakSet();
+    this.wiredElements.clear();
     this.boundFields.clear();
     this.enabled = false;
   }
@@ -214,14 +215,21 @@ export class ChangeAutoWirer {
     return tagMatch ? tagMatch[1] : null;
   }
 
-  /** Detects: <input name="X" {{if .X}}checked{{end}}> */
+  /** Detects: <input type="checkbox" name="X" {{if .X}}checked{{end}}> */
   private detectAttributeBinding(left: string, right: string): string | null {
     if (!left.endsWith(" ")) return null;
     if (!/^[a-zA-Z>/\s]/.test(right)) return null;
 
     const partialTag = this.extractUnclosedTag(left);
     if (!partialTag) return null;
-    if (!/^<(input|select|option)\s/i.test(partialTag)) return null;
+
+    // Only checkbox/radio inputs use attribute bindings (checked),
+    // since attachListener reads .checked for this binding type
+    if (!/^<input\s/i.test(partialTag)) return null;
+    const typeMatch = partialTag.match(/\stype="([^"]+)"/i);
+    if (!typeMatch) return null;
+    const inputType = typeMatch[1].toLowerCase();
+    if (inputType !== "checkbox" && inputType !== "radio") return null;
 
     return this.extractNameFromTag(partialTag);
   }
