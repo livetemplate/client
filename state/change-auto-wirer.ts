@@ -106,7 +106,7 @@ export class ChangeAutoWirer {
     this.enabled = false;
   }
 
-  getBoundFields(): Map<string, BindingType> {
+  getBoundFields(): ReadonlyMap<string, BindingType> {
     return this.boundFields;
   }
 
@@ -177,7 +177,9 @@ export class ChangeAutoWirer {
     if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
       return CSS.escape(value);
     }
-    // Fallback for test environments without CSS.escape
+    // Fallback for jsdom test environment only. Browsers always have CSS.escape.
+    // This handles the common cases; field names with brackets/dots would need
+    // CSS.escape which is not available in jsdom.
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
