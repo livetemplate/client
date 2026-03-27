@@ -27,6 +27,18 @@ export class EventDelegator {
     private readonly logger: Logger
   ) {}
 
+  private extractButtonData(button: HTMLButtonElement | HTMLInputElement, data: Record<string, any>): void {
+    if (button.value) {
+      data.value = this.context.parseValue(button.value);
+    }
+    Array.from(button.attributes).forEach((attr) => {
+      if (attr.name.startsWith("data-") && attr.name !== "data-key") {
+        const key = attr.name.slice(5);
+        data[key] = this.context.parseValue(attr.value);
+      }
+    });
+  }
+
   setupEventDelegation(): void {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
@@ -96,6 +108,7 @@ export class EventDelegator {
         while (element && element !== currentWrapper.parentElement) {
           let action = element.getAttribute(attrName);
           let actionElement = element;
+          let isOrphanButton = false;
 
           // Check for lvt-persist on form submit (auto-persist to database)
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
@@ -103,6 +116,27 @@ export class EventDelegator {
             if (persistTable) {
               action = `persist:${persistTable}`;
               actionElement = element;
+            }
+          }
+
+          // Orphan button detection (Tier 1: formless standalone buttons).
+          // A <button name="action"> outside any form triggers the named action directly.
+          // Resolution order for click events:
+          //   1. lvt-click attribute (Tier 2 — already checked above)
+          //   2. Orphan button name (Tier 1 — checked here)
+          if (!action && eventType === "click") {
+            const btn = element instanceof HTMLButtonElement ? element : null;
+            if (
+              btn &&
+              btn.name &&
+              !btn.disabled &&
+              btn.type !== "reset" &&
+              btn.form === null &&
+              !btn.hasAttribute("commandfor")
+            ) {
+              action = btn.name;
+              actionElement = btn;
+              isOrphanButton = true;
             }
           }
 
@@ -237,15 +271,7 @@ export class EventDelegator {
                 // - data-* attributes → data keys
                 const submitter2 = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
                 if (submitter2) {
-                  if (submitter2.value) {
-                    message.data.value = this.context.parseValue(submitter2.value);
-                  }
-                  Array.from(submitter2.attributes).forEach((attr) => {
-                    if (attr.name.startsWith("data-") && attr.name !== "data-key") {
-                      const key = attr.name.slice(5);
-                      message.data[key] = this.context.parseValue(attr.value);
-                    }
-                  });
+                  this.extractButtonData(submitter2, message.data);
                   delete (targetElement as any).__lvtSubmitter;
                 }
 
@@ -267,6 +293,10 @@ export class EventDelegator {
                     targetElement.value
                   );
                 }
+              }
+
+              if (isOrphanButton) {
+                this.extractButtonData(actionElement as HTMLButtonElement, message.data);
               }
 
               Array.from(targetElement.attributes).forEach((attr) => {

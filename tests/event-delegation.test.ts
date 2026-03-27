@@ -396,4 +396,310 @@ describe("EventDelegator", () => {
       expect(input.getAttribute("data-lvt-autofocused")).toBe("true");
     });
   });
+
+  describe("orphan buttons (formless standalone)", () => {
+    it("button with name triggers action", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-1");
+      wrapper.innerHTML = `<button id="inc" name="increment">+</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("inc")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "increment",
+        data: {},
+      });
+    });
+
+    it("button value is sent as data", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-2");
+      wrapper.innerHTML = `<button id="del" name="delete" value="42">Delete</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("del")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "delete",
+        data: { value: "42" },
+      });
+    });
+
+    it("button data-* attributes are sent as data", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-3");
+      wrapper.innerHTML = `<button id="edit" name="edit" data-id="7" data-mode="quick">Edit</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("edit")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "edit",
+        data: { id: "7", mode: "quick" },
+      });
+    });
+
+    it("button inside form routes through form submit, not orphan path", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-4");
+      wrapper.innerHTML = `<form><button id="btn" name="save">Save</button></form>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      // Clicking a button inside a form triggers form submission.
+      // The action routes through the submit path (setActiveSubmission called),
+      // NOT the orphan button click path.
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "save" })
+      );
+      expect(context.setActiveSubmission).toHaveBeenCalled();
+    });
+
+    it("button with form attribute routes through form submit, not orphan path", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-5");
+      wrapper.innerHTML = `<form id="myform"></form><button id="btn" form="myform" name="save">Save</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      // Clicking a button with form="myform" triggers submission of the associated form.
+      // The action routes through the submit path (setActiveSubmission called),
+      // NOT the orphan button click path.
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "save" })
+      );
+      expect(context.setActiveSubmission).toHaveBeenCalled();
+    });
+
+    it("button without name is ignored", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-6");
+      wrapper.innerHTML = `<button id="btn">Click me</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("type=reset button is ignored", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-7");
+      wrapper.innerHTML = `<button id="btn" type="reset" name="reset">Reset</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("disabled button is ignored", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-8");
+      wrapper.innerHTML = `<button id="btn" name="action" disabled>Disabled</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("type=button with name triggers action", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-9");
+      wrapper.innerHTML = `<button id="btn" type="button" name="doThing">Do Thing</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "doThing",
+        data: {},
+      });
+    });
+
+    it("type=submit orphan button triggers action (no form to submit)", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-12");
+      wrapper.innerHTML = `<button id="btn" type="submit" name="save">Save</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      // type="submit" outside a form has no form to submit —
+      // treated as an orphan button, triggers the named action.
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "save",
+        data: {},
+      });
+    });
+
+    it("lvt-click takes priority over orphan button name", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-10");
+      wrapper.innerHTML = `<button id="btn" lvt-click="tier2action" name="tier1action">Button</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "tier2action" })
+      );
+    });
+
+    it("button with commandfor is ignored", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-11");
+      wrapper.innerHTML = `<button id="btn" name="show" commandfor="dialog1" command="show-modal">Open</button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      document.getElementById("btn")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("clicking child element inside orphan button still extracts data", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-orphan-13");
+      wrapper.innerHTML = `<button id="btn" name="toggle" value="99" data-id="5"><span id="icon">★</span></button>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      // Click the child <span>, not the button directly
+      document.getElementById("icon")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "toggle",
+        data: { value: "99", id: "5" },
+      });
+    });
+  });
 });
