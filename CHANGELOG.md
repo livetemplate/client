@@ -5,6 +5,17 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.7] - 2026-03-27
+
+### Changes
+
+- feat: formless standalone button support (#29) (55c4dca)
+- feat: implement Change() auto-inference client support (#25) (64476eb)
+- feat: auto-intercept forms for progressive complexity (#23) (b4b9672)
+- fix: use wss:// for WebSocket on HTTPS pages (#22) (398f752)
+
+
+
 ## [v0.8.6] - 2026-03-26
 
 ### Changes
