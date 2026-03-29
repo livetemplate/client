@@ -181,6 +181,33 @@ export class FocusManager {
     return false;
   }
 
+  shouldSkipUpdate(el: Element): boolean {
+    if (!this.lastFocusedElement || el !== this.lastFocusedElement) {
+      return false;
+    }
+
+    if (el.hasAttribute("data-lvt-force-update")) {
+      return false;
+    }
+
+    if (this.isTextualInput(el)) {
+      return true;
+    }
+
+    if (el instanceof HTMLSelectElement) {
+      return true;
+    }
+
+    if (el instanceof HTMLInputElement) {
+      const type = el.type.toLowerCase();
+      if (type === "checkbox" || type === "radio") {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   getLastFocusedElement(): HTMLElement | null {
     return this.lastFocusedElement;
   }

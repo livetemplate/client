@@ -1,5 +1,12 @@
 import { FocusManager } from "../dom/focus-manager";
+import { FOCUSABLE_INPUTS } from "../constants";
 import { createLogger } from "../utils/logger";
+
+function createManager(): FocusManager {
+  return new FocusManager(
+    createLogger({ scope: "FocusManagerTest", level: "silent" })
+  );
+}
 
 describe("FocusManager", () => {
   beforeEach(() => {
@@ -57,5 +64,98 @@ describe("FocusManager", () => {
 
     expect(() => manager.restoreFocusedElement()).not.toThrow();
     expect(document.activeElement).not.toBe(input);
+  });
+
+  describe("shouldSkipUpdate", () => {
+    it("returns true for focused text input", () => {
+      const input = document.createElement("input");
+      input.type = "text";
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input;
+
+      expect(manager.shouldSkipUpdate(input)).toBe(true);
+    });
+
+    it("returns true for focused textarea", () => {
+      const textarea = document.createElement("textarea");
+      const manager = createManager();
+      (manager as any).lastFocusedElement = textarea;
+
+      expect(manager.shouldSkipUpdate(textarea)).toBe(true);
+    });
+
+    it("returns true for focused select", () => {
+      const select = document.createElement("select");
+      const manager = createManager();
+      (manager as any).lastFocusedElement = select;
+
+      expect(manager.shouldSkipUpdate(select)).toBe(true);
+    });
+
+    it("returns true for focused checkbox", () => {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input;
+
+      expect(manager.shouldSkipUpdate(input)).toBe(true);
+    });
+
+    it("returns true for focused radio", () => {
+      const input = document.createElement("input");
+      input.type = "radio";
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input;
+
+      expect(manager.shouldSkipUpdate(input)).toBe(true);
+    });
+
+    it("returns false for non-focused element", () => {
+      const input1 = document.createElement("input");
+      input1.type = "text";
+      const input2 = document.createElement("input");
+      input2.type = "text";
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input1;
+
+      expect(manager.shouldSkipUpdate(input2)).toBe(false);
+    });
+
+    it("returns false when no element is focused", () => {
+      const input = document.createElement("input");
+      input.type = "text";
+      const manager = createManager();
+
+      expect(manager.shouldSkipUpdate(input)).toBe(false);
+    });
+
+    it("returns false for focused element with data-lvt-force-update", () => {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("data-lvt-force-update", "");
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input;
+
+      expect(manager.shouldSkipUpdate(input)).toBe(false);
+    });
+
+    it("returns false for focused button", () => {
+      const button = document.createElement("button");
+      const manager = createManager();
+      (manager as any).lastFocusedElement = button;
+
+      expect(manager.shouldSkipUpdate(button)).toBe(false);
+    });
+
+    it.each(
+      FOCUSABLE_INPUTS.filter((t) => t !== "textarea").map((type) => [type])
+    )("returns true for focused input[type=%s]", (type) => {
+      const input = document.createElement("input");
+      input.type = type;
+      const manager = createManager();
+      (manager as any).lastFocusedElement = input;
+
+      expect(manager.shouldSkipUpdate(input)).toBe(true);
+    });
   });
 });
