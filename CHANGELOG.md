@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.9] - 2026-03-30
+
+### Changes
+
+- fix: harden release script with clean build and verification (#37) (b2b59e4)
+- fix: pull latest from remote before releasing (#36) (74d6f74)
+
+
+
 ## [v0.8.8] - 2026-03-29
 
 ### Changes
