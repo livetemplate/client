@@ -407,14 +407,18 @@ main() {
         exit 1
     fi
     if [ "$dry_run_mode" = true ]; then
+        # Fetch updates remote-tracking refs (minor side effect) but does not alter the working tree
         log_step "Dry run: checking if branch is behind origin/$branch"
-        git fetch origin "$branch" --quiet 2>/dev/null
-        local behind
-        behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
-        if [ "$behind" -gt 0 ]; then
-            log_warn "Local branch is $behind commit(s) behind origin/$branch"
+        if ! git fetch origin "$branch" --quiet 2>&1; then
+            log_warn "Could not fetch origin/$branch — unable to check if branch is up to date"
         else
-            log_info "Branch is up to date with origin/$branch"
+            local behind
+            behind=$(git rev-list --count HEAD..origin/"$branch")
+            if [ "$behind" -gt 0 ]; then
+                log_warn "Local branch is $behind commit(s) behind origin/$branch"
+            else
+                log_info "Branch is up to date with origin/$branch"
+            fi
         fi
     else
         log_step "Pulling latest changes from origin/$branch"
