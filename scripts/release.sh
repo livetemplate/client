@@ -402,12 +402,20 @@ main() {
     # Sync with remote before releasing
     local branch
     branch=$(git rev-parse --abbrev-ref HEAD)
-    log_step "Pulling latest changes from origin/$branch"
-    git pull --rebase origin "$branch" || {
-        log_error "Failed to pull from origin/$branch. Resolve conflicts and try again."
+    if [ "$branch" = "HEAD" ]; then
+        log_error "Detached HEAD state. Run the release from a named branch (e.g., main)."
         exit 1
-    }
-    log_info "Up to date with origin/$branch"
+    fi
+    if [ "$dry_run_mode" = true ]; then
+        log_step "Dry run: skipping 'git pull --ff-only origin/$branch'"
+    else
+        log_step "Pulling latest changes from origin/$branch"
+        git pull --ff-only origin "$branch" || {
+            log_error "Local branch has diverged from origin/$branch. Resolve manually before releasing."
+            exit 1
+        }
+        log_info "Up to date with origin/$branch"
+    fi
 
     # Get current version
     current_version=$(get_current_version)
