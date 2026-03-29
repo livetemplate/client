@@ -409,7 +409,7 @@ main() {
     if [ "$dry_run_mode" = true ]; then
         # Note: fetch updates remote-tracking refs in .git — a minor side effect required to check sync state
         log_step "Dry run: fetching origin/$branch to check sync state (network call)"
-        if ! git fetch origin "$branch" --quiet 2>/dev/null; then
+        if ! git fetch origin "$branch" --quiet; then
             log_error "Could not fetch origin/$branch — cannot verify branch is up to date."
             exit 1
         else
