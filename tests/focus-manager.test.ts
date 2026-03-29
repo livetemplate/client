@@ -67,47 +67,31 @@ describe("FocusManager", () => {
   });
 
   describe("shouldSkipUpdate", () => {
+    const manager = createManager();
+
     it("returns true for focused text input", () => {
       const input = document.createElement("input");
       input.type = "text";
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input;
+      document.body.appendChild(input);
+      input.focus();
 
       expect(manager.shouldSkipUpdate(input)).toBe(true);
     });
 
     it("returns true for focused textarea", () => {
       const textarea = document.createElement("textarea");
-      const manager = createManager();
-      (manager as any).lastFocusedElement = textarea;
+      document.body.appendChild(textarea);
+      textarea.focus();
 
       expect(manager.shouldSkipUpdate(textarea)).toBe(true);
     });
 
     it("returns true for focused select", () => {
       const select = document.createElement("select");
-      const manager = createManager();
-      (manager as any).lastFocusedElement = select;
+      document.body.appendChild(select);
+      select.focus();
 
       expect(manager.shouldSkipUpdate(select)).toBe(true);
-    });
-
-    it("returns true for focused checkbox", () => {
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input;
-
-      expect(manager.shouldSkipUpdate(input)).toBe(true);
-    });
-
-    it("returns true for focused radio", () => {
-      const input = document.createElement("input");
-      input.type = "radio";
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input;
-
-      expect(manager.shouldSkipUpdate(input)).toBe(true);
     });
 
     it("returns false for non-focused element", () => {
@@ -115,8 +99,9 @@ describe("FocusManager", () => {
       input1.type = "text";
       const input2 = document.createElement("input");
       input2.type = "text";
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input1;
+      document.body.appendChild(input1);
+      document.body.appendChild(input2);
+      input1.focus();
 
       expect(manager.shouldSkipUpdate(input2)).toBe(false);
     });
@@ -124,7 +109,7 @@ describe("FocusManager", () => {
     it("returns false when no element is focused", () => {
       const input = document.createElement("input");
       input.type = "text";
-      const manager = createManager();
+      document.body.appendChild(input);
 
       expect(manager.shouldSkipUpdate(input)).toBe(false);
     });
@@ -133,18 +118,29 @@ describe("FocusManager", () => {
       const input = document.createElement("input");
       input.type = "text";
       input.setAttribute("data-lvt-force-update", "");
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input;
+      document.body.appendChild(input);
+      input.focus();
 
       expect(manager.shouldSkipUpdate(input)).toBe(false);
     });
 
     it("returns false for focused button", () => {
       const button = document.createElement("button");
-      const manager = createManager();
-      (manager as any).lastFocusedElement = button;
+      document.body.appendChild(button);
+      button.focus();
 
       expect(manager.shouldSkipUpdate(button)).toBe(false);
+    });
+
+    it("returns false after element is blurred", () => {
+      const input = document.createElement("input");
+      input.type = "text";
+      document.body.appendChild(input);
+      input.focus();
+      expect(manager.shouldSkipUpdate(input)).toBe(true);
+
+      input.blur();
+      expect(manager.shouldSkipUpdate(input)).toBe(false);
     });
 
     it.each(
@@ -152,8 +148,8 @@ describe("FocusManager", () => {
     )("returns true for focused input[type=%s]", (type) => {
       const input = document.createElement("input");
       input.type = type;
-      const manager = createManager();
-      (manager as any).lastFocusedElement = input;
+      document.body.appendChild(input);
+      input.focus();
 
       expect(manager.shouldSkipUpdate(input)).toBe(true);
     });

@@ -182,7 +182,7 @@ export class FocusManager {
   }
 
   shouldSkipUpdate(el: Element): boolean {
-    if (!this.lastFocusedElement || el !== this.lastFocusedElement) {
+    if (el !== document.activeElement) {
       return false;
     }
 
@@ -196,13 +196,6 @@ export class FocusManager {
 
     if (el instanceof HTMLSelectElement) {
       return true;
-    }
-
-    if (el instanceof HTMLInputElement) {
-      const type = el.type.toLowerCase();
-      if (type === "checkbox" || type === "radio") {
-        return true;
-      }
     }
 
     return false;

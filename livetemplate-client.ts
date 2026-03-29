@@ -754,13 +754,13 @@ export class LiveTemplateClient {
         // Browsers ignore textContent changes to "dirty" textareas (ones
         // the user has typed in), so we explicitly set .value.
         if (el instanceof HTMLTextAreaElement) {
-          el.value = el.textContent || "";
+          el.value = el.textContent ?? "";
         }
       },
       onNodeAdded: (node) => {
         // Sync textarea value for newly inserted textarea elements
         if (node instanceof HTMLTextAreaElement) {
-          node.value = node.textContent || "";
+          node.value = node.textContent ?? "";
         }
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
