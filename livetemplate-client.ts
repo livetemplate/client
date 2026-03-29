@@ -750,9 +750,10 @@ export class LiveTemplateClient {
         return true;
       },
       onElUpdated: (el) => {
-        // After morphdom patches a textarea, sync textContent → value.
-        // Browsers ignore textContent changes to "dirty" textareas (ones
-        // the user has typed in), so we explicitly set .value.
+        // Textarea-specific: morphdom patches child text nodes but browsers
+        // ignore textContent changes to "dirty" textareas (ones the user
+        // has typed in), so we explicitly set .value. Inputs don't need
+        // this — morphdom sets .value directly for input elements.
         if (el instanceof HTMLTextAreaElement) {
           el.value = el.textContent ?? "";
         }
