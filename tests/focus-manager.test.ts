@@ -43,6 +43,67 @@ describe("FocusManager", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("does not reset cursor when element retained focus", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "focus-wrapper-cursor");
+
+    const input = document.createElement("input");
+    input.type = "text";
+    wrapper.appendChild(input);
+    document.body.appendChild(wrapper);
+
+    const manager = createManager();
+    manager.attach(wrapper);
+
+    // Simulate: user focuses input (cursor at 0), then types "hello" (cursor at 5)
+    (manager as any).lastFocusedElement = input;
+    (manager as any).lastFocusedSelectionStart = 0;
+    (manager as any).lastFocusedSelectionEnd = 0;
+
+    input.focus();
+    input.value = "hello";
+    input.setSelectionRange(5, 5);
+
+    // restoreFocusedElement should NOT clobber the current cursor position
+    manager.restoreFocusedElement();
+
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(5);
+    expect(input.selectionEnd).toBe(5);
+  });
+
+  it("restores cursor when element lost focus (morphdom replacement)", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "focus-wrapper-replace");
+
+    const input1 = document.createElement("input");
+    input1.type = "text";
+    input1.setAttribute("name", "title");
+    wrapper.appendChild(input1);
+    document.body.appendChild(wrapper);
+
+    const manager = createManager();
+    manager.attach(wrapper);
+
+    (manager as any).lastFocusedElement = input1;
+    (manager as any).lastFocusedSelectionStart = 3;
+    (manager as any).lastFocusedSelectionEnd = 3;
+
+    // Simulate morphdom replacing the element (new DOM node, focus lost)
+    wrapper.removeChild(input1);
+    const input2 = document.createElement("input");
+    input2.type = "text";
+    input2.setAttribute("name", "title");
+    input2.value = "hello";
+    wrapper.appendChild(input2);
+
+    manager.restoreFocusedElement();
+
+    expect(document.activeElement).toBe(input2);
+    expect(input2.selectionStart).toBe(3);
+    expect(input2.selectionEnd).toBe(3);
+  });
+
   it("fails gracefully when the tracked element no longer exists", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "focus-wrapper-2");

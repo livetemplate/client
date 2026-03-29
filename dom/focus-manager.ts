@@ -150,25 +150,33 @@ export class FocusManager {
     const wasFocused = element.matches(":focus");
     this.logger.debug("[Focus] Already focused:", wasFocused);
 
-    if (!wasFocused) {
-      element.focus();
-      this.logger.debug("[Focus] Restored focus");
+    if (wasFocused) {
+      this.logger.debug(
+        "[Focus] Element retained focus — skipping restoration"
+      );
+      return;
     }
+
+    // Capture selection before focus() — the focus event listener fires
+    // synchronously and overwrites lastFocusedSelection* with the new
+    // element's current (wrong) cursor position.
+    const selectionStart = this.lastFocusedSelectionStart;
+    const selectionEnd = this.lastFocusedSelectionEnd;
+
+    element.focus();
+    this.logger.debug("[Focus] Restored focus");
 
     if (
       this.isTextualInput(element) &&
-      this.lastFocusedSelectionStart !== null &&
-      this.lastFocusedSelectionEnd !== null
+      selectionStart !== null &&
+      selectionEnd !== null
     ) {
-      element.setSelectionRange(
-        this.lastFocusedSelectionStart,
-        this.lastFocusedSelectionEnd
-      );
+      element.setSelectionRange(selectionStart, selectionEnd);
       this.logger.debug(
         "[Focus] Restored cursor:",
-        this.lastFocusedSelectionStart,
+        selectionStart,
         "-",
-        this.lastFocusedSelectionEnd
+        selectionEnd
       );
     }
   }
