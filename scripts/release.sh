@@ -409,12 +409,12 @@ main() {
     if [ "$dry_run_mode" = true ]; then
         # Fetch updates remote-tracking refs (minor side effect) but does not alter the working tree
         log_step "Dry run: checking if branch is behind origin/$branch"
-        if ! git fetch origin "$branch" --quiet 2>&1; then
+        if ! git fetch origin "$branch" --quiet 2>/dev/null; then
             log_warn "Could not fetch origin/$branch — unable to check if branch is up to date"
         else
             local behind
-            behind=$(git rev-list --count HEAD..origin/"$branch")
-            if [ "$behind" -gt 0 ]; then
+            behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
+            if [ "${behind:-0}" -gt 0 ]; then
                 log_warn "Local branch is $behind commit(s) behind origin/$branch"
             else
                 log_info "Branch is up to date with origin/$branch"
@@ -423,7 +423,7 @@ main() {
     else
         log_step "Pulling latest changes from origin/$branch"
         git pull --ff-only origin "$branch" || {
-            log_error "Local branch has diverged from origin/$branch. Resolve manually before releasing."
+            log_error "Failed to fast-forward from origin/$branch. Branch may have diverged or there was a network error. Resolve manually before releasing."
             exit 1
         }
         log_info "Up to date with origin/$branch"
