@@ -410,7 +410,8 @@ main() {
         # Fetch updates remote-tracking refs (minor side effect) but does not alter the working tree
         log_step "Dry run: checking if branch is behind origin/$branch"
         if ! git fetch origin "$branch" --quiet 2>/dev/null; then
-            log_warn "Could not fetch origin/$branch — unable to check if branch is up to date"
+            log_error "Could not fetch origin/$branch — cannot verify branch is up to date."
+            exit 1
         else
             local behind
             behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
