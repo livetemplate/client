@@ -407,7 +407,15 @@ main() {
         exit 1
     fi
     if [ "$dry_run_mode" = true ]; then
-        log_step "Dry run: skipping 'git pull --ff-only origin/$branch'"
+        log_step "Dry run: checking if branch is behind origin/$branch"
+        git fetch origin "$branch" --quiet 2>/dev/null
+        local behind
+        behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
+        if [ "$behind" -gt 0 ]; then
+            log_warn "Local branch is $behind commit(s) behind origin/$branch"
+        else
+            log_info "Branch is up to date with origin/$branch"
+        fi
     else
         log_step "Pulling latest changes from origin/$branch"
         git pull --ff-only origin "$branch" || {
