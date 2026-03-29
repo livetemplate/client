@@ -219,7 +219,10 @@ build_and_test() {
     log_info "Tests passed"
 
     log_step "Cleaning previous build artifacts..."
-    npm run clean
+    npm run clean || {
+        log_error "Clean failed, aborting release"
+        exit 1
+    }
 
     log_step "Building TypeScript client..."
     npm run build || {
@@ -279,7 +282,7 @@ verify_package_contents() {
         "dist/livetemplate-client.browser.js"
     )
     for f in "${required_in_pack[@]}"; do
-        if ! echo "$pack_output" | grep -q "$f"; then
+        if ! echo "$pack_output" | grep -qF "/$f"; then
             log_error "npm pack missing required file: $f"
             exit 1
         fi
