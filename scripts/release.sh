@@ -399,6 +399,16 @@ main() {
         exit 1
     fi
 
+    # Sync with remote before releasing
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    log_step "Pulling latest changes from origin/$branch"
+    git pull --rebase origin "$branch" || {
+        log_error "Failed to pull from origin/$branch. Resolve conflicts and try again."
+        exit 1
+    }
+    log_info "Up to date with origin/$branch"
+
     # Get current version
     current_version=$(get_current_version)
     log_info "Current version: $current_version"
