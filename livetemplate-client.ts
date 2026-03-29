@@ -734,27 +734,11 @@ export class LiveTemplateClient {
         }
       },
       onBeforeElUpdated: (fromEl, toEl) => {
-        // Skip update entirely for focused form elements to preserve user input
+        // Skip update entirely for focused form elements to preserve user
+        // input. This also skips attribute updates (class, disabled, aria-*)
+        // and the lvt-updated hook — use data-lvt-force-update to override.
         if (this.focusManager.shouldSkipUpdate(fromEl)) {
           return false;
-        }
-
-        // Sync textarea value: morphdom patches textContent but browsers
-        // ignore textContent changes once the user has typed (dirty value flag).
-        // Copy the server-rendered content to .value so it takes effect.
-        if (
-          toEl instanceof HTMLTextAreaElement &&
-          fromEl instanceof HTMLTextAreaElement
-        ) {
-          toEl.value = toEl.textContent || "";
-        }
-
-        // Sync input value: morphdom doesn't update .value from attributes
-        if (
-          toEl instanceof HTMLInputElement &&
-          fromEl instanceof HTMLInputElement
-        ) {
-          toEl.value = toEl.getAttribute("value") || "";
         }
 
         // Only update if content actually changed
