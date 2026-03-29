@@ -51,7 +51,7 @@ export class ChangeAutoWirer {
   }
 
   wireElements(): void {
-    if (!this.enabled || this.boundFields.size === 0) return;
+    if (!this.enabled) return;
 
     const wrapper = this.context.getWrapperElement();
     if (!wrapper) return;
@@ -91,6 +91,28 @@ export class ChangeAutoWirer {
         if (el instanceof HTMLButtonElement) continue;
 
         this.attachListener(el as HTMLElement, fieldName, bindingType);
+        this.wiredElements.add(el);
+      }
+    }
+
+    // Auto-wire all named selects when Change() is enabled.
+    // Select bindings live on child <option> tags ({{if eq ...}}selected{{end}}),
+    // so they aren't detected by static analysis. A named select always submits a value.
+    const selects = wrapper.querySelectorAll("select[name]");
+    for (const el of selects) {
+      if (this.wiredElements.has(el)) continue;
+      if (el.hasAttribute("lvt-input") || el.hasAttribute("lvt-change"))
+        continue;
+
+      const parentForm = el.closest("form");
+      if (parentForm) {
+        if (parentForm.hasAttribute("lvt-change")) continue;
+        if (parentForm.hasAttribute("lvt-no-intercept")) continue;
+      }
+
+      const name = el.getAttribute("name");
+      if (name) {
+        this.attachListener(el as HTMLElement, name, "value");
         this.wiredElements.add(el);
       }
     }

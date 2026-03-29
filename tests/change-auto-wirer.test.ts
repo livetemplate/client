@@ -518,7 +518,44 @@ describe("ChangeAutoWirer", () => {
       });
     });
 
-    it("handles select elements", () => {
+    // ===== Select Auto-Wiring =====
+    // Selects are auto-wired by name when Change() is enabled, without
+    // needing a static binding (bindings are on child <option> tags).
+
+    it("auto-wires named select without static binding", () => {
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      const opt1 = document.createElement("option");
+      opt1.value = "";
+      opt1.textContent = "Newest First";
+      const opt2 = document.createElement("option");
+      opt2.value = "alphabetical";
+      opt2.textContent = "A-Z";
+      select.appendChild(opt1);
+      select.appendChild(opt2);
+      wrapper.appendChild(select);
+
+      // No statics reference the select — only enable capabilities
+      wirer.setCapabilities(["change"]);
+
+      wirer.wireElements();
+
+      select.value = "alphabetical";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).toHaveBeenCalledWith({
+        action: "change",
+        data: { sort_by: "alphabetical" },
+      });
+    });
+
+    it("auto-wires select alongside bound inputs", () => {
+      const input = document.createElement("input");
+      input.setAttribute("name", "Title");
+      wrapper.appendChild(input);
+
       const select = document.createElement("select");
       select.setAttribute("name", "Category");
       const optA = document.createElement("option");
@@ -531,25 +568,161 @@ describe("ChangeAutoWirer", () => {
       select.appendChild(optB);
       wrapper.appendChild(select);
 
-      // Manually set up a value binding for the select
-      wirer.setCapabilities(["change"]);
-      wirer.analyzeStatics({
-        s: ['<select name="Category" value="', '"><option>A</option></select>'],
-        "0": "a",
+      setupWirer({
+        s: ['<input name="Title" value="', '">'],
+        "0": "old",
       });
 
       wirer.wireElements();
 
-      select.value = "b";
-      // Selects use 'change' event
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-
+      // Both input and select should be wired
+      input.value = "new";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       jest.advanceTimersByTime(300);
+      expect(sendSpy).toHaveBeenCalledWith({
+        action: "change",
+        data: { Title: "new" },
+      });
 
+      sendSpy.mockClear();
+
+      select.value = "b";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
       expect(sendSpy).toHaveBeenCalledWith({
         action: "change",
         data: { Category: "b" },
       });
+    });
+
+    it("skips select with lvt-change attribute", () => {
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      select.setAttribute("lvt-change", "sort");
+      wrapper.appendChild(select);
+
+      wirer.setCapabilities(["change"]);
+      wirer.wireElements();
+
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("skips select with lvt-input attribute", () => {
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      select.setAttribute("lvt-input", "sort");
+      wrapper.appendChild(select);
+
+      wirer.setCapabilities(["change"]);
+      wirer.wireElements();
+
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("skips select inside form with lvt-no-intercept", () => {
+      const form = document.createElement("form");
+      form.setAttribute("lvt-no-intercept", "");
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      form.appendChild(select);
+      wrapper.appendChild(form);
+
+      wirer.setCapabilities(["change"]);
+      wirer.wireElements();
+
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("skips select inside form with lvt-change", () => {
+      const form = document.createElement("form");
+      form.setAttribute("lvt-change", "change");
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      form.appendChild(select);
+      wrapper.appendChild(form);
+
+      wirer.setCapabilities(["change"]);
+      wirer.wireElements();
+
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not double-wire select on repeated wireElements calls", () => {
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      const opt = document.createElement("option");
+      opt.value = "az";
+      select.appendChild(opt);
+      wrapper.appendChild(select);
+
+      wirer.setCapabilities(["change"]);
+
+      wirer.wireElements();
+      wirer.wireElements();
+
+      select.value = "az";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-wires select after morphdom replacement", () => {
+      const select1 = document.createElement("select");
+      select1.setAttribute("name", "sort_by");
+      const opt1 = document.createElement("option");
+      opt1.value = "az";
+      select1.appendChild(opt1);
+      wrapper.appendChild(select1);
+
+      wirer.setCapabilities(["change"]);
+      wirer.wireElements();
+
+      // Simulate morphdom replacing the element
+      wrapper.removeChild(select1);
+      const select2 = document.createElement("select");
+      select2.setAttribute("name", "sort_by");
+      const opt2 = document.createElement("option");
+      opt2.value = "za";
+      select2.appendChild(opt2);
+      wrapper.appendChild(select2);
+
+      wirer.wireElements();
+
+      select2.value = "za";
+      select2.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).toHaveBeenCalledWith({
+        action: "change",
+        data: { sort_by: "za" },
+      });
+    });
+
+    it("does not wire select when capabilities don't include 'change'", () => {
+      const select = document.createElement("select");
+      select.setAttribute("name", "sort_by");
+      wrapper.appendChild(select);
+
+      wirer.setCapabilities(["other"]);
+      wirer.wireElements();
+
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
     });
 
     it("does nothing when capabilities don't include 'change'", () => {
