@@ -414,8 +414,9 @@ main() {
         else
             local behind
             behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
-            if [ "${behind:-0}" -gt 0 ]; then
-                log_warn "Local branch is $behind commit(s) behind origin/$branch"
+            if [ "$behind" -gt 0 ]; then
+                log_error "Local branch is $behind commit(s) behind origin/$branch. Pull and re-run."
+                exit 1
             else
                 log_info "Branch is up to date with origin/$branch"
             fi
