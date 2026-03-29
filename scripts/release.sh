@@ -282,7 +282,7 @@ verify_package_contents() {
         "dist/livetemplate-client.browser.js"
     )
     for f in "${required_in_pack[@]}"; do
-        if ! echo "$pack_output" | grep -qF "/$f"; then
+        if ! echo "$pack_output" | grep -qF "$f"; then
             log_error "npm pack missing required file: $f"
             exit 1
         fi
