@@ -67,7 +67,11 @@ describe("FocusManager", () => {
   });
 
   describe("shouldSkipUpdate", () => {
-    const manager = createManager();
+    let manager: FocusManager;
+
+    beforeEach(() => {
+      manager = createManager();
+    });
 
     it("returns true for focused text input", () => {
       const input = document.createElement("input");
