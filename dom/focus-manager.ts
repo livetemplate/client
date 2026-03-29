@@ -181,6 +181,26 @@ export class FocusManager {
     return false;
   }
 
+  shouldSkipUpdate(el: Element): boolean {
+    if (el !== document.activeElement) {
+      return false;
+    }
+
+    if (el.hasAttribute("data-lvt-force-update")) {
+      return false;
+    }
+
+    if (this.isTextualInput(el)) {
+      return true;
+    }
+
+    if (el instanceof HTMLSelectElement) {
+      return true;
+    }
+
+    return false;
+  }
+
   getLastFocusedElement(): HTMLElement | null {
     return this.lastFocusedElement;
   }

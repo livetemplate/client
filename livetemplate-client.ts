@@ -734,13 +734,11 @@ export class LiveTemplateClient {
         }
       },
       onBeforeElUpdated: (fromEl, toEl) => {
-        // Preserve value for the last focused textual input
-        const lastFocused = this.focusManager.getLastFocusedElement();
-        if (lastFocused && this.focusManager.isTextualInput(fromEl)) {
-          if (fromEl === lastFocused) {
-            // Preserve the current value being typed
-            (toEl as any).value = (fromEl as any).value;
-          }
+        // Skip update entirely for focused form elements to preserve user
+        // input. This also skips attribute updates (class, disabled, aria-*)
+        // and the lvt-updated hook — use data-lvt-force-update to override.
+        if (this.focusManager.shouldSkipUpdate(fromEl)) {
+          return false;
         }
 
         // Only update if content actually changed
@@ -751,7 +749,20 @@ export class LiveTemplateClient {
         this.executeLifecycleHook(fromEl, "lvt-updated");
         return true;
       },
+      onElUpdated: (el) => {
+        // Textarea-specific: morphdom patches child text nodes but browsers
+        // ignore textContent changes to "dirty" textareas (ones the user
+        // has typed in), so we explicitly set .value. Inputs don't need
+        // this — morphdom sets .value directly for input elements.
+        if (el instanceof HTMLTextAreaElement) {
+          el.value = el.textContent ?? "";
+        }
+      },
       onNodeAdded: (node) => {
+        // Sync textarea value for newly inserted textarea elements
+        if (node instanceof HTMLTextAreaElement) {
+          node.value = node.textContent ?? "";
+        }
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.executeLifecycleHook(node as Element, "lvt-mounted");
