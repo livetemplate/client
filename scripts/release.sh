@@ -218,12 +218,77 @@ build_and_test() {
     }
     log_info "Tests passed"
 
+    log_step "Cleaning previous build artifacts..."
+    npm run clean || {
+        log_error "Clean failed, aborting release"
+        exit 1
+    }
+
     log_step "Building TypeScript client..."
     npm run build || {
         log_error "Build failed, aborting release"
         exit 1
     }
     log_info "Client built successfully"
+}
+
+# Verify build artifacts
+verify_build() {
+    local new_version=$1
+    log_step "Verifying build artifacts..."
+
+    local required_files=(
+        "dist/livetemplate-client.js"
+        "dist/livetemplate-client.d.ts"
+        "dist/livetemplate-client.browser.js"
+    )
+    for f in "${required_files[@]}"; do
+        if [ ! -s "$f" ]; then
+            log_error "Missing or empty build artifact: $f"
+            exit 1
+        fi
+    done
+    log_info "All required dist files present"
+
+    node -e "
+        const m = require('./dist/livetemplate-client.js');
+        if (!m.LiveTemplateClient) process.exit(1);
+    " || {
+        log_error "Smoke test failed: module doesn't export LiveTemplateClient"
+        exit 1
+    }
+    log_info "Smoke test passed"
+
+    local pkg_version
+    pkg_version=$(jq -r '.version' package.json)
+    if [ "$pkg_version" != "$new_version" ]; then
+        log_error "package.json version ($pkg_version) != expected ($new_version)"
+        exit 1
+    fi
+
+    log_info "Build verification passed"
+}
+
+# Verify npm package contents before publishing
+verify_package_contents() {
+    log_step "Verifying npm package contents..."
+
+    local pack_output
+    pack_output=$(npm pack --dry-run 2>&1)
+
+    local required_in_pack=(
+        "dist/livetemplate-client.js"
+        "dist/livetemplate-client.d.ts"
+        "dist/livetemplate-client.browser.js"
+    )
+    for f in "${required_in_pack[@]}"; do
+        if ! echo "$pack_output" | grep -qF "$f"; then
+            log_error "npm pack missing required file: $f"
+            exit 1
+        fi
+    done
+
+    log_info "Package contents verified"
 }
 
 # Publish to npm
@@ -519,6 +584,8 @@ main() {
     update_versions "$new_version"
     generate_changelog "$new_version"
     build_and_test
+    verify_build "$new_version"
+    verify_package_contents
     commit_and_tag "$new_version"
     publish_npm "$new_version"
     publish_github "$new_version"
