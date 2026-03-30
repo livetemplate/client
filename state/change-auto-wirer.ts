@@ -110,7 +110,8 @@ export class ChangeAutoWirer {
         if (parentForm.hasAttribute("lvt-no-intercept")) continue;
       }
 
-      const name = el.getAttribute("name")!;
+      const name = el.getAttribute("name");
+      if (!name) continue;
       this.attachListener(el as HTMLElement, name, "value");
       this.wiredElements.add(el);
     }
