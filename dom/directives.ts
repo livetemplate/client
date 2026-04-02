@@ -205,7 +205,8 @@ export function handleToastDirectives(rootElement: Element): void {
       }
       if (!Array.isArray(messages) || !messages.length) return;
 
-      const stack = getOrCreateToastStack();
+      const position = trigger.getAttribute("data-position") || "top-right";
+      const stack = getOrCreateToastStack(position);
       messages.forEach((msg) => {
         const el = createToastElement(msg);
         stack.appendChild(el);
@@ -233,7 +234,7 @@ export function setupToastClickOutside(): void {
   document.addEventListener("click", listener);
 }
 
-function getOrCreateToastStack(): HTMLElement {
+function getOrCreateToastStack(position: string): HTMLElement {
   let stack = document.querySelector(
     "[data-lvt-toast-stack]"
   ) as HTMLElement | null;
@@ -241,9 +242,28 @@ function getOrCreateToastStack(): HTMLElement {
     stack = document.createElement("div");
     stack.setAttribute("data-lvt-toast-stack", "");
     stack.setAttribute("aria-live", "polite");
+    applyPositionStyles(stack, position);
     document.body.appendChild(stack);
   }
   return stack;
+}
+
+function applyPositionStyles(stack: HTMLElement, position: string): void {
+  const s = stack.style;
+  switch (position) {
+    case "top-left":
+      s.top = "1rem"; s.left = "1rem"; break;
+    case "top-center":
+      s.top = "1rem"; s.left = "50%"; s.transform = "translateX(-50%)"; break;
+    case "bottom-right":
+      s.bottom = "1rem"; s.right = "1rem"; break;
+    case "bottom-left":
+      s.bottom = "1rem"; s.left = "1rem"; break;
+    case "bottom-center":
+      s.bottom = "1rem"; s.left = "50%"; s.transform = "translateX(-50%)"; break;
+    default: // top-right
+      s.top = "1rem"; s.right = "1rem"; break;
+  }
 }
 
 function createToastElement(msg: ToastMessage): HTMLElement {
