@@ -188,9 +188,6 @@ const PENDING_PROCESSED_KEY = "__lvtPendingProcessed";
  * client-managed toast DOM. Called after each LiveTemplate DOM update.
  */
 export function handleToastDirectives(rootElement: Element): void {
-  // Re-inject styles on every call — morphdom may have removed the injected
-  // <style> element during the preceding DOM patch (it's not in server HTML).
-  injectToastStyles();
   rootElement
     .querySelectorAll<HTMLElement>("[data-toast-trigger]")
     .forEach((trigger) => {
@@ -244,7 +241,6 @@ function getOrCreateToastStack(): HTMLElement {
     stack = document.createElement("div");
     stack.setAttribute("data-lvt-toast-stack", "");
     stack.setAttribute("aria-live", "polite");
-    injectToastStyles();
     document.body.appendChild(stack);
   }
   return stack;
@@ -283,33 +279,3 @@ function createToastElement(msg: ToastMessage): HTMLElement {
   return el;
 }
 
-function injectToastStyles(): void {
-  if (document.getElementById("lvt-toast-styles")) return;
-  const style = document.createElement("style");
-  style.id = "lvt-toast-styles";
-  style.textContent = `
-    [data-lvt-toast-stack] {
-      position: fixed; top: 1rem; right: 1rem; z-index: 50;
-      display: flex; flex-direction: column; gap: .5rem; width: 360px;
-      pointer-events: none;
-    }
-    [data-lvt-toast-item] {
-      background: var(--pico-card-background-color, #fff);
-      border: 1px solid var(--pico-muted-border-color, #ddd);
-      border-radius: var(--pico-border-radius, .25rem);
-      padding: .75rem 1rem;
-      box-shadow: 0 4px 12px rgba(0,0,0,.15);
-      pointer-events: auto;
-      display: flex; align-items: flex-start; gap: .75rem;
-    }
-    [data-lvt-toast-content] { flex: 1; }
-    [data-lvt-toast-content] strong { display: block; margin-bottom: .1rem; }
-    [data-lvt-toast-content] p { margin: 0; }
-    [data-lvt-toast-item] > button {
-      margin: 0; padding: .25rem; width: auto; min-width: auto;
-      background: transparent; border: none; cursor: pointer;
-      color: var(--pico-muted-color, #666); line-height: 1; flex-shrink: 0;
-    }
-  `;
-  document.head.appendChild(style);
-}
