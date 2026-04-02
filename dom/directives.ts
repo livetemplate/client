@@ -166,3 +166,137 @@ export function handleAnimateDirectives(rootElement: Element): void {
     document.head.appendChild(style);
   }
 }
+
+// ─── Toast directives ────────────────────────────────────────────────────────
+
+interface ToastMessage {
+  id: string;
+  title?: string;
+  body?: string;
+  type: "info" | "success" | "warning" | "error";
+  dismissible: boolean;
+  dismissMS: number;
+}
+
+// Key used to store the last processed data-pending value on each trigger element.
+// Prevents showing the same batch of toasts twice if handleToastDirectives is
+// called multiple times within a single update cycle (e.g. from multiple patches).
+const PENDING_PROCESSED_KEY = "__lvtPendingProcessed";
+
+/**
+ * Read data-pending toast messages from server trigger elements and create
+ * client-managed toast DOM. Called after each LiveTemplate DOM update.
+ */
+export function handleToastDirectives(rootElement: Element): void {
+  rootElement
+    .querySelectorAll<HTMLElement>("[data-toast-trigger]")
+    .forEach((trigger) => {
+      const pending = trigger.getAttribute("data-pending");
+      if (!pending) return;
+      // Skip if this exact batch was already processed (handles multi-patch calls)
+      if ((trigger as any)[PENDING_PROCESSED_KEY] === pending) return;
+      (trigger as any)[PENDING_PROCESSED_KEY] = pending;
+
+      let messages: ToastMessage[];
+      try {
+        messages = JSON.parse(pending);
+      } catch {
+        return;
+      }
+      if (!Array.isArray(messages) || !messages.length) return;
+
+      const position = trigger.getAttribute("data-position") || "top-right";
+      const stack = getOrCreateToastStack(position);
+      messages.forEach((msg) => {
+        const el = createToastElement(msg);
+        stack.appendChild(el);
+        if (typeof msg.dismissMS === "number" && msg.dismissMS > 0) {
+          setTimeout(() => el.remove(), msg.dismissMS);
+        }
+      });
+    });
+}
+
+/**
+ * Set up a document click listener that dismisses all visible toasts when
+ * the user clicks outside the toast stack. Called once at connect time.
+ */
+export function setupToastClickOutside(): void {
+  const key = "__lvt_toast_click_outside";
+  const existing = (document as any)[key];
+  if (existing) document.removeEventListener("click", existing);
+  const listener = (e: Event) => {
+    const stack = document.querySelector("[data-lvt-toast-stack]");
+    if (!stack || stack.contains(e.target as Node)) return;
+    stack.querySelectorAll("[data-lvt-toast-item]").forEach((el) => el.remove());
+  };
+  (document as any)[key] = listener;
+  document.addEventListener("click", listener);
+}
+
+function getOrCreateToastStack(position: string): HTMLElement {
+  let stack = document.querySelector(
+    "[data-lvt-toast-stack]"
+  ) as HTMLElement | null;
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.setAttribute("data-lvt-toast-stack", "");
+    stack.setAttribute("aria-live", "polite");
+    applyPositionStyles(stack, position);
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
+function applyPositionStyles(stack: HTMLElement, position: string): void {
+  const s = stack.style;
+  switch (position) {
+    case "top-left":
+      s.top = "1rem"; s.left = "1rem"; break;
+    case "top-center":
+      s.top = "1rem"; s.left = "50%"; s.transform = "translateX(-50%)"; break;
+    case "bottom-right":
+      s.bottom = "1rem"; s.right = "1rem"; break;
+    case "bottom-left":
+      s.bottom = "1rem"; s.left = "1rem"; break;
+    case "bottom-center":
+      s.bottom = "1rem"; s.left = "50%"; s.transform = "translateX(-50%)"; break;
+    default: // top-right
+      s.top = "1rem"; s.right = "1rem"; break;
+  }
+}
+
+function createToastElement(msg: ToastMessage): HTMLElement {
+  const el = document.createElement("div");
+  el.setAttribute("role", "alert");
+  el.setAttribute("data-lvt-toast-item", msg.id);
+  if (msg.type) el.setAttribute("data-type", msg.type);
+
+  const inner = document.createElement("div");
+  inner.setAttribute("data-lvt-toast-content", "");
+
+  if (msg.title) {
+    const t = document.createElement("strong");
+    t.textContent = msg.title;
+    inner.appendChild(t);
+  }
+  if (msg.body) {
+    const b = document.createElement("p");
+    b.textContent = msg.body;
+    inner.appendChild(b);
+  }
+
+  el.appendChild(inner);
+
+  if (msg.dismissible) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Dismiss");
+    btn.textContent = "×";
+    btn.addEventListener("click", () => el.remove());
+    el.appendChild(btn);
+  }
+
+  return el;
+}
+

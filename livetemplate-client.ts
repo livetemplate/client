@@ -11,6 +11,8 @@ import {
   handleAnimateDirectives,
   handleHighlightDirectives,
   handleScrollDirectives,
+  handleToastDirectives,
+  setupToastClickOutside,
 } from "./dom/directives";
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
@@ -382,6 +384,9 @@ export class LiveTemplateClient {
 
     // Set up click-away delegation
     this.eventDelegator.setupClickAwayDelegation();
+
+    // Set up click-outside listener for client-managed toast stack
+    setupToastClickOutside();
 
     // Set up modal delegation
     this.eventDelegator.setupModalDelegation();
@@ -788,6 +793,9 @@ export class LiveTemplateClient {
 
     // Handle animate directives
     handleAnimateDirectives(element);
+
+    // Handle toast trigger directives (ephemeral client-side toasts)
+    handleToastDirectives(element);
 
     // Initialize upload file inputs
     this.uploadHandler.initializeFileInputs(element);
