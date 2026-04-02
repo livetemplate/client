@@ -209,7 +209,7 @@ export function handleToastDirectives(rootElement: Element): void {
       messages.forEach((msg) => {
         const el = createToastElement(msg);
         stack.appendChild(el);
-        if (msg.dismissMS > 0) {
+        if (typeof msg.dismissMS === "number" && msg.dismissMS > 0) {
           setTimeout(() => el.remove(), msg.dismissMS);
         }
       });
