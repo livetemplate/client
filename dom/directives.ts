@@ -203,7 +203,7 @@ export function handleToastDirectives(rootElement: Element): void {
       } catch {
         return;
       }
-      if (!messages.length) return;
+      if (!Array.isArray(messages) || !messages.length) return;
 
       const stack = getOrCreateToastStack();
       messages.forEach((msg) => {
@@ -250,6 +250,7 @@ function createToastElement(msg: ToastMessage): HTMLElement {
   const el = document.createElement("div");
   el.setAttribute("role", "alert");
   el.setAttribute("data-lvt-toast-item", msg.id);
+  if (msg.type) el.setAttribute("data-type", msg.type);
 
   const inner = document.createElement("div");
   inner.setAttribute("data-lvt-toast-content", "");
