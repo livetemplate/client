@@ -1,17 +1,21 @@
 /**
- * Apply scroll directives on elements with lvt-scroll attributes.
+ * Apply scroll directives on elements with lvt-fx:scroll attributes.
+ * Configuration read from CSS custom properties:
+ *   --lvt-scroll-behavior: auto | smooth (default: auto)
+ *   --lvt-scroll-threshold: <number> (default: 100)
  */
 export function handleScrollDirectives(rootElement: Element): void {
-  const scrollElements = rootElement.querySelectorAll("[lvt-scroll]");
+  const scrollElements = rootElement.querySelectorAll("[lvt-fx\\:scroll]");
 
   scrollElements.forEach((element) => {
     const htmlElement = element as HTMLElement;
-    const mode = htmlElement.getAttribute("lvt-scroll");
+    const mode = htmlElement.getAttribute("lvt-fx:scroll");
+    const computed = getComputedStyle(htmlElement);
     const behavior =
-      (htmlElement.getAttribute("lvt-scroll-behavior") as ScrollBehavior) ||
+      (computed.getPropertyValue("--lvt-scroll-behavior").trim() as ScrollBehavior) ||
       "auto";
     const threshold = parseInt(
-      htmlElement.getAttribute("lvt-scroll-threshold") || "100",
+      computed.getPropertyValue("--lvt-scroll-threshold").trim() || "100",
       10
     );
 
@@ -51,24 +55,28 @@ export function handleScrollDirectives(rootElement: Element): void {
         break;
 
       default:
-        console.warn(`Unknown lvt-scroll mode: ${mode}`);
+        console.warn(`Unknown lvt-fx:scroll mode: ${mode}`);
     }
   });
 }
 
 /**
- * Apply highlight directives to elements with lvt-highlight attributes.
+ * Apply highlight directives to elements with lvt-fx:highlight attributes.
+ * Configuration read from CSS custom properties:
+ *   --lvt-highlight-duration: <ms> (default: 500)
+ *   --lvt-highlight-color: <color> (default: #ffc107)
  */
 export function handleHighlightDirectives(rootElement: Element): void {
-  const highlightElements = rootElement.querySelectorAll("[lvt-highlight]");
+  const highlightElements = rootElement.querySelectorAll("[lvt-fx\\:highlight]");
 
   highlightElements.forEach((element) => {
-    const mode = element.getAttribute("lvt-highlight");
+    const mode = element.getAttribute("lvt-fx:highlight");
+    const computed = getComputedStyle(element);
     const duration = parseInt(
-      element.getAttribute("lvt-highlight-duration") || "500",
+      computed.getPropertyValue("--lvt-highlight-duration").trim() || "500",
       10
     );
-    const color = element.getAttribute("lvt-highlight-color") || "#ffc107";
+    const color = computed.getPropertyValue("--lvt-highlight-color").trim() || "#ffc107";
 
     if (!mode) return;
 
@@ -90,15 +98,18 @@ export function handleHighlightDirectives(rootElement: Element): void {
 }
 
 /**
- * Apply animation directives to elements with lvt-animate attributes.
+ * Apply animation directives to elements with lvt-fx:animate attributes.
+ * Configuration read from CSS custom properties:
+ *   --lvt-animate-duration: <ms> (default: 300)
  */
 export function handleAnimateDirectives(rootElement: Element): void {
-  const animateElements = rootElement.querySelectorAll("[lvt-animate]");
+  const animateElements = rootElement.querySelectorAll("[lvt-fx\\:animate]");
 
   animateElements.forEach((element) => {
-    const animation = element.getAttribute("lvt-animate");
+    const animation = element.getAttribute("lvt-fx:animate");
+    const computed = getComputedStyle(element);
     const duration = parseInt(
-      element.getAttribute("lvt-animate-duration") || "300",
+      computed.getPropertyValue("--lvt-animate-duration").trim() || "300",
       10
     );
 
@@ -122,7 +133,7 @@ export function handleAnimateDirectives(rootElement: Element): void {
         break;
 
       default:
-        console.warn(`Unknown lvt-animate mode: ${animation}`);
+        console.warn(`Unknown lvt-fx:animate mode: ${animation}`);
     }
 
     htmlElement.addEventListener(

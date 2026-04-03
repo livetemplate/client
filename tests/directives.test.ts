@@ -14,9 +14,9 @@ describe("handleScrollDirectives", () => {
     jest.restoreAllMocks();
   });
 
-  it("scrolls element to bottom when lvt-scroll='bottom'", () => {
+  it("scrolls element to bottom when lvt-fx:scroll='bottom'", () => {
     document.body.innerHTML = `
-      <div id="container" lvt-scroll="bottom" style="height: 100px; overflow: auto;">
+      <div id="container" lvt-fx:scroll="bottom" style="height: 100px; overflow: auto;">
         <div style="height: 500px;">Content</div>
       </div>
     `;
@@ -34,8 +34,8 @@ describe("handleScrollDirectives", () => {
     });
   });
 
-  it("scrolls to top when lvt-scroll='top'", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="top"></div>`;
+  it("scrolls to top when lvt-fx:scroll='top'", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="top"></div>`;
     const container = document.getElementById("container")!;
     const scrollToSpy = jest.fn();
     container.scrollTo = scrollToSpy;
@@ -48,8 +48,8 @@ describe("handleScrollDirectives", () => {
     });
   });
 
-  it("respects lvt-scroll-behavior attribute", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="top" lvt-scroll-behavior="smooth"></div>`;
+  it("respects --lvt-scroll-behavior custom property", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="top" style="--lvt-scroll-behavior: smooth;"></div>`;
     const container = document.getElementById("container")!;
     const scrollToSpy = jest.fn();
     container.scrollTo = scrollToSpy;
@@ -63,7 +63,7 @@ describe("handleScrollDirectives", () => {
   });
 
   it("sticky bottom only scrolls when near bottom", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="bottom-sticky" lvt-scroll-threshold="50"></div>`;
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="bottom-sticky" style="--lvt-scroll-threshold: 50;"></div>`;
     const container = document.getElementById("container")!;
     Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
     Object.defineProperty(container, "scrollTop", { value: 400, configurable: true });
@@ -79,7 +79,7 @@ describe("handleScrollDirectives", () => {
   });
 
   it("sticky bottom does not scroll when far from bottom", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="bottom-sticky" lvt-scroll-threshold="50"></div>`;
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="bottom-sticky" style="--lvt-scroll-threshold: 50;"></div>`;
     const container = document.getElementById("container")!;
     Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
     Object.defineProperty(container, "scrollTop", { value: 0, configurable: true });
@@ -94,8 +94,8 @@ describe("handleScrollDirectives", () => {
     expect(scrollToSpy).not.toHaveBeenCalled();
   });
 
-  it("does nothing for lvt-scroll='preserve'", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="preserve"></div>`;
+  it("does nothing for lvt-fx:scroll='preserve'", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="preserve"></div>`;
     const container = document.getElementById("container")!;
     const scrollToSpy = jest.fn();
     container.scrollTo = scrollToSpy;
@@ -106,15 +106,15 @@ describe("handleScrollDirectives", () => {
   });
 
   it("warns on unknown scroll mode", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll="unknown-mode"></div>`;
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="unknown-mode"></div>`;
 
     handleScrollDirectives(document.body);
 
-    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-scroll mode: unknown-mode");
+    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-fx:scroll mode: unknown-mode");
   });
 
-  it("handles empty lvt-scroll attribute", () => {
-    document.body.innerHTML = `<div id="container" lvt-scroll=""></div>`;
+  it("handles empty lvt-fx:scroll attribute", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll=""></div>`;
     const container = document.getElementById("container")!;
     const scrollToSpy = jest.fn();
     container.scrollTo = scrollToSpy;
@@ -136,7 +136,7 @@ describe("handleHighlightDirectives", () => {
   });
 
   it("applies highlight color temporarily", () => {
-    document.body.innerHTML = `<div id="target" lvt-highlight="flash"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash"></div>`;
     const target = document.getElementById("target")!;
 
     handleHighlightDirectives(document.body);
@@ -145,8 +145,8 @@ describe("handleHighlightDirectives", () => {
     expect(target.style.transition).toContain("background-color");
   });
 
-  it("respects custom lvt-highlight-duration", () => {
-    document.body.innerHTML = `<div id="target" lvt-highlight="flash" lvt-highlight-duration="1000"></div>`;
+  it("respects custom --lvt-highlight-duration", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash" style="--lvt-highlight-duration: 1000;"></div>`;
     const target = document.getElementById("target")!;
 
     handleHighlightDirectives(document.body);
@@ -154,8 +154,8 @@ describe("handleHighlightDirectives", () => {
     expect(target.style.transition).toContain("1000ms");
   });
 
-  it("respects custom lvt-highlight-color", () => {
-    document.body.innerHTML = `<div id="target" lvt-highlight="flash" lvt-highlight-color="#ff0000"></div>`;
+  it("respects custom --lvt-highlight-color", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash" style="--lvt-highlight-color: #ff0000;"></div>`;
     const target = document.getElementById("target")!;
 
     handleHighlightDirectives(document.body);
@@ -164,7 +164,7 @@ describe("handleHighlightDirectives", () => {
   });
 
   it("restores original background after highlight", () => {
-    document.body.innerHTML = `<div id="target" lvt-highlight="flash" lvt-highlight-duration="500" style="background-color: blue;"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash" style="background-color: blue;"></div>`;
     const target = document.getElementById("target")!;
     const originalBg = target.style.backgroundColor;
 
@@ -178,8 +178,8 @@ describe("handleHighlightDirectives", () => {
     jest.advanceTimersByTime(500);
   });
 
-  it("handles empty lvt-highlight attribute", () => {
-    document.body.innerHTML = `<div id="target" lvt-highlight=""></div>`;
+  it("handles empty lvt-fx:highlight attribute", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight=""></div>`;
     const target = document.getElementById("target")!;
     const originalBg = target.style.backgroundColor;
 
@@ -203,7 +203,7 @@ describe("handleAnimateDirectives", () => {
   });
 
   it("applies fade animation", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="fade"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="fade"></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);
@@ -212,7 +212,7 @@ describe("handleAnimateDirectives", () => {
   });
 
   it("applies slide animation", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="slide"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="slide"></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);
@@ -221,7 +221,7 @@ describe("handleAnimateDirectives", () => {
   });
 
   it("applies scale animation", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="scale"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="scale"></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);
@@ -229,8 +229,8 @@ describe("handleAnimateDirectives", () => {
     expect(target.style.animation).toContain("lvt-scale-in");
   });
 
-  it("respects custom animation duration", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="fade" lvt-animate-duration="1000"></div>`;
+  it("respects custom animation duration via CSS custom property", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="fade" style="--lvt-animate-duration: 1000;"></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);
@@ -239,7 +239,7 @@ describe("handleAnimateDirectives", () => {
   });
 
   it("clears animation on animationend", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="fade"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="fade"></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);
@@ -253,8 +253,8 @@ describe("handleAnimateDirectives", () => {
 
   it("injects CSS keyframes only once", () => {
     document.body.innerHTML = `
-      <div lvt-animate="fade"></div>
-      <div lvt-animate="slide"></div>
+      <div lvt-fx:animate="fade"></div>
+      <div lvt-fx:animate="slide"></div>
     `;
 
     handleAnimateDirectives(document.body);
@@ -265,15 +265,15 @@ describe("handleAnimateDirectives", () => {
   });
 
   it("warns on unknown animation mode", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate="unknown"></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate="unknown"></div>`;
 
     handleAnimateDirectives(document.body);
 
-    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-animate mode: unknown");
+    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-fx:animate mode: unknown");
   });
 
   it("handles empty lvt-animate attribute", () => {
-    document.body.innerHTML = `<div id="target" lvt-animate=""></div>`;
+    document.body.innerHTML = `<div id="target" lvt-fx:animate=""></div>`;
     const target = document.getElementById("target")!;
 
     handleAnimateDirectives(document.body);

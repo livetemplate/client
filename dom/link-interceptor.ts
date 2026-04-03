@@ -59,7 +59,7 @@ export class LinkInterceptor {
     // Download links
     if (link.hasAttribute("download")) return true;
     // Opt-out
-    if (link.hasAttribute("lvt-no-intercept")) return true;
+    if (link.hasAttribute("lvt-form:no-intercept")) return true;
     // Hash-only links (scroll anchors)
     if (link.pathname === window.location.pathname && link.hash) return true;
     // mailto/tel/javascript

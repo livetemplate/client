@@ -17,7 +17,6 @@ import {
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
 import { ObserverManager } from "./dom/observer-manager";
-import { ModalManager } from "./dom/modal-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
@@ -40,7 +39,6 @@ import type {
 import { createLogger, Logger } from "./utils/logger";
 export { loadAndApplyUpdate, compareHTML } from "./utils/testing";
 export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
-export { checkLvtConfirm, extractLvtData } from "./utils/confirm";
 
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
@@ -63,7 +61,6 @@ export class LiveTemplateClient {
   private eventDelegator: EventDelegator;
   private linkInterceptor: LinkInterceptor;
   private observerManager: ObserverManager;
-  private modalManager: ModalManager;
   private formLifecycleManager: FormLifecycleManager;
   private loadingIndicator: LoadingIndicator;
   private formDisabler: FormDisabler;
@@ -103,8 +100,7 @@ export class LiveTemplateClient {
     this.treeRenderer = new TreeRenderer(this.logger.child("TreeRenderer"));
     this.focusManager = new FocusManager(this.logger.child("FocusManager"));
 
-    this.modalManager = new ModalManager(this.logger.child("ModalManager"));
-    this.formLifecycleManager = new FormLifecycleManager(this.modalManager);
+    this.formLifecycleManager = new FormLifecycleManager();
     this.loadingIndicator = new LoadingIndicator();
     this.formDisabler = new FormDisabler();
 
@@ -162,8 +158,6 @@ export class LiveTemplateClient {
             button,
             originalButtonText
           ),
-        openModal: (modalId: string) => this.modalManager.open(modalId),
-        closeModal: (modalId: string) => this.modalManager.close(modalId),
         getWebSocketReadyState: () => this.webSocketManager.getReadyState(),
         triggerPendingUploads: (uploadName: string) =>
           this.uploadHandler.triggerPendingUploads(uploadName),
@@ -388,9 +382,6 @@ export class LiveTemplateClient {
     // Set up click-outside listener for client-managed toast stack
     setupToastClickOutside();
 
-    // Set up modal delegation
-    this.eventDelegator.setupModalDelegation();
-
     // Set up focus trap delegation for lvt-focus-trap attribute
     this.eventDelegator.setupFocusTrapDelegation();
 
@@ -400,7 +391,7 @@ export class LiveTemplateClient {
     // Set up link interception for SPA navigation
     this.linkInterceptor.setup(this.wrapperElement);
 
-    // Set up reactive attribute listeners for lvt-{action}-on:{event} attributes
+    // Set up reactive attribute listeners for lvt-el:*:on:* attributes
     setupReactiveAttributeListeners();
 
     // Initialize focus tracking

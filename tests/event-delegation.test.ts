@@ -30,8 +30,6 @@ describe("EventDelegator", () => {
       parseValue: (value: string) => value,
       send: jest.fn(),
       setActiveSubmission: jest.fn(),
-      openModal: jest.fn(),
-      closeModal: jest.fn(),
       getWebSocketReadyState: () => 1,
       triggerPendingUploads: jest.fn(),
     };
@@ -46,7 +44,7 @@ describe("EventDelegator", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-1");
     wrapper.innerHTML = `
-      <button id="save" lvt-click="save" lvt-data-id="42"></button>
+      <button id="save" lvt-on:click="save"></button>
     `;
     document.body.appendChild(wrapper);
 
@@ -63,7 +61,7 @@ describe("EventDelegator", () => {
     expect(context.send).toHaveBeenCalledTimes(1);
     expect(context.send).toHaveBeenCalledWith({
       action: "save",
-      data: { id: "42" },
+      data: {},
     });
   });
 
@@ -73,7 +71,7 @@ describe("EventDelegator", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-2");
     wrapper.innerHTML = `
-      <button id="ping" lvt-click="ping" lvt-throttle="200"></button>
+      <button id="ping" lvt-on:click="ping" lvt-mod:throttle="200"></button>
     `;
     document.body.appendChild(wrapper);
 
@@ -100,7 +98,7 @@ describe("EventDelegator", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-password");
     wrapper.innerHTML = `
-      <form id="login-form" lvt-submit="login">
+      <form id="login-form" lvt-on:submit="login">
         <input type="text" name="username" value="testuser" />
         <input type="password" name="password" value="12345" />
         <button type="submit" id="submit">Login</button>
@@ -152,10 +150,10 @@ describe("EventDelegator", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-3");
     wrapper.innerHTML = `
-      <form id="add-form" lvt-submit="add">
+      <form id="add-form" lvt-on:submit="add">
         <input type="text" name="title" value="Hello" />
         <input type="checkbox" name="published" checked />
-        <button type="submit" id="submit" lvt-disable-with="Saving...">Save</button>
+        <button type="submit" id="submit" lvt-form:disable-with="Saving...">Save</button>
       </form>
     `;
     document.body.appendChild(wrapper);
@@ -634,10 +632,10 @@ describe("EventDelegator", () => {
       });
     });
 
-    it("lvt-click takes priority over orphan button name", () => {
+    it("lvt-on:click takes priority over orphan button name", () => {
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-lvt-id", "wrapper-orphan-10");
-      wrapper.innerHTML = `<button id="btn" lvt-click="tier2action" name="tier1action">Button</button>`;
+      wrapper.innerHTML = `<button id="btn" lvt-on:click="tier2action" name="tier1action">Button</button>`;
       document.body.appendChild(wrapper);
 
       const context = createContext(wrapper);

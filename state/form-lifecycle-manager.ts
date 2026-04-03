@@ -1,5 +1,4 @@
 import type { ResponseMetadata } from "../types";
-import { ModalManager } from "../dom/modal-manager";
 
 /**
  * Tracks form submission lifecycle for LiveTemplate actions.
@@ -9,7 +8,7 @@ export class FormLifecycleManager {
   private activeButton: HTMLButtonElement | null = null;
   private originalButtonText: string | null = null;
 
-  constructor(private readonly modalManager: ModalManager) {}
+  constructor() {}
 
   setActiveSubmission(
     form: HTMLFormElement | null,
@@ -59,12 +58,13 @@ export class FormLifecycleManager {
       new CustomEvent("lvt:success", { detail: meta })
     );
 
-    const modalParent = this.activeForm.closest('[role="dialog"]');
-    if (modalParent && modalParent.id) {
-      this.modalManager.close(modalParent.id);
+    // Close parent <dialog> using native API instead of ModalManager
+    const dialogParent = this.activeForm.closest("dialog");
+    if (dialogParent && dialogParent.open) {
+      dialogParent.close();
     }
 
-    if (!this.activeForm.hasAttribute("lvt-preserve")) {
+    if (!this.activeForm.hasAttribute("lvt-form:preserve")) {
       this.activeForm.reset();
     }
   }

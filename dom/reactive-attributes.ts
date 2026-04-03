@@ -1,22 +1,23 @@
 /**
  * Reactive Attributes - Declarative DOM actions triggered by LiveTemplate lifecycle events.
  *
- * Attribute Pattern: lvt-{action}-on:{event}="param"
+ * Attribute Pattern: lvt-el:{method}:on:[{action}:]{state|interaction}="param"
  *
- * Events:
+ * States (lifecycle):
  *   - pending: Action started, waiting for server response
  *   - success: Action completed successfully
  *   - error: Action completed with validation errors
  *   - done: Action completed (regardless of success/error)
  *
- * Event Scope:
- *   - Global: lvt-reset-on:success (any action)
- *   - Action-specific: lvt-reset-on:create-todo:success (specific action only)
+ * Interactions:
+ *   - click-away: Click outside the element (handled by setupClickAwayDelegation)
  *
- * Actions:
+ * Trigger Scope:
+ *   - Unscoped: lvt-el:reset:on:success (any action)
+ *   - Action-scoped: lvt-el:reset:on:create-todo:success (specific action only)
+ *
+ * Methods:
  *   - reset: Calls form.reset()
- *   - disable: Sets element.disabled = true
- *   - enable: Sets element.disabled = false
  *   - addClass: Adds CSS class(es)
  *   - removeClass: Removes CSS class(es)
  *   - toggleClass: Toggles CSS class(es)
@@ -26,8 +27,6 @@
 
 export type ReactiveAction =
   | "reset"
-  | "disable"
-  | "enable"
   | "addClass"
   | "removeClass"
   | "toggleClass"
@@ -44,23 +43,11 @@ export interface ReactiveBinding {
 }
 
 const LIFECYCLE_EVENTS: LifecycleEvent[] = ["pending", "success", "error", "done"];
+const LIFECYCLE_SET = new Set<string>(LIFECYCLE_EVENTS);
 
-const REACTIVE_ACTIONS: ReactiveAction[] = [
-  "reset",
-  "disable",
-  "enable",
-  "addClass",
-  "removeClass",
-  "toggleClass",
-  "setAttr",
-  "toggleAttr",
-];
-
-// Lowercase versions for case-insensitive matching (HTML attributes are lowercased)
-const ACTION_MAP: Record<string, ReactiveAction> = {
+// Lowercase method names → canonical ReactiveAction
+const METHOD_MAP: Record<string, ReactiveAction> = {
   reset: "reset",
-  disable: "disable",
-  enable: "enable",
   addclass: "addClass",
   removeclass: "removeClass",
   toggleclass: "toggleClass",
@@ -71,43 +58,47 @@ const ACTION_MAP: Record<string, ReactiveAction> = {
 /**
  * Parse a reactive attribute name and value into a binding.
  *
+ * New pattern: lvt-el:{method}:on:[{action}:]{state}
+ * Also supports legacy: lvt-{method}-on:[{action}:]{state}
+ *
  * Examples:
- *   parseReactiveAttribute("lvt-reset-on:success", "") => { action: "reset", lifecycle: "success" }
- *   parseReactiveAttribute("lvt-addClass-on:pending", "loading") => { action: "addClass", lifecycle: "pending", param: "loading" }
- *   parseReactiveAttribute("lvt-reset-on:create-todo:success", "") => { action: "reset", lifecycle: "success", actionName: "create-todo" }
+ *   parseReactiveAttribute("lvt-el:reset:on:success", "") => { action: "reset", lifecycle: "success" }
+ *   parseReactiveAttribute("lvt-el:addclass:on:pending", "loading") => { action: "addClass", lifecycle: "pending", param: "loading" }
+ *   parseReactiveAttribute("lvt-el:reset:on:create-todo:success", "") => { action: "reset", lifecycle: "success", actionName: "create-todo" }
  */
 export function parseReactiveAttribute(
   attrName: string,
   attrValue: string
 ): ReactiveBinding | null {
-  // Pattern: lvt-{action}-on:{actionName?}:{lifecycle}
-  // The lifecycle must be at the end, action name is optional in the middle
-  // Note: HTML attributes are lowercased by browsers, so we match case-insensitively
-  const match = attrName.toLowerCase().match(/^lvt-(\w+)-on:(.+)$/);
-  if (!match) return null;
+  const lower = attrName.toLowerCase();
 
-  const actionKey = match[1];
-  const action = ACTION_MAP[actionKey];
-  if (!action) return null;
+  // New pattern: lvt-el:{method}:on:[{action}:]{state}
+  const newMatch = lower.match(/^lvt-el:(\w+):on:(.+)$/);
+  if (newMatch) {
+    const methodKey = newMatch[1];
+    const action = METHOD_MAP[methodKey];
+    if (!action) return null;
 
-  const eventPart = match[2];
+    const eventPart = newMatch[2];
+    // Skip interaction triggers (click-away) — handled by click-away delegation
+    if (eventPart === "click-away") return null;
 
-  // Check if the last segment is a lifecycle event
-  // Format: "{actionName}:{lifecycle}" or just "{lifecycle}"
-  const segments = eventPart.split(":");
-  const lastSegment = segments[segments.length - 1] as LifecycleEvent;
+    const segments = eventPart.split(":");
+    const lastSegment = segments[segments.length - 1];
+    if (!LIFECYCLE_SET.has(lastSegment)) return null;
 
-  if (!LIFECYCLE_EVENTS.includes(lastSegment)) return null;
+    const lifecycle = lastSegment as LifecycleEvent;
+    const actionName = segments.length > 1 ? segments.slice(0, -1).join(":") : undefined;
 
-  const lifecycle = lastSegment;
-  const actionName = segments.length > 1 ? segments.slice(0, -1).join(":") : undefined;
+    return {
+      action,
+      lifecycle,
+      actionName: actionName || undefined,
+      param: attrValue || undefined,
+    };
+  }
 
-  return {
-    action,
-    lifecycle,
-    actionName: actionName || undefined,
-    param: attrValue || undefined,
-  };
+  return null;
 }
 
 /**
@@ -122,18 +113,6 @@ export function executeAction(
     case "reset":
       if (element instanceof HTMLFormElement) {
         element.reset();
-      }
-      break;
-
-    case "disable":
-      if ("disabled" in element) {
-        (element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled = true;
-      }
-      break;
-
-    case "enable":
-      if ("disabled" in element) {
-        (element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled = false;
       }
       break;
 
@@ -179,45 +158,30 @@ export function executeAction(
 
 /**
  * Check if an event matches a binding.
- *
- * @param binding The reactive binding to check
- * @param lifecycle The lifecycle event that fired
- * @param actionName The action name that triggered the event (optional)
  */
 export function matchesEvent(
   binding: ReactiveBinding,
   lifecycle: LifecycleEvent,
   actionName?: string
 ): boolean {
-  // Lifecycle must match
   if (binding.lifecycle !== lifecycle) return false;
-
-  // If binding has no actionName, it's global (matches any action)
   if (!binding.actionName) return true;
-
-  // If binding has actionName, it must match the fired action
   return binding.actionName === actionName;
 }
 
 /**
  * Process all reactive attributes for a lifecycle event.
- *
- * Instead of building complex selectors, we iterate all elements with any lvt-*-on:* attribute
- * and check each one against the fired event.
  */
 export function processReactiveAttributes(
   lifecycle: LifecycleEvent,
   actionName?: string
 ): void {
-  // Find all elements that might have reactive attributes
-  // This is a broad selector but avoids escaping issues with attribute names containing colons
   const allElements = document.querySelectorAll("*");
 
   allElements.forEach((element) => {
-    // Check all attributes on this element for reactive bindings
     Array.from(element.attributes).forEach((attr) => {
-      // Quick filter: only process lvt-*-on: attributes
-      if (!attr.name.startsWith("lvt-") || !attr.name.includes("-on:")) {
+      // Quick filter: only process lvt-el:*:on:* attributes
+      if (!attr.name.startsWith("lvt-el:") || !attr.name.includes(":on:")) {
         return;
       }
 
@@ -231,11 +195,9 @@ export function processReactiveAttributes(
 
 /**
  * Set up document-level event listeners for reactive attributes.
- * This should be called once during client initialization.
  */
 export function setupReactiveAttributeListeners(): void {
   LIFECYCLE_EVENTS.forEach((lifecycle) => {
-    // Listen in capture phase to process before event bubbles
     document.addEventListener(
       `lvt:${lifecycle}`,
       (e: Event) => {
@@ -243,7 +205,7 @@ export function setupReactiveAttributeListeners(): void {
         const actionName = customEvent.detail?.action;
         processReactiveAttributes(lifecycle, actionName);
       },
-      true // capture phase
+      true
     );
   });
 }
