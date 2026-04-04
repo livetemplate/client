@@ -155,10 +155,15 @@ export class EventDelegator {
           //   1. lvt-form:action attribute (explicit routing)
           //   2. submitter.name (button name = action)
           //   3. form.name (form name = action)
-          //   4. "" (server defaults to Submit())
+          //   4. "submit" (server defaults to Submit())
+          //
+          // Note: lvt-action hidden field is a server-side progressive
+          // enhancement fallback (no-JS POST). The client does not read it;
+          // the server extracts it from form data directly.
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
             if (!element.hasAttribute("lvt-form:no-intercept")) {
-              // Check for explicit routing attribute first
+              // Check for explicit routing attribute first.
+              // Empty string ("") falls through to submitter/form name resolution.
               const explicitAction = element.getAttribute("lvt-form:action");
               const submitter = (e as SubmitEvent).submitter;
               if (explicitAction) {
@@ -240,8 +245,12 @@ export class EventDelegator {
                   ).map((el) => (el as HTMLInputElement).name)
                 );
 
-                // Determine the action routing key to exclude from form data.
-                // Only the submitter button's name is excluded (it's the routing key, not data).
+                // Exclude the submitter button's name from form data.
+                // The submitter's name is used as the action routing key in the
+                // button-name path — including it in data would be redundant.
+                // When lvt-form:action overrides routing, the button name is still
+                // excluded to avoid noisy payloads (the button is a UI control,
+                // not domain data). Button value and data-* attrs are collected below.
                 // "action" is NOT excluded — it's a normal data field.
                 const submitterForData = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
                 const actionFieldName = submitterForData?.name;
