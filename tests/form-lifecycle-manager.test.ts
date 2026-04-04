@@ -1,47 +1,42 @@
 import { FormLifecycleManager } from "../state/form-lifecycle-manager";
-import { ModalManager } from "../dom/modal-manager";
-import { createLogger } from "../utils/logger";
 import type { ResponseMetadata } from "../types";
 
 describe("FormLifecycleManager", () => {
-  let modalCloseSpy: jest.SpyInstance;
-  let modalManager: ModalManager;
-
   beforeEach(() => {
-    modalManager = new ModalManager(
-      createLogger({ scope: "ModalManagerTest", level: "silent" })
-    );
-    modalCloseSpy = jest
-      .spyOn(modalManager, "close")
-      .mockImplementation(() => {});
     document.body.innerHTML = "";
   });
 
   afterEach(() => {
-    modalCloseSpy.mockRestore();
     document.body.innerHTML = "";
   });
 
   const createForm = () => {
-    const modal = document.createElement("div");
-    modal.id = "modal-1";
-    modal.setAttribute("role", "dialog");
+    const dialog = document.createElement("dialog");
+    dialog.id = "dialog-1";
+    // JSDOM doesn't implement dialog.showModal() — polyfill
+    if (!dialog.showModal) {
+      dialog.showModal = function () { this.setAttribute("open", ""); };
+    }
+    if (!dialog.close) {
+      dialog.close = function () { this.removeAttribute("open"); };
+    }
 
     const form = document.createElement("form");
-    modal.appendChild(form);
+    dialog.appendChild(form);
 
     const button = document.createElement("button");
     button.textContent = "Submit";
     form.appendChild(button);
 
-    document.body.appendChild(modal);
+    document.body.appendChild(dialog);
+    dialog.showModal();
 
-    return { form, button, modal };
+    return { form, button, dialog };
   };
 
-  it("dispatches success events, resets the form, and closes the modal on success", () => {
-    const { form, button, modal } = createForm();
-    const manager = new FormLifecycleManager(modalManager);
+  it("dispatches success events, resets the form, and closes the dialog on success", () => {
+    const { form, button, dialog } = createForm();
+    const manager = new FormLifecycleManager();
 
     const doneListener = jest.fn();
     const successListener = jest.fn();
@@ -55,21 +50,21 @@ describe("FormLifecycleManager", () => {
 
     expect(doneListener).toHaveBeenCalledWith(expect.any(CustomEvent));
     expect(successListener).toHaveBeenCalledWith(expect.any(CustomEvent));
-    expect(modalCloseSpy).toHaveBeenCalledWith("modal-1");
+    expect(dialog.open).toBe(false);
     expect(form.elements.length).toBeGreaterThan(0);
     expect(button.disabled).toBe(false);
     expect(button.textContent).toBe("Submit");
   });
 
-  it("respects lvt-preserve and keeps the fields intact", () => {
+  it("respects lvt-form:preserve and keeps the fields intact", () => {
     const { form, button } = createForm();
-    form.setAttribute("lvt-preserve", "");
+    form.setAttribute("lvt-form:preserve", "");
 
     const input = document.createElement("input");
     input.value = "Keep me";
     form.appendChild(input);
 
-    const manager = new FormLifecycleManager(modalManager);
+    const manager = new FormLifecycleManager();
     manager.setActiveSubmission(form, button, "Submit");
 
     const metadata: ResponseMetadata = { success: true, errors: {} };
@@ -79,8 +74,8 @@ describe("FormLifecycleManager", () => {
   });
 
   it("dispatches error events and keeps the form when the response fails", () => {
-    const { form, button } = createForm();
-    const manager = new FormLifecycleManager(modalManager);
+    const { form, button, dialog } = createForm();
+    const manager = new FormLifecycleManager();
 
     const doneListener = jest.fn();
     const errorListener = jest.fn();
@@ -97,14 +92,14 @@ describe("FormLifecycleManager", () => {
 
     expect(doneListener).toHaveBeenCalledWith(expect.any(CustomEvent));
     expect(errorListener).toHaveBeenCalledWith(expect.any(CustomEvent));
-    expect(modalCloseSpy).not.toHaveBeenCalled();
+    expect(dialog.open).toBe(true);
     expect(button.disabled).toBe(false);
     expect(button.textContent).toBe("Submit");
   });
 
   it("reset simply clears active submission state", () => {
-    const { form, button } = createForm();
-    const manager = new FormLifecycleManager(modalManager);
+    const { form, button, dialog } = createForm();
+    const manager = new FormLifecycleManager();
 
     manager.setActiveSubmission(form, button, "Submit");
     manager.reset();
@@ -112,6 +107,7 @@ describe("FormLifecycleManager", () => {
     const metadata: ResponseMetadata = { success: true, errors: {} };
     manager.handleResponse(metadata);
 
-    expect(modalCloseSpy).not.toHaveBeenCalled();
+    // Dialog should still be open since reset was called before handleResponse
+    expect(dialog.open).toBe(true);
   });
 });

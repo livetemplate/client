@@ -58,7 +58,7 @@ export class LinkInterceptor {
     if (link.target && link.target !== "_self") return true;
     // Download links
     if (link.hasAttribute("download")) return true;
-    // Opt-out
+    // Opt-out (lvt-no-intercept is the generic opt-out for both forms and links)
     if (link.hasAttribute("lvt-no-intercept")) return true;
     // Hash-only links (scroll anchors)
     if (link.pathname === window.location.pathname && link.hash) return true;

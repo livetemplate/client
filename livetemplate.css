@@ -1,0 +1,24 @@
+/**
+ * LiveTemplate CSS Custom Property Defaults
+ *
+ * These custom properties configure lvt-fx:* directives.
+ * Override them in your own stylesheets to customize behavior.
+ *
+ * Usage:
+ *   [lvt-fx\:scroll] { --lvt-scroll-behavior: smooth; }
+ *   [lvt-fx\:highlight] { --lvt-highlight-color: yellow; --lvt-highlight-duration: 1000; }
+ *   [lvt-fx\:animate] { --lvt-animate-duration: 500; }
+ */
+
+:root {
+  /* Scroll directive defaults */
+  --lvt-scroll-behavior: auto;
+  --lvt-scroll-threshold: 100;
+
+  /* Highlight directive defaults */
+  --lvt-highlight-duration: 500;
+  --lvt-highlight-color: #ffc107;
+
+  /* Animate directive defaults */
+  --lvt-animate-duration: 300;
+}

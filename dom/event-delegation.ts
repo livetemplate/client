@@ -1,6 +1,18 @@
 import { debounce, throttle } from "../utils/rate-limit";
-import { checkLvtConfirm } from "../utils/confirm";
+import { lvtSelector } from "../utils/lvt-selector";
+import { executeAction, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
+
+// Methods supported by click-away, derived from ReactiveAction values
+const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
+  reset: "reset",
+  addclass: "addClass",
+  removeclass: "removeClass",
+  toggleclass: "toggleClass",
+  setattr: "setAttr",
+  toggleattr: "toggleAttr",
+};
+const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
@@ -12,8 +24,6 @@ export interface EventDelegationContext {
     button: HTMLButtonElement | null,
     originalButtonText: string | null
   ): void;
-  openModal(modalId: string): void;
-  closeModal(modalId: string): void;
   getWebSocketReadyState(): number | undefined;
   triggerPendingUploads(uploadName: string): void;
 }
@@ -102,7 +112,7 @@ export class EventDelegator {
 
         if (!inWrapper) return;
 
-        const attrName = `lvt-${eventType}`;
+        const attrName = `lvt-on:${eventType}`;
         element = target;
 
         while (element && element !== currentWrapper.parentElement) {
@@ -122,7 +132,7 @@ export class EventDelegator {
           // Orphan button detection (Tier 1: formless standalone buttons).
           // A <button name="action"> outside any form triggers the named action directly.
           // Resolution order for click events:
-          //   1. lvt-click attribute (Tier 2 — already checked above)
+          //   1. lvt-on:click attribute (Tier 2 — already checked above)
           //   2. Orphan button name (Tier 1 — checked here)
           if (!action && eventType === "click") {
             const btn = element instanceof HTMLButtonElement ? element : null;
@@ -140,13 +150,13 @@ export class EventDelegator {
             }
           }
 
-          // Auto-intercept forms without lvt-submit (progressive complexity).
+          // Auto-intercept forms (progressive complexity).
           // Button name IS the action. Resolution order:
           //   1. submitter.name (button name = action)
           //   2. form.name (form name = action)
           //   3. "" (server defaults to Submit())
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
-            if (!element.hasAttribute("lvt-no-intercept")) {
+            if (!element.hasAttribute("lvt-form:no-intercept")) {
               const submitter = (e as SubmitEvent).submitter;
               if (submitter instanceof HTMLButtonElement && submitter.name) {
                 action = submitter.name;
@@ -166,23 +176,6 @@ export class EventDelegator {
               const dialog = element.closest("dialog");
               if (dialog && element.getAttribute("method")?.toLowerCase() === "dialog") {
                 (element as any).__lvtCloseDialog = dialog;
-              }
-            }
-          }
-
-          if (!action && (eventType === "change" || eventType === "input" || eventType === "search")) {
-            // For input/search events, also check lvt-change on the element itself
-            // This handles: typing (input), clearing via X button (search/input), blur (change)
-            if ((eventType === "input" || eventType === "search") && element.hasAttribute("lvt-change")) {
-              action = element.getAttribute("lvt-change");
-              actionElement = element;
-            }
-            // Check for form-level lvt-change
-            if (!action) {
-              const formElement: HTMLFormElement | null = element.closest("form");
-              if (formElement && formElement.hasAttribute("lvt-change")) {
-                action = formElement.getAttribute("lvt-change");
-                actionElement = formElement;
               }
             }
           }
@@ -218,12 +211,6 @@ export class EventDelegator {
                 targetElement,
               });
 
-              // Handle lvt-confirm for any action
-              if (!checkLvtConfirm(targetElement as HTMLElement)) {
-                this.logger.debug("Action cancelled by user:", action);
-                return;
-              }
-
               const message: any = { action, data: {} };
 
               if (targetElement instanceof HTMLFormElement) {
@@ -247,12 +234,12 @@ export class EventDelegator {
                 );
 
                 // Determine which form field key is the action routing key
-                // (the submitter button's name, or "action"/"lvt-action" legacy fields)
+                // (the submitter button's name, or "action" field)
                 const submitterForData = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
                 const actionFieldName = submitterForData?.name || "action";
 
                 formData.forEach((value, key) => {
-                  if (key === actionFieldName || key === "action" || key === "lvt-action") return;
+                  if (key === actionFieldName || key === "action") return;
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
                     this.logger.debug("Converted checkbox", key, "to true");
@@ -299,19 +286,17 @@ export class EventDelegator {
                 this.extractButtonData(actionElement as HTMLButtonElement, message.data);
               }
 
-              Array.from(targetElement.attributes).forEach((attr) => {
-                if (attr.name.startsWith("lvt-data-")) {
-                  const key = attr.name.replace("lvt-data-", "");
-                  message.data[key] = this.context.parseValue(attr.value);
-                }
-              });
-
-              Array.from(targetElement.attributes).forEach((attr) => {
-                if (attr.name.startsWith("lvt-value-")) {
-                  const key = attr.name.replace("lvt-value-", "");
-                  message.data[key] = this.context.parseValue(attr.value);
-                }
-              });
+              // Extract standard data-* attributes from the action element.
+              // Exclude data-key (list reconciliation) and data-lvt-id (internal framework ID)
+              // since these are LiveTemplate internals, not user-provided action data.
+              if (!(targetElement instanceof HTMLFormElement) && !isOrphanButton) {
+                Array.from(actionElement.attributes).forEach((attr) => {
+                  if (attr.name.startsWith("data-") && attr.name !== "data-key" && attr.name !== "data-lvt-id") {
+                    const key = attr.name.slice(5);
+                    message.data[key] = this.context.parseValue(attr.value);
+                  }
+                });
+              }
 
               if (
                 eventType === "submit" &&
@@ -324,12 +309,12 @@ export class EventDelegator {
 
                 if (
                   submitButton &&
-                  submitButton.hasAttribute("lvt-disable-with")
+                  submitButton.hasAttribute("lvt-form:disable-with")
                 ) {
                   originalButtonText = submitButton.textContent;
                   submitButton.disabled = true;
                   submitButton.textContent =
-                    submitButton.getAttribute("lvt-disable-with");
+                    submitButton.getAttribute("lvt-form:disable-with");
                   this.logger.debug("Disabled submit button");
                 }
 
@@ -376,8 +361,8 @@ export class EventDelegator {
               }
             };
 
-            const throttleValue = actionElement.getAttribute("lvt-throttle");
-            const debounceValue = actionElement.getAttribute("lvt-debounce");
+            const throttleValue = actionElement.getAttribute("lvt-mod:throttle");
+            const debounceValue = actionElement.getAttribute("lvt-mod:debounce");
 
             // Skip rate limiting for "search" event (clear button click) - it's a discrete action
             const shouldRateLimit = (throttleValue || debounceValue) && eventType !== "search";
@@ -472,8 +457,8 @@ export class EventDelegator {
         const currentWrapper = this.context.getWrapperElement();
         if (!currentWrapper) return;
 
-        const attrName = `lvt-window-${eventType}`;
-        const elements = currentWrapper.querySelectorAll(`[${attrName}]`);
+        const attrName = `lvt-on:window:${eventType}`;
+        const elements = currentWrapper.querySelectorAll(lvtSelector(attrName));
 
         elements.forEach((element) => {
           const action = element.getAttribute(attrName);
@@ -492,22 +477,16 @@ export class EventDelegator {
 
           const message: any = { action, data: {} };
 
+          // Extract standard data-* attributes from element
           Array.from(element.attributes).forEach((attr) => {
-            if (attr.name.startsWith("lvt-data-")) {
-              const key = attr.name.replace("lvt-data-", "");
+            if (attr.name.startsWith("data-") && attr.name !== "data-key" && attr.name !== "data-lvt-id") {
+              const key = attr.name.slice(5);
               message.data[key] = this.context.parseValue(attr.value);
             }
           });
 
-          Array.from(element.attributes).forEach((attr) => {
-            if (attr.name.startsWith("lvt-value-")) {
-              const key = attr.name.replace("lvt-value-", "");
-              message.data[key] = this.context.parseValue(attr.value);
-            }
-          });
-
-          const throttleValue = element.getAttribute("lvt-throttle");
-          const debounceValue = element.getAttribute("lvt-debounce");
+          const throttleValue = element.getAttribute("lvt-mod:throttle");
+          const debounceValue = element.getAttribute("lvt-mod:debounce");
 
           const handleAction = () => this.context.send(message);
 
@@ -546,6 +525,11 @@ export class EventDelegator {
     });
   }
 
+  /**
+   * Sets up click-away detection for lvt-el:*:on:click-away attributes.
+   * Instead of routing to a server action, click-away triggers client-side
+   * DOM manipulation via executeAction from reactive-attributes.
+   */
   setupClickAwayDelegation(): void {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
@@ -562,151 +546,27 @@ export class EventDelegator {
       if (!currentWrapper) return;
 
       const target = e.target as Element;
-      const elements = currentWrapper.querySelectorAll("[lvt-click-away]");
 
-      elements.forEach((element) => {
-        if (!element.contains(target)) {
-          const action = element.getAttribute("lvt-click-away");
-          if (!action) return;
+      const clickAwaySelector = CLICK_AWAY_METHODS
+        .map(m => lvtSelector(`lvt-el:${m}:on:click-away`))
+        .join(", ");
+      const clickAwayElements = currentWrapper.querySelectorAll(clickAwaySelector);
+      clickAwayElements.forEach((element) => {
+        if (element.contains(target)) return; // Click was inside, not away
 
-          const message: any = { action, data: {} };
-
-          Array.from(element.attributes).forEach((attr) => {
-            if (attr.name.startsWith("lvt-data-")) {
-              const key = attr.name.replace("lvt-data-", "");
-              message.data[key] = this.context.parseValue(attr.value);
-            }
-          });
-
-          Array.from(element.attributes).forEach((attr) => {
-            if (attr.name.startsWith("lvt-value-")) {
-              const key = attr.name.replace("lvt-value-", "");
-              message.data[key] = this.context.parseValue(attr.value);
-            }
-          });
-
-          this.context.send(message);
-        }
+        Array.from(element.attributes).forEach((attr) => {
+          if (!attr.name.includes(":on:click-away")) return;
+          const match = attr.name.match(/^lvt-el:(\w+):on:click-away$/);
+          if (!match) return;
+          const method = CLICK_AWAY_METHOD_MAP[match[1].toLowerCase()];
+          if (!method) return;
+          executeAction(element, method, attr.value);
+        });
       });
     };
 
     (document as any)[listenerKey] = listener;
     document.addEventListener("click", listener);
-  }
-
-  setupModalDelegation(): void {
-    const wrapperElement = this.context.getWrapperElement();
-    if (!wrapperElement) return;
-
-    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
-
-    const openListenerKey = `__lvt_modal_open_${wrapperId}`;
-    const existingOpenListener = (document as any)[openListenerKey];
-    if (existingOpenListener) {
-      document.removeEventListener("click", existingOpenListener);
-    }
-
-    const openListener = (e: Event) => {
-      const currentWrapper = this.context.getWrapperElement();
-      if (!currentWrapper) return;
-
-      const target = (e.target as Element)?.closest("[lvt-modal-open]");
-      if (!target || !currentWrapper.contains(target)) return;
-
-      const modalId = target.getAttribute("lvt-modal-open");
-      if (!modalId) return;
-
-      e.preventDefault();
-      this.context.openModal(modalId);
-    };
-
-    (document as any)[openListenerKey] = openListener;
-    document.addEventListener("click", openListener);
-
-    const closeListenerKey = `__lvt_modal_close_${wrapperId}`;
-    const existingCloseListener = (document as any)[closeListenerKey];
-    if (existingCloseListener) {
-      document.removeEventListener("click", existingCloseListener);
-    }
-
-    // Close listener is intentionally NOT scoped to wrapper (unlike openListener).
-    // Close buttons may be inside modals rendered in portals outside the wrapper.
-    // Instead, we verify the target modal exists by ID.
-    const closeListener = (e: Event) => {
-      const target = (e.target as Element)?.closest("[lvt-modal-close]");
-      if (!target) return;
-
-      const modalId = target.getAttribute("lvt-modal-close");
-      if (!modalId) return;
-
-      // Verify the modal exists before attempting to close
-      const modal = document.getElementById(modalId);
-      if (!modal) return;
-
-      e.preventDefault();
-      this.context.closeModal(modalId);
-    };
-
-    (document as any)[closeListenerKey] = closeListener;
-    document.addEventListener("click", closeListener);
-
-    const backdropListenerKey = `__lvt_modal_backdrop_${wrapperId}`;
-    const existingBackdropListener = (document as any)[backdropListenerKey];
-    if (existingBackdropListener) {
-      document.removeEventListener("click", existingBackdropListener);
-    }
-
-    // Helper to close modal, dispatching action if data-modal-close-action is set
-    const closeModalWithAction = (modal: Element, modalId: string) => {
-      const closeAction = modal.getAttribute("data-modal-close-action");
-      if (closeAction) {
-        this.context.send({ action: closeAction, data: {} });
-      } else {
-        this.context.closeModal(modalId);
-      }
-    };
-
-    const backdropListener = (e: Event) => {
-      const target = e.target as Element;
-      // Only trigger if clicked directly on the backdrop element itself
-      if (!target.hasAttribute("data-modal-backdrop")) return;
-
-      const modalId = target.getAttribute("data-modal-id");
-      if (!modalId) return;
-
-      const modal = document.getElementById(modalId);
-      if (!modal) return;
-
-      closeModalWithAction(modal, modalId);
-    };
-
-    (document as any)[backdropListenerKey] = backdropListener;
-    document.addEventListener("click", backdropListener);
-
-    const escapeListenerKey = `__lvt_modal_escape_${wrapperId}`;
-    const existingEscapeListener = (document as any)[escapeListenerKey];
-    if (existingEscapeListener) {
-      document.removeEventListener("keydown", existingEscapeListener);
-    }
-
-    const escapeListener = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      const currentWrapper = this.context.getWrapperElement();
-      if (!currentWrapper) return;
-
-      const openModals = currentWrapper.querySelectorAll(
-        '[role="dialog"]:not([hidden])'
-      );
-      if (openModals.length > 0) {
-        const lastModal = openModals[openModals.length - 1];
-        if (lastModal.id) {
-          closeModalWithAction(lastModal, lastModal.id);
-        }
-      }
-    };
-
-    (document as any)[escapeListenerKey] = escapeListener;
-    document.addEventListener("keydown", escapeListener);
   }
 
   /**

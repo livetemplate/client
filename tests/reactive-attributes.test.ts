@@ -18,9 +18,9 @@ describe("Reactive Attributes", () => {
   });
 
   describe("parseReactiveAttribute", () => {
-    describe("valid attribute parsing", () => {
+    describe("valid attribute parsing (new lvt-el: pattern)", () => {
       it("parses global lifecycle event", () => {
-        const result = parseReactiveAttribute("lvt-reset-on:success", "");
+        const result = parseReactiveAttribute("lvt-el:reset:on:success", "");
         expect(result).toEqual({
           action: "reset",
           lifecycle: "success",
@@ -30,7 +30,7 @@ describe("Reactive Attributes", () => {
       });
 
       it("parses action-specific lifecycle event", () => {
-        const result = parseReactiveAttribute("lvt-reset-on:create-todo:success", "");
+        const result = parseReactiveAttribute("lvt-el:reset:on:create-todo:success", "");
         expect(result).toEqual({
           action: "reset",
           lifecycle: "success",
@@ -40,7 +40,7 @@ describe("Reactive Attributes", () => {
       });
 
       it("parses parameterized action with value", () => {
-        const result = parseReactiveAttribute("lvt-addClass-on:pending", "loading opacity-50");
+        const result = parseReactiveAttribute("lvt-el:addclass:on:pending", "loading opacity-50");
         expect(result).toEqual({
           action: "addClass",
           lifecycle: "pending",
@@ -50,7 +50,7 @@ describe("Reactive Attributes", () => {
       });
 
       it("parses action-specific parameterized action", () => {
-        const result = parseReactiveAttribute("lvt-addClass-on:save:pending", "loading");
+        const result = parseReactiveAttribute("lvt-el:addclass:on:save:pending", "loading");
         expect(result).toEqual({
           action: "addClass",
           lifecycle: "pending",
@@ -62,30 +62,28 @@ describe("Reactive Attributes", () => {
       it("parses all lifecycle events", () => {
         const lifecycles: LifecycleEvent[] = ["pending", "success", "error", "done"];
         lifecycles.forEach((lifecycle) => {
-          const result = parseReactiveAttribute(`lvt-reset-on:${lifecycle}`, "");
+          const result = parseReactiveAttribute(`lvt-el:reset:on:${lifecycle}`, "");
           expect(result?.lifecycle).toBe(lifecycle);
         });
       });
 
-      it("parses all action types", () => {
-        const actions = [
-          "reset",
-          "disable",
-          "enable",
-          "addClass",
-          "removeClass",
-          "toggleClass",
-          "setAttr",
-          "toggleAttr",
+      it("parses all method types", () => {
+        const methods = [
+          ["reset", "reset"],
+          ["addclass", "addClass"],
+          ["removeclass", "removeClass"],
+          ["toggleclass", "toggleClass"],
+          ["setattr", "setAttr"],
+          ["toggleattr", "toggleAttr"],
         ];
-        actions.forEach((action) => {
-          const result = parseReactiveAttribute(`lvt-${action}-on:success`, "value");
-          expect(result?.action).toBe(action);
+        methods.forEach(([input, expected]) => {
+          const result = parseReactiveAttribute(`lvt-el:${input}:on:success`, "value");
+          expect(result?.action).toBe(expected);
         });
       });
 
       it("handles action names with hyphens", () => {
-        const result = parseReactiveAttribute("lvt-reset-on:create-new-todo:success", "");
+        const result = parseReactiveAttribute("lvt-el:reset:on:create-new-todo:success", "");
         expect(result).toEqual({
           action: "reset",
           lifecycle: "success",
@@ -95,7 +93,7 @@ describe("Reactive Attributes", () => {
       });
 
       it("handles action names with colons", () => {
-        const result = parseReactiveAttribute("lvt-reset-on:todos:create:success", "");
+        const result = parseReactiveAttribute("lvt-el:reset:on:todos:create:success", "");
         expect(result).toEqual({
           action: "reset",
           lifecycle: "success",
@@ -105,21 +103,32 @@ describe("Reactive Attributes", () => {
       });
     });
 
+    describe("click-away interaction keyword", () => {
+      it("returns null for click-away (handled by click-away delegation)", () => {
+        expect(parseReactiveAttribute("lvt-el:removeclass:on:click-away", "open")).toBeNull();
+      });
+    });
+
     describe("invalid attribute parsing", () => {
       it("returns null for non-reactive attributes", () => {
-        expect(parseReactiveAttribute("lvt-click", "action")).toBeNull();
-        expect(parseReactiveAttribute("lvt-submit", "save")).toBeNull();
+        expect(parseReactiveAttribute("lvt-on:click", "action")).toBeNull();
+        expect(parseReactiveAttribute("lvt-on:submit", "save")).toBeNull();
         expect(parseReactiveAttribute("class", "foo")).toBeNull();
       });
 
-      it("returns null for unknown actions", () => {
-        expect(parseReactiveAttribute("lvt-foo-on:success", "")).toBeNull();
-        expect(parseReactiveAttribute("lvt-hide-on:pending", "")).toBeNull();
+      it("returns null for unknown methods", () => {
+        expect(parseReactiveAttribute("lvt-el:foo:on:success", "")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:hide:on:pending", "")).toBeNull();
       });
 
       it("returns null for unknown lifecycle events", () => {
-        expect(parseReactiveAttribute("lvt-reset-on:loading", "")).toBeNull();
-        expect(parseReactiveAttribute("lvt-reset-on:complete", "")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:reset:on:loading", "")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:reset:on:complete", "")).toBeNull();
+      });
+
+      it("returns null for removed actions (disable/enable)", () => {
+        expect(parseReactiveAttribute("lvt-el:disable:on:pending", "")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:enable:on:done", "")).toBeNull();
       });
     });
   });
@@ -143,44 +152,7 @@ describe("Reactive Attributes", () => {
         const div = document.createElement("div");
         document.body.appendChild(div);
 
-        // Should not throw
         executeAction(div, "reset");
-      });
-    });
-
-    describe("disable/enable", () => {
-      it("disables a button", () => {
-        const button = document.createElement("button");
-        document.body.appendChild(button);
-
-        executeAction(button, "disable");
-        expect(button.disabled).toBe(true);
-      });
-
-      it("enables a button", () => {
-        const button = document.createElement("button");
-        button.disabled = true;
-        document.body.appendChild(button);
-
-        executeAction(button, "enable");
-        expect(button.disabled).toBe(false);
-      });
-
-      it("disables an input", () => {
-        const input = document.createElement("input");
-        document.body.appendChild(input);
-
-        executeAction(input, "disable");
-        expect(input.disabled).toBe(true);
-      });
-
-      it("enables an input", () => {
-        const input = document.createElement("input");
-        input.disabled = true;
-        document.body.appendChild(input);
-
-        executeAction(input, "enable");
-        expect(input.disabled).toBe(false);
       });
     });
 
@@ -369,7 +341,7 @@ describe("Reactive Attributes", () => {
   describe("processReactiveAttributes", () => {
     it("processes global success bindings", () => {
       const form = document.createElement("form");
-      form.setAttribute("lvt-reset-on:success", "");
+      form.setAttribute("lvt-el:reset:on:success", "");
       const input = document.createElement("input");
       input.name = "title";
       input.value = "test";
@@ -383,7 +355,7 @@ describe("Reactive Attributes", () => {
 
     it("processes action-specific bindings", () => {
       const form = document.createElement("form");
-      form.setAttribute("lvt-reset-on:create-todo:success", "");
+      form.setAttribute("lvt-el:reset:on:create-todo:success", "");
       const input = document.createElement("input");
       input.name = "title";
       input.value = "test";
@@ -400,45 +372,45 @@ describe("Reactive Attributes", () => {
     });
 
     it("processes multiple bindings on same element", () => {
-      const button = document.createElement("button");
-      button.setAttribute("lvt-disable-on:pending", "");
-      button.setAttribute("lvt-addClass-on:pending", "loading");
-      document.body.appendChild(button);
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addclass:on:pending", "loading");
+      div.setAttribute("lvt-el:setattr:on:pending", "aria-busy:true");
+      document.body.appendChild(div);
 
       processReactiveAttributes("pending", "save");
 
-      expect(button.disabled).toBe(true);
-      expect(button.classList.contains("loading")).toBe(true);
+      expect(div.classList.contains("loading")).toBe(true);
+      expect(div.getAttribute("aria-busy")).toBe("true");
     });
 
     it("processes bindings on multiple elements", () => {
       const form = document.createElement("form");
-      form.setAttribute("lvt-reset-on:success", "");
+      form.setAttribute("lvt-el:reset:on:success", "");
       const input = document.createElement("input");
       input.value = "test";
       form.appendChild(input);
 
-      const button = document.createElement("button");
-      button.disabled = true;
-      button.setAttribute("lvt-enable-on:success", "");
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:removeclass:on:success", "loading");
+      div.className = "loading";
 
       document.body.appendChild(form);
-      document.body.appendChild(button);
+      document.body.appendChild(div);
 
       processReactiveAttributes("success", "save");
 
       expect(input.value).toBe("");
-      expect(button.disabled).toBe(false);
+      expect(div.classList.contains("loading")).toBe(false);
     });
 
     it("ignores bindings for different lifecycles", () => {
-      const button = document.createElement("button");
-      button.setAttribute("lvt-disable-on:pending", "");
-      document.body.appendChild(button);
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addclass:on:pending", "loading");
+      document.body.appendChild(div);
 
       processReactiveAttributes("success", "save");
 
-      expect(button.disabled).toBe(false);
+      expect(div.classList.contains("loading")).toBe(false);
     });
   });
 
@@ -446,10 +418,10 @@ describe("Reactive Attributes", () => {
     it("sets up listeners for all lifecycle events", () => {
       setupReactiveAttributeListeners();
 
-      const button = document.createElement("button");
-      button.setAttribute("lvt-disable-on:pending", "");
-      button.setAttribute("lvt-enable-on:done", "");
-      document.body.appendChild(button);
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addclass:on:pending", "loading");
+      div.setAttribute("lvt-el:removeclass:on:done", "loading");
+      document.body.appendChild(div);
 
       // Simulate pending event
       document.dispatchEvent(
@@ -458,7 +430,7 @@ describe("Reactive Attributes", () => {
           bubbles: true,
         })
       );
-      expect(button.disabled).toBe(true);
+      expect(div.classList.contains("loading")).toBe(true);
 
       // Simulate done event
       document.dispatchEvent(
@@ -467,17 +439,16 @@ describe("Reactive Attributes", () => {
           bubbles: true,
         })
       );
-      expect(button.disabled).toBe(false);
+      expect(div.classList.contains("loading")).toBe(false);
     });
 
     it("handles events without action name", () => {
       setupReactiveAttributeListeners();
 
       const div = document.createElement("div");
-      div.setAttribute("lvt-addClass-on:success", "success-state");
+      div.setAttribute("lvt-el:addclass:on:success", "success-state");
       document.body.appendChild(div);
 
-      // Event without action in detail
       document.dispatchEvent(
         new CustomEvent("lvt:success", {
           detail: {},
@@ -485,7 +456,6 @@ describe("Reactive Attributes", () => {
         })
       );
 
-      // Global binding should still work
       expect(div.classList.contains("success-state")).toBe(true);
     });
   });
