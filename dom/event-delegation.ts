@@ -293,6 +293,16 @@ export class EventDelegator {
                 this.extractButtonData(actionElement as HTMLButtonElement, message.data);
               }
 
+              // Extract standard data-* attributes from the action element
+              if (!(targetElement instanceof HTMLFormElement) && !isOrphanButton) {
+                Array.from(actionElement.attributes).forEach((attr) => {
+                  if (attr.name.startsWith("data-") && attr.name !== "data-key" && attr.name !== "data-lvt-id") {
+                    const key = attr.name.slice(5);
+                    message.data[key] = this.context.parseValue(attr.value);
+                  }
+                });
+              }
+
               if (
                 eventType === "submit" &&
                 targetElement instanceof HTMLFormElement
@@ -542,14 +552,14 @@ export class EventDelegator {
 
       const target = e.target as Element;
 
-      // Scan all elements in the wrapper for lvt-el:*:on:click-away attributes
-      const allElements = currentWrapper.querySelectorAll("*");
-      allElements.forEach((element) => {
+      // Pre-filter: only scan elements that have lvt-el: attributes with click-away
+      // Use attribute substring selector to avoid scanning all DOM elements
+      const clickAwayElements = currentWrapper.querySelectorAll("[lvt-el\\:addclass\\:on\\:click-away], [lvt-el\\:removeclass\\:on\\:click-away], [lvt-el\\:toggleclass\\:on\\:click-away], [lvt-el\\:setattr\\:on\\:click-away], [lvt-el\\:toggleattr\\:on\\:click-away], [lvt-el\\:reset\\:on\\:click-away]");
+      clickAwayElements.forEach((element) => {
         if (element.contains(target)) return; // Click was inside, not away
 
         Array.from(element.attributes).forEach((attr) => {
           if (!attr.name.includes(":on:click-away")) return;
-          // Parse: lvt-el:{method}:on:click-away="param"
           const match = attr.name.match(/^lvt-el:(\w+):on:click-away$/);
           if (!match) return;
           const method = match[1].toLowerCase();

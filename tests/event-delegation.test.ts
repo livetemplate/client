@@ -44,7 +44,7 @@ describe("EventDelegator", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-1");
     wrapper.innerHTML = `
-      <button id="save" lvt-on:click="save"></button>
+      <button id="save" lvt-on:click="save" data-id="42"></button>
     `;
     document.body.appendChild(wrapper);
 
@@ -61,7 +61,7 @@ describe("EventDelegator", () => {
     expect(context.send).toHaveBeenCalledTimes(1);
     expect(context.send).toHaveBeenCalledWith({
       action: "save",
-      data: {},
+      data: { id: "42" },
     });
   });
 
