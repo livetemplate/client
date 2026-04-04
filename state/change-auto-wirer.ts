@@ -77,7 +77,7 @@ export class ChangeAutoWirer {
         const parentForm = el.closest("form");
         if (parentForm) {
           if (parentForm.hasAttribute("lvt-change")) continue;
-          if (parentForm.hasAttribute("lvt-no-intercept")) continue;
+          if (parentForm.hasAttribute("lvt-form:no-intercept")) continue;
         }
 
         if (el instanceof HTMLInputElement) {
@@ -107,7 +107,7 @@ export class ChangeAutoWirer {
       const parentForm = el.closest("form");
       if (parentForm) {
         if (parentForm.hasAttribute("lvt-change")) continue;
-        if (parentForm.hasAttribute("lvt-no-intercept")) continue;
+        if (parentForm.hasAttribute("lvt-form:no-intercept")) continue;
       }
 
       const name = el.getAttribute("name");
