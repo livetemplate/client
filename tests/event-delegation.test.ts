@@ -29,6 +29,7 @@ describe("EventDelegator", () => {
       getRateLimitedHandlers: () => rateLimitedHandlers,
       parseValue: (value: string) => value,
       send: jest.fn(),
+      sendHTTPMultipart: jest.fn(),
       setActiveSubmission: jest.fn(),
       getWebSocketReadyState: () => 1,
       triggerPendingUploads: jest.fn(),

@@ -148,6 +148,8 @@ export class LiveTemplateClient {
         getRateLimitedHandlers: () => this.rateLimitedHandlers,
         parseValue: (value: string) => this.parseValue(value),
         send: (message: any) => this.send(message),
+        sendHTTPMultipart: (form: HTMLFormElement, action: string) =>
+          this.sendHTTPMultipart(form, action),
         setActiveSubmission: (
           form: HTMLFormElement | null,
           button: HTMLButtonElement | null,
@@ -534,6 +536,48 @@ export class LiveTemplateClient {
       }
     } catch (error) {
       this.logger.error("Failed to send HTTP request:", error);
+    }
+  }
+
+  /**
+   * Send form with file inputs via HTTP POST multipart/form-data.
+   * Used for Tier 1 file uploads where binary files are submitted via
+   * HTTP fetch instead of WebSocket (avoids base64 encoding overhead).
+   */
+  sendHTTPMultipart(form: HTMLFormElement, action: string): void {
+    this.doSendHTTPMultipart(form, action);
+  }
+
+  private async doSendHTTPMultipart(form: HTMLFormElement, action: string): Promise<void> {
+    try {
+      const liveUrl = this.options.liveUrl || "/live";
+      const formData = new FormData(form);
+      formData.set("lvt-action", action);
+
+      const response = await fetch(liveUrl, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          // Do NOT set Content-Type — browser sets multipart boundary automatically
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP multipart request failed: ${response.status}`);
+      }
+
+      const updateResponse: UpdateResponse = await response.json();
+      if (this.wrapperElement) {
+        this.updateDOM(
+          this.wrapperElement,
+          updateResponse.tree,
+          updateResponse.meta
+        );
+      }
+    } catch (error) {
+      this.logger.error("Failed to send HTTP multipart request:", error);
     }
   }
 
