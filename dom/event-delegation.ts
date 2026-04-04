@@ -1,25 +1,18 @@
 import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
+import { executeAction, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 
-const SCOPE_KEYWORDS = new Set(["window", "document"]);
-
-/**
- * Parse an lvt-on:* attribute name into scope and event.
- * Grammar: lvt-on[:{scope}]:{event}
- *   - scope: "window" | "document" | (omitted = "element")
- *   - event: any native DOM event name
- */
-export function parseLvtOn(attr: string): { scope: string; event: string } | null {
-  if (!attr.startsWith("lvt-on:")) return null;
-  const segs = attr.slice(7).split(":");
-  if (segs.length === 0 || segs[0] === "") return null;
-  let scope = "element";
-  if (SCOPE_KEYWORDS.has(segs[0])) scope = segs.shift()!;
-  const event = segs.join(":");
-  if (!event) return null;
-  return { scope, event };
-}
+// Methods supported by click-away, derived from ReactiveAction values
+const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
+  reset: "reset",
+  addclass: "addClass",
+  removeclass: "removeClass",
+  toggleclass: "toggleClass",
+  setattr: "setAttr",
+  toggleattr: "toggleAttr",
+};
+const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
@@ -533,7 +526,7 @@ export class EventDelegator {
   /**
    * Sets up click-away detection for lvt-el:*:on:click-away attributes.
    * Instead of routing to a server action, click-away triggers client-side
-   * DOM manipulation (addClass, removeClass, toggleClass, etc.).
+   * DOM manipulation via executeAction from reactive-attributes.
    */
   setupClickAwayDelegation(): void {
     const wrapperElement = this.context.getWrapperElement();
@@ -552,9 +545,10 @@ export class EventDelegator {
 
       const target = e.target as Element;
 
-      // Pre-filter: only scan elements that have lvt-el: attributes with click-away
-      // Use attribute substring selector to avoid scanning all DOM elements
-      const clickAwayElements = currentWrapper.querySelectorAll("[lvt-el\\:addclass\\:on\\:click-away], [lvt-el\\:removeclass\\:on\\:click-away], [lvt-el\\:toggleclass\\:on\\:click-away], [lvt-el\\:setattr\\:on\\:click-away], [lvt-el\\:toggleattr\\:on\\:click-away], [lvt-el\\:reset\\:on\\:click-away]");
+      const clickAwaySelector = CLICK_AWAY_METHODS
+        .map(m => `[lvt-el\\:${m}\\:on\\:click-away]`)
+        .join(", ");
+      const clickAwayElements = currentWrapper.querySelectorAll(clickAwaySelector);
       clickAwayElements.forEach((element) => {
         if (element.contains(target)) return; // Click was inside, not away
 
@@ -562,32 +556,9 @@ export class EventDelegator {
           if (!attr.name.includes(":on:click-away")) return;
           const match = attr.name.match(/^lvt-el:(\w+):on:click-away$/);
           if (!match) return;
-          const method = match[1].toLowerCase();
-          const param = attr.value;
-
-          switch (method) {
-            case "addclass":
-              if (param) element.classList.add(...param.split(/\s+/).filter(Boolean));
-              break;
-            case "removeclass":
-              if (param) element.classList.remove(...param.split(/\s+/).filter(Boolean));
-              break;
-            case "toggleclass":
-              if (param) param.split(/\s+/).filter(Boolean).forEach(c => element.classList.toggle(c));
-              break;
-            case "setattr":
-              if (param) {
-                const ci = param.indexOf(":");
-                if (ci > 0) element.setAttribute(param.substring(0, ci), param.substring(ci + 1));
-              }
-              break;
-            case "toggleattr":
-              if (param) element.toggleAttribute(param);
-              break;
-            case "reset":
-              if (element instanceof HTMLFormElement) element.reset();
-              break;
-          }
+          const method = CLICK_AWAY_METHOD_MAP[match[1].toLowerCase()];
+          if (!method) return;
+          executeAction(element, method, attr.value);
         });
       });
     };

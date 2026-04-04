@@ -58,8 +58,7 @@ const METHOD_MAP: Record<string, ReactiveAction> = {
 /**
  * Parse a reactive attribute name and value into a binding.
  *
- * New pattern: lvt-el:{method}:on:[{action}:]{state}
- * Also supports legacy: lvt-{method}-on:[{action}:]{state}
+ * Supported pattern: lvt-el:{method}:on:[{action}:]{state}
  *
  * Examples:
  *   parseReactiveAttribute("lvt-el:reset:on:success", "") => { action: "reset", lifecycle: "success" }
