@@ -181,13 +181,16 @@ export function processReactiveAttributes(
   // action-scoped (lvt-el:reset:on:create-todo:success) patterns.
   const methodKeys = Object.keys(METHOD_MAP);
   const selectorParts: string[] = [];
+
+  // Escape CSS-special characters in actionName for use in attribute selectors
+  const escapedAction = actionName
+    ? actionName.replace(/([^\w-])/g, "\\$1")
+    : undefined;
+
   for (const m of methodKeys) {
-    // Match the unscoped pattern: lvt-el:{method}:on:{lifecycle}
     selectorParts.push(`[lvt-el\\:${m}\\:on\\:${lifecycle}]`);
-    // For action-scoped patterns, we can't predict action names in CSS,
-    // so we fall back to a broader match if actionName is provided.
-    if (actionName) {
-      selectorParts.push(`[lvt-el\\:${m}\\:on\\:${actionName.replace(/:/g, "\\:")}\\:${lifecycle}]`);
+    if (escapedAction) {
+      selectorParts.push(`[lvt-el\\:${m}\\:on\\:${escapedAction}\\:${lifecycle}]`);
     }
   }
   const selector = selectorParts.join(", ");
@@ -196,7 +199,14 @@ export function processReactiveAttributes(
   try {
     candidates = document.querySelectorAll(selector);
   } catch {
-    candidates = document.querySelectorAll("*");
+    // If selector is still invalid despite escaping, scan targeted elements only
+    // by matching unscoped patterns (without actionName)
+    const fallbackParts = methodKeys.map(m => `[lvt-el\\:${m}\\:on\\:${lifecycle}]`);
+    try {
+      candidates = document.querySelectorAll(fallbackParts.join(", "));
+    } catch {
+      return; // Cannot construct any valid selector
+    }
   }
 
   candidates.forEach((element) => {

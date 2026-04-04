@@ -4,6 +4,8 @@
  *   --lvt-scroll-behavior: auto | smooth (default: auto)
  *   --lvt-scroll-threshold: <number> (default: 100)
  */
+const VALID_SCROLL_BEHAVIORS = new Set(["auto", "smooth", "instant"]);
+
 export function handleScrollDirectives(rootElement: Element): void {
   const scrollElements = rootElement.querySelectorAll("[lvt-fx\\:scroll]");
 
@@ -12,7 +14,6 @@ export function handleScrollDirectives(rootElement: Element): void {
     const mode = htmlElement.getAttribute("lvt-fx:scroll");
     const computed = getComputedStyle(htmlElement);
     const rawBehavior = computed.getPropertyValue("--lvt-scroll-behavior").trim();
-    const VALID_SCROLL_BEHAVIORS = new Set(["auto", "smooth", "instant"]);
     const behavior: ScrollBehavior = VALID_SCROLL_BEHAVIORS.has(rawBehavior)
       ? (rawBehavior as ScrollBehavior)
       : "auto";
