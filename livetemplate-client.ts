@@ -268,15 +268,6 @@ export class LiveTemplateClient {
     response: UpdateResponse,
     event?: MessageEvent<string>
   ): void {
-    if (event) {
-      (window as any).__lastWSMessage = event.data;
-
-      if (!(window as any).__wsMessages) {
-        (window as any).__wsMessages = [];
-      }
-      (window as any).__wsMessages.push(response);
-    }
-
     // Check if this is an upload-specific message
     const uploadMessage = response as any;
     if (uploadMessage.type === "upload_progress") {
@@ -332,7 +323,6 @@ export class LiveTemplateClient {
 
       this.updateDOM(this.wrapperElement, response.tree, response.meta);
       this.messageCount++;
-      (window as any).__wsMessageCount = this.messageCount;
 
       this.wrapperElement.dispatchEvent(
         new CustomEvent("lvt:updated", {
@@ -464,10 +454,6 @@ export class LiveTemplateClient {
    * @param message - Message to send (will be JSON stringified)
    */
   send(message: any): void {
-    // Debug flag for testing
-    (window as any).__lvtSendCalled = true;
-    (window as any).__lvtMessageAction = message?.action;
-
     const readyState = this.webSocketManager.getReadyState();
 
     if (this.logger.isDebugEnabled()) {
@@ -480,28 +466,18 @@ export class LiveTemplateClient {
     }
 
     if (this.useHTTP) {
-      // HTTP mode: send via POST and handle response
       this.logger.debug("Using HTTP mode for send");
-      (window as any).__lvtSendPath = "http";
       this.sendHTTP(message);
     } else if (readyState === 1) { // WebSocket.OPEN = 1
-      // WebSocket mode
       this.logger.debug("Sending via WebSocket");
-      (window as any).__lvtSendPath = "websocket";
-      (window as any).__lvtWSMessage = JSON.stringify(message);
       this.webSocketManager.send(JSON.stringify(message));
-      this.logger.debug("WebSocket send complete");
-      (window as any).__lvtWSSendComplete = true;
     } else if (readyState !== undefined) {
-      // WebSocket is connecting or closing, fall back to HTTP temporarily
       this.logger.warn(
         `WebSocket not ready (state: ${readyState}), using HTTP fallback`
       );
-      (window as any).__lvtSendPath = "http-fallback";
       this.sendHTTP(message);
     } else {
       this.logger.error("No transport available");
-      (window as any).__lvtSendPath = "no-transport";
     }
   }
 

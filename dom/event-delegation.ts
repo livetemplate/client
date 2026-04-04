@@ -83,13 +83,6 @@ export class EventDelegator {
 
         const target = e.target as Element;
 
-        if (eventType === "submit") {
-          (window as any).__lvtSubmitListenerTriggered = true;
-          (window as any).__lvtSubmitEventTarget = (
-            e.target as Element
-          )?.tagName;
-        }
-
         this.logger.debug("Event listener triggered:", eventType, e.target);
 
         if (!target) return;
@@ -103,12 +96,6 @@ export class EventDelegator {
             break;
           }
           element = element.parentElement;
-        }
-
-        if (eventType === "submit") {
-          (window as any).__lvtInWrapper = inWrapper;
-          (window as any).__lvtWrapperElement =
-            currentWrapper.getAttribute("data-lvt-id");
         }
 
         if (!inWrapper) return;
@@ -172,8 +159,8 @@ export class EventDelegator {
               } else {
                 if (submitter instanceof HTMLButtonElement && submitter.name) {
                   action = submitter.name;
-                } else if (element.name) {
-                  action = element.name;
+                } else if (element.getAttribute("name")) {
+                  action = element.getAttribute("name")!;
                 } else {
                   action = "submit";
                 }
@@ -194,11 +181,6 @@ export class EventDelegator {
           }
 
           if (action != null && actionElement) {
-            if (eventType === "submit") {
-              (window as any).__lvtActionFound = action;
-              (window as any).__lvtActionElement = actionElement.tagName;
-            }
-
             if (eventType === "submit") {
               e.preventDefault();
             }
@@ -257,6 +239,7 @@ export class EventDelegator {
                 const actionFieldName = submitterForData?.name;
 
                 formData.forEach((value, key) => {
+                  if (value instanceof File) return; // Skip file entries — handled by sendHTTPMultipart
                   if (actionFieldName && key === actionFieldName) return;
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
@@ -379,7 +362,6 @@ export class EventDelegator {
                 if (hasFiles) {
                   this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
                   this.context.sendHTTPMultipart(targetElement, action);
-                  this.logger.debug("sendHTTPMultipart() called");
                   return;
                 }
               }
@@ -441,13 +423,7 @@ export class EventDelegator {
                 rateLimitedHandler();
               }
             } else {
-              if (eventType === "submit") {
-                (window as any).__lvtBeforeHandleAction = true;
-              }
               handleAction();
-              if (eventType === "submit") {
-                (window as any).__lvtAfterHandleAction = true;
-              }
             }
 
             return;
