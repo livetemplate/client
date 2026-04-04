@@ -11,9 +11,11 @@ export function handleScrollDirectives(rootElement: Element): void {
     const htmlElement = element as HTMLElement;
     const mode = htmlElement.getAttribute("lvt-fx:scroll");
     const computed = getComputedStyle(htmlElement);
-    const behavior =
-      (computed.getPropertyValue("--lvt-scroll-behavior").trim() as ScrollBehavior) ||
-      "auto";
+    const rawBehavior = computed.getPropertyValue("--lvt-scroll-behavior").trim();
+    const VALID_SCROLL_BEHAVIORS = new Set(["auto", "smooth", "instant"]);
+    const behavior: ScrollBehavior = VALID_SCROLL_BEHAVIORS.has(rawBehavior)
+      ? (rawBehavior as ScrollBehavior)
+      : "auto";
     const threshold = parseInt(
       computed.getPropertyValue("--lvt-scroll-threshold").trim() || "100",
       10

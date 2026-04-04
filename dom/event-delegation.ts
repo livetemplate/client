@@ -286,7 +286,9 @@ export class EventDelegator {
                 this.extractButtonData(actionElement as HTMLButtonElement, message.data);
               }
 
-              // Extract standard data-* attributes from the action element
+              // Extract standard data-* attributes from the action element.
+              // Exclude data-key (list reconciliation) and data-lvt-id (internal framework ID)
+              // since these are LiveTemplate internals, not user-provided action data.
               if (!(targetElement instanceof HTMLFormElement) && !isOrphanButton) {
                 Array.from(actionElement.attributes).forEach((attr) => {
                   if (attr.name.startsWith("data-") && attr.name !== "data-key" && attr.name !== "data-lvt-id") {
