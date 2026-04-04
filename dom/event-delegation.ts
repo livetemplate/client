@@ -546,7 +546,7 @@ export class EventDelegator {
       const target = e.target as Element;
 
       const clickAwaySelector = CLICK_AWAY_METHODS
-        .map(m => `[lvt-el\\:${m}\\:on\\:click-away]`)
+        .map(m => lvtSelector(`lvt-el:${m}:on:click-away`))
         .join(", ");
       const clickAwayElements = currentWrapper.querySelectorAll(clickAwaySelector);
       clickAwayElements.forEach((element) => {

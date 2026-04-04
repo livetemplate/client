@@ -175,11 +175,32 @@ export function processReactiveAttributes(
   lifecycle: LifecycleEvent,
   actionName?: string
 ): void {
-  const allElements = document.querySelectorAll("*");
+  // Target only elements with lvt-el: attributes instead of scanning all DOM elements.
+  // CSS doesn't support attribute-name-starts-with, so we build selectors from known
+  // method prefixes. This covers both unscoped (lvt-el:reset:on:success) and
+  // action-scoped (lvt-el:reset:on:create-todo:success) patterns.
+  const methodKeys = Object.keys(METHOD_MAP);
+  const selectorParts: string[] = [];
+  for (const m of methodKeys) {
+    // Match the unscoped pattern: lvt-el:{method}:on:{lifecycle}
+    selectorParts.push(`[lvt-el\\:${m}\\:on\\:${lifecycle}]`);
+    // For action-scoped patterns, we can't predict action names in CSS,
+    // so we fall back to a broader match if actionName is provided.
+    if (actionName) {
+      selectorParts.push(`[lvt-el\\:${m}\\:on\\:${actionName.replace(/:/g, "\\:")}\\:${lifecycle}]`);
+    }
+  }
+  const selector = selectorParts.join(", ");
 
-  allElements.forEach((element) => {
+  let candidates: NodeListOf<Element>;
+  try {
+    candidates = document.querySelectorAll(selector);
+  } catch {
+    candidates = document.querySelectorAll("*");
+  }
+
+  candidates.forEach((element) => {
     Array.from(element.attributes).forEach((attr) => {
-      // Quick filter: only process lvt-el:*:on:* attributes
       if (!attr.name.startsWith("lvt-el:") || !attr.name.includes(":on:")) {
         return;
       }
