@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - fix: form.name DOM shadowing + skip File objects in FormData parsing (58cf0c2)
 
+
 ## [v0.8.16] - 2026-04-04
 
 ### Changes
