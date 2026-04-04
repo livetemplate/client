@@ -151,19 +151,26 @@ export class EventDelegator {
           }
 
           // Auto-intercept forms (progressive complexity).
-          // Button name IS the action. Resolution order:
-          //   1. submitter.name (button name = action)
-          //   2. form.name (form name = action)
-          //   3. "" (server defaults to Submit())
+          // Action resolution order:
+          //   1. lvt-form:action attribute (explicit routing)
+          //   2. submitter.name (button name = action)
+          //   3. form.name (form name = action)
+          //   4. "" (server defaults to Submit())
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
             if (!element.hasAttribute("lvt-form:no-intercept")) {
+              // Check for explicit routing attribute first
+              const explicitAction = element.getAttribute("lvt-form:action");
               const submitter = (e as SubmitEvent).submitter;
-              if (submitter instanceof HTMLButtonElement && submitter.name) {
-                action = submitter.name;
-              } else if (element.name) {
-                action = element.name;
+              if (explicitAction) {
+                action = explicitAction;
               } else {
-                action = "submit";
+                if (submitter instanceof HTMLButtonElement && submitter.name) {
+                  action = submitter.name;
+                } else if (element.name) {
+                  action = element.name;
+                } else {
+                  action = "submit";
+                }
               }
               actionElement = element;
 
@@ -233,13 +240,14 @@ export class EventDelegator {
                   ).map((el) => (el as HTMLInputElement).name)
                 );
 
-                // Determine which form field key is the action routing key
-                // (the submitter button's name, or "action" field)
+                // Determine the action routing key to exclude from form data.
+                // Only the submitter button's name is excluded (it's the routing key, not data).
+                // "action" is NOT excluded — it's a normal data field.
                 const submitterForData = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
-                const actionFieldName = submitterForData?.name || "action";
+                const actionFieldName = submitterForData?.name;
 
                 formData.forEach((value, key) => {
-                  if (key === actionFieldName || key === "action") return;
+                  if (actionFieldName && key === actionFieldName) return;
                   if (checkboxNames.has(key)) {
                     message.data[key] = true;
                     this.logger.debug("Converted checkbox", key, "to true");

@@ -197,6 +197,87 @@ describe("EventDelegator", () => {
     );
   });
 
+  it("lvt-form:action attribute takes priority over button name", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-form-action");
+    wrapper.innerHTML = `
+      <form id="action-form" lvt-form:action="checkout">
+        <input type="text" name="item" value="widget" />
+        <button type="submit" id="submit" name="save">Save</button>
+      </form>
+    `;
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("action-form") as HTMLFormElement;
+    const submitButton = document.getElementById("submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    // lvt-form:action="checkout" takes priority over button name="save"
+    expect(context.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "checkout",
+        data: expect.objectContaining({ item: "widget" }),
+      })
+    );
+  });
+
+  it("action field in form data is preserved as normal data", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-action-data");
+    wrapper.innerHTML = `
+      <form id="workflow-form" lvt-form:action="processStep">
+        <input type="hidden" name="action" value="approve" />
+        <input type="text" name="reason" value="looks good" />
+        <button type="submit" id="submit">Submit</button>
+      </form>
+    `;
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("workflow-form") as HTMLFormElement;
+    const submitButton = document.getElementById("submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    expect(context.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "processStep",
+        data: expect.objectContaining({
+          action: "approve", // "action" is NOT reserved — it flows through as data
+          reason: "looks good",
+        }),
+      })
+    );
+  });
+
   describe("focus trap", () => {
     it("sets up keydown listener for focus trap", () => {
       const wrapper = document.createElement("div");

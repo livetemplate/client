@@ -348,9 +348,9 @@ describe("ChangeAutoWirer", () => {
       expect(sendSpy).not.toHaveBeenCalled();
     });
 
-    it("skips elements inside form with lvt-no-intercept", () => {
+    it("skips elements inside form with lvt-form:no-intercept", () => {
       const form = document.createElement("form");
-      form.setAttribute("lvt-no-intercept", "");
+      form.setAttribute("lvt-form:no-intercept", "");
       const input = document.createElement("input");
       input.setAttribute("name", "Title");
       form.appendChild(input);
@@ -625,9 +625,9 @@ describe("ChangeAutoWirer", () => {
       expect(sendSpy).not.toHaveBeenCalled();
     });
 
-    it("skips select inside form with lvt-no-intercept", () => {
+    it("skips select inside form with lvt-form:no-intercept", () => {
       const form = document.createElement("form");
-      form.setAttribute("lvt-no-intercept", "");
+      form.setAttribute("lvt-form:no-intercept", "");
       const select = document.createElement("select");
       select.setAttribute("name", "sort_by");
       form.appendChild(select);

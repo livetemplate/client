@@ -8,7 +8,7 @@ export interface LinkInterceptorContext {
 /**
  * Intercepts <a> clicks within the LiveTemplate wrapper for SPA navigation.
  * Same-origin links are fetched via fetch() and the wrapper content is replaced.
- * External links, target="_blank", download, and lvt-no-intercept are skipped.
+ * External links, target="_blank", download, and lvt-nav:no-intercept are skipped.
  */
 export class LinkInterceptor {
   private popstateListener: (() => void) | null = null;
@@ -58,8 +58,8 @@ export class LinkInterceptor {
     if (link.target && link.target !== "_self") return true;
     // Download links
     if (link.hasAttribute("download")) return true;
-    // Opt-out (lvt-no-intercept is the generic opt-out for both forms and links)
-    if (link.hasAttribute("lvt-no-intercept")) return true;
+    // Opt-out attribute for link interception
+    if (link.hasAttribute("lvt-nav:no-intercept")) return true;
     // Hash-only links (scroll anchors)
     if (link.pathname === window.location.pathname && link.hash) return true;
     // mailto/tel/javascript
