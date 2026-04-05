@@ -27,13 +27,17 @@ function parseFxTrigger(attrName: string): { trigger: string | null; actionName?
 /**
  * Set up DOM event listeners for lvt-fx: attributes with :on:{event} triggers.
  * Called after each DOM update to handle new elements.
- * Stores listener references on rootElement for teardown via teardownFxDOMEventTriggers.
+ *
+ * @param scanRoot - Element subtree to scan for new fx attributes.
+ * @param registryRoot - Element to store listener registry on (always the wrapper).
+ *                       Defaults to scanRoot for backwards compatibility.
  */
-export function setupFxDOMEventTriggers(rootElement: Element): void {
+export function setupFxDOMEventTriggers(scanRoot: Element, registryRoot?: Element): void {
+  const registry = registryRoot || scanRoot;
   const fxListenersKey = "__lvtFxDirectListeners";
   // Prune stale entries from elements replaced by morphdom
   const fxListeners: Array<{ el: Element; event: string; handler: EventListener; guardKey: string }> =
-    ((rootElement as any)[fxListenersKey] || []).filter(
+    ((registry as any)[fxListenersKey] || []).filter(
       (entry: { el: Element }) => entry.el.isConnected
     );
 
@@ -64,11 +68,11 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
     }
   };
 
-  // Process root element itself then descendants (avoids spreading NodeList)
-  processEl(rootElement);
-  rootElement.querySelectorAll("*").forEach(processEl);
+  // Process scan root element itself then descendants (avoids spreading NodeList)
+  processEl(scanRoot);
+  scanRoot.querySelectorAll("*").forEach(processEl);
 
-  (rootElement as any)[fxListenersKey] = fxListeners;
+  (registry as any)[fxListenersKey] = fxListeners;
 }
 
 /**

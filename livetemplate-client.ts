@@ -821,7 +821,8 @@ export class LiveTemplateClient {
     handleAnimateDirectives(element);
 
     // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
-    setupFxDOMEventTriggers(element);
+    // Registry always lives on wrapperElement so teardown can find all entries
+    setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
 
     // Re-scan updated subtree for lvt-el:*:on:{event} DOM triggers
     this.eventDelegator.setupDOMEventTriggerDelegation(element);
