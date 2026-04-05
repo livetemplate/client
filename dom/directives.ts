@@ -192,62 +192,10 @@ export function setupFxLifecycleListeners(): void {
 const VALID_SCROLL_BEHAVIORS = new Set(["auto", "smooth", "instant"]);
 
 export function handleScrollDirectives(rootElement: Element): void {
-  const scrollElements = rootElement.querySelectorAll("[lvt-fx\\:scroll]");
-
-  scrollElements.forEach((element) => {
-    const htmlElement = element as HTMLElement;
-    // Only handle implicit triggers (no :on: suffix) — triggered attributes
-    // are handled by setupFxDOMEventTriggers / processFxLifecycleAttributes
-    if (!htmlElement.hasAttribute("lvt-fx:scroll")) return;
-    const mode = htmlElement.getAttribute("lvt-fx:scroll");
-    const computed = getComputedStyle(htmlElement);
-    const rawBehavior = computed.getPropertyValue("--lvt-scroll-behavior").trim();
-    const behavior: ScrollBehavior = VALID_SCROLL_BEHAVIORS.has(rawBehavior)
-      ? (rawBehavior as ScrollBehavior)
-      : "auto";
-    const threshold = parseInt(
-      computed.getPropertyValue("--lvt-scroll-threshold").trim() || "100",
-      10
-    );
-
+  rootElement.querySelectorAll("[lvt-fx\\:scroll]").forEach((element) => {
+    const mode = element.getAttribute("lvt-fx:scroll");
     if (!mode) return;
-
-    switch (mode) {
-      case "bottom":
-        htmlElement.scrollTo({
-          top: htmlElement.scrollHeight,
-          behavior,
-        });
-        break;
-
-      case "bottom-sticky": {
-        const isNearBottom =
-          htmlElement.scrollHeight -
-            htmlElement.scrollTop -
-            htmlElement.clientHeight <=
-          threshold;
-        if (isNearBottom) {
-          htmlElement.scrollTo({
-            top: htmlElement.scrollHeight,
-            behavior,
-          });
-        }
-        break;
-      }
-
-      case "top":
-        htmlElement.scrollTo({
-          top: 0,
-          behavior,
-        });
-        break;
-
-      case "preserve":
-        break;
-
-      default:
-        console.warn(`Unknown lvt-fx:scroll mode: ${mode}`);
-    }
+    applyFxEffect(element as HTMLElement, "scroll", mode);
   });
 }
 
@@ -258,35 +206,10 @@ export function handleScrollDirectives(rootElement: Element): void {
  *   --lvt-highlight-color: <color> (default: #ffc107)
  */
 export function handleHighlightDirectives(rootElement: Element): void {
-  const highlightElements = rootElement.querySelectorAll("[lvt-fx\\:highlight]");
-
-  highlightElements.forEach((element) => {
-    // Only handle implicit triggers (no :on: suffix)
-    if (!element.hasAttribute("lvt-fx:highlight")) return;
+  rootElement.querySelectorAll("[lvt-fx\\:highlight]").forEach((element) => {
     const mode = element.getAttribute("lvt-fx:highlight");
-    const computed = getComputedStyle(element);
-    const duration = parseInt(
-      computed.getPropertyValue("--lvt-highlight-duration").trim() || "500",
-      10
-    );
-    const color = computed.getPropertyValue("--lvt-highlight-color").trim() || "#ffc107";
-
     if (!mode) return;
-
-    const htmlElement = element as HTMLElement;
-    const originalBackground = htmlElement.style.backgroundColor;
-    const originalTransition = htmlElement.style.transition;
-
-    htmlElement.style.transition = `background-color ${duration}ms ease-out`;
-    htmlElement.style.backgroundColor = color;
-
-    setTimeout(() => {
-      htmlElement.style.backgroundColor = originalBackground;
-
-      setTimeout(() => {
-        htmlElement.style.transition = originalTransition;
-      }, duration);
-    }, 50);
+    applyFxEffect(element as HTMLElement, "highlight", mode);
   });
 }
 
@@ -296,50 +219,16 @@ export function handleHighlightDirectives(rootElement: Element): void {
  *   --lvt-animate-duration: <ms> (default: 300)
  */
 export function handleAnimateDirectives(rootElement: Element): void {
-  const animateElements = rootElement.querySelectorAll("[lvt-fx\\:animate]");
-
-  animateElements.forEach((element) => {
-    // Only handle implicit triggers (no :on: suffix)
-    if (!element.hasAttribute("lvt-fx:animate")) return;
+  rootElement.querySelectorAll("[lvt-fx\\:animate]").forEach((element) => {
     const animation = element.getAttribute("lvt-fx:animate");
-    const computed = getComputedStyle(element);
-    const duration = parseInt(
-      computed.getPropertyValue("--lvt-animate-duration").trim() || "300",
-      10
-    );
-
     if (!animation) return;
-
-    const htmlElement = element as HTMLElement;
-
-    htmlElement.style.setProperty("--lvt-animate-duration", `${duration}ms`);
-
-    switch (animation) {
-      case "fade":
-        htmlElement.style.animation = `lvt-fade-in var(--lvt-animate-duration) ease-out`;
-        break;
-
-      case "slide":
-        htmlElement.style.animation = `lvt-slide-in var(--lvt-animate-duration) ease-out`;
-        break;
-
-      case "scale":
-        htmlElement.style.animation = `lvt-scale-in var(--lvt-animate-duration) ease-out`;
-        break;
-
-      default:
-        console.warn(`Unknown lvt-fx:animate mode: ${animation}`);
-    }
-
-    htmlElement.addEventListener(
-      "animationend",
-      () => {
-        htmlElement.style.animation = "";
-      },
-      { once: true }
-    );
+    applyFxEffect(element as HTMLElement, "animate", animation);
   });
 
+  ensureAnimateKeyframes();
+}
+
+function ensureAnimateKeyframes(): void {
   if (!document.getElementById("lvt-animate-styles")) {
     const style = document.createElement("style");
     style.id = "lvt-animate-styles";
@@ -349,24 +238,12 @@ export function handleAnimateDirectives(rootElement: Element): void {
         to { opacity: 1; }
       }
       @keyframes lvt-slide-in {
-        from {
-          opacity: 0;
-          transform: translateY(-10px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
       }
       @keyframes lvt-scale-in {
-        from {
-          opacity: 0;
-          transform: scale(0.95);
-        }
-        to {
-          opacity: 1;
-          transform: scale(1);
-        }
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
       }
     `;
     document.head.appendChild(style);
