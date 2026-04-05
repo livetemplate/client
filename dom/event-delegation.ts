@@ -615,7 +615,7 @@ export class EventDelegator {
     // Track all listeners (direct + delegated) on wrapper for teardown
     // Prune stale entries from elements replaced by morphdom
     const listenersKey = `__lvt_el_listeners_${wrapperId}`;
-    const allListeners: Array<{ el: Element; event: string; handler: EventListener }> =
+    const allListeners: Array<{ el: Element; event: string; handler: EventListener; guardKey?: string }> =
       ((wrapperElement as any)[listenersKey] || []).filter(
         (entry: { el: Element }) => entry.el.isConnected
       );
@@ -642,7 +642,7 @@ export class EventDelegator {
           const listener = () => processElementInteraction(el, trigger);
           el.addEventListener(trigger, listener);
           (el as any)[key] = listener;
-          allListeners.push({ el, event: trigger, handler: listener });
+          allListeners.push({ el, event: trigger, handler: listener, guardKey: key });
         } else if (!delegated.has(trigger)) {
           // Delegated listener on wrapper for bubbling events.
           // Walks from target to wrapper, processing only the closest matching element.
@@ -690,11 +690,12 @@ export class EventDelegator {
     if (!wrapperId) return;
 
     const listenersKey = `__lvt_el_listeners_${wrapperId}`;
-    const listeners: Array<{ el: Element; event: string; handler: EventListener }> | undefined =
+    const listeners: Array<{ el: Element; event: string; handler: EventListener; guardKey?: string }> | undefined =
       (wrapperElement as any)[listenersKey];
     if (listeners) {
-      listeners.forEach(({ el, event, handler }) => {
+      listeners.forEach(({ el, event, handler, guardKey }) => {
         el.removeEventListener(event, handler);
+        if (guardKey) delete (el as any)[guardKey];
       });
       delete (wrapperElement as any)[listenersKey];
     }
