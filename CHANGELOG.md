@@ -5,6 +5,16 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.18] - 2026-04-05
+
+### Changes
+
+- chore(release): v0.8.17 (d6b41a4)
+- feat: extend lvt-el: to support native DOM event triggers (#49) (ddf92c2)
+- fix: form.name DOM shadowing + skip File objects in FormData parsing (58cf0c2)
+
+
+
 ## [Unreleased]
 
 ### Added
