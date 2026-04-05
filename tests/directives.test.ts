@@ -2,6 +2,7 @@ import {
   handleScrollDirectives,
   handleHighlightDirectives,
   handleAnimateDirectives,
+  setupFxDOMEventTriggers,
 } from "../dom/directives";
 
 describe("handleScrollDirectives", () => {
@@ -279,5 +280,55 @@ describe("handleAnimateDirectives", () => {
     handleAnimateDirectives(document.body);
 
     expect(target.style.animation).toBe("");
+  });
+});
+
+describe("setupFxDOMEventTriggers", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("attaches highlight effect on click trigger", () => {
+    const target = document.createElement("div");
+    target.setAttribute("lvt-fx:highlight:on:click", "flash");
+    document.body.appendChild(target);
+
+    setupFxDOMEventTriggers(document.body);
+    target.click();
+
+    expect(target.style.backgroundColor).not.toBe("");
+  });
+
+  it("does not fire for implicit trigger (no :on:)", () => {
+    const target = document.createElement("div");
+    target.setAttribute("lvt-fx:highlight", "flash");
+    document.body.appendChild(target);
+
+    setupFxDOMEventTriggers(document.body);
+    target.click();
+
+    expect(target.style.backgroundColor).toBe("");
+  });
+
+  it("does not fire for lifecycle trigger", () => {
+    const target = document.createElement("div");
+    target.setAttribute("lvt-fx:highlight:on:success", "flash");
+    document.body.appendChild(target);
+
+    setupFxDOMEventTriggers(document.body);
+    target.click();
+
+    expect(target.style.backgroundColor).toBe("");
+  });
+
+  it("attaches mouseenter trigger for highlight", () => {
+    const target = document.createElement("div");
+    target.setAttribute("lvt-fx:highlight:on:mouseenter", "flash");
+    document.body.appendChild(target);
+
+    setupFxDOMEventTriggers(document.body);
+    target.dispatchEvent(new MouseEvent("mouseenter"));
+
+    expect(target.style.backgroundColor).not.toBe("");
   });
 });

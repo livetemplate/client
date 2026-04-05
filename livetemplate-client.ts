@@ -13,6 +13,8 @@ import {
   handleScrollDirectives,
   handleToastDirectives,
   setupToastClickOutside,
+  setupFxDOMEventTriggers,
+  setupFxLifecycleListeners,
 } from "./dom/directives";
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
@@ -388,6 +390,9 @@ export class LiveTemplateClient {
 
     // Set up reactive attribute listeners for lvt-el:*:on:* attributes
     setupReactiveAttributeListeners();
+
+    // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
+    setupFxLifecycleListeners();
 
     // Initialize focus tracking
     this.focusManager.attach(this.wrapperElement);
@@ -799,14 +804,17 @@ export class LiveTemplateClient {
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Handle scroll directives
+    // Handle scroll directives (implicit trigger only)
     handleScrollDirectives(element);
 
-    // Handle highlight directives
+    // Handle highlight directives (implicit trigger only)
     handleHighlightDirectives(element);
 
-    // Handle animate directives
+    // Handle animate directives (implicit trigger only)
     handleAnimateDirectives(element);
+
+    // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
+    setupFxDOMEventTriggers(element);
 
     // Handle toast trigger directives (ephemeral client-side toasts)
     handleToastDirectives(element);

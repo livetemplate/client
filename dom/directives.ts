@@ -1,5 +1,197 @@
+import { isDOMEventTrigger, SYNTHETIC_TRIGGERS } from "./reactive-attributes";
+
+// ─── Trigger parsing for lvt-fx: attributes ─────────────────────────────────
+
+const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
+
+/**
+ * Parse a lvt-fx:{effect}[:on:[{action}:]{trigger}] attribute name.
+ * Returns the trigger type or null for implicit (no :on:).
+ */
+function parseFxTrigger(attrName: string): { trigger: string | null; actionName?: string } {
+  // Check for :on: suffix pattern
+  const onMatch = attrName.match(/^lvt-fx:\w+:on:(.+)$/i);
+  if (!onMatch) return { trigger: null }; // implicit trigger
+
+  const parts = onMatch[1].split(":");
+  if (parts.length === 1) {
+    return { trigger: parts[0].toLowerCase() };
+  }
+  // action-scoped: lvt-fx:highlight:on:save:success
+  return {
+    trigger: parts[parts.length - 1].toLowerCase(),
+    actionName: parts.slice(0, -1).join(":"),
+  };
+}
+
+/**
+ * Set up DOM event listeners for lvt-fx: attributes with :on:{event} triggers.
+ * Called after each DOM update to handle new elements.
+ */
+export function setupFxDOMEventTriggers(rootElement: Element): void {
+  rootElement.querySelectorAll("*").forEach(el => {
+    for (const attr of el.attributes) {
+      if (!attr.name.startsWith("lvt-fx:")) continue;
+      const parsed = parseFxTrigger(attr.name);
+      if (!parsed.trigger) continue; // implicit — handled by normal directive flow
+      if (FX_LIFECYCLE_SET.has(parsed.trigger)) continue; // lifecycle — handled by event listeners
+      if (SYNTHETIC_TRIGGERS.has(parsed.trigger)) continue; // click-away etc.
+
+      // It's a DOM event trigger
+      const listenerKey = `__lvt_fx_${attr.name}`;
+      if ((el as any)[listenerKey]) continue; // already attached
+
+      const effect = attr.name.match(/^lvt-fx:(\w+)/i)?.[1];
+      if (!effect) continue;
+
+      const value = attr.value;
+      const listener = () => {
+        applyFxEffect(el as HTMLElement, effect, value);
+      };
+      el.addEventListener(parsed.trigger, listener);
+      (el as any)[listenerKey] = listener;
+    }
+  });
+}
+
+/**
+ * Process lvt-fx: attributes triggered by a lifecycle event.
+ */
+export function processFxLifecycleAttributes(
+  rootElement: Element,
+  lifecycle: string,
+  actionName?: string,
+): void {
+  rootElement.querySelectorAll("*").forEach(el => {
+    for (const attr of el.attributes) {
+      if (!attr.name.startsWith("lvt-fx:")) continue;
+      const parsed = parseFxTrigger(attr.name);
+      if (!parsed.trigger || !FX_LIFECYCLE_SET.has(parsed.trigger)) continue;
+      if (parsed.trigger !== lifecycle) continue;
+      if (parsed.actionName && parsed.actionName !== actionName) continue;
+
+      const effect = attr.name.match(/^lvt-fx:(\w+)/i)?.[1];
+      if (!effect) continue;
+
+      applyFxEffect(el as HTMLElement, effect, attr.value);
+    }
+  });
+}
+
+/**
+ * Apply a visual effect to an element.
+ */
+function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string): void {
+  const computed = getComputedStyle(htmlElement);
+
+  switch (effect) {
+    case "highlight": {
+      const duration = parseInt(
+        computed.getPropertyValue("--lvt-highlight-duration").trim() || "500", 10
+      );
+      const color = computed.getPropertyValue("--lvt-highlight-color").trim() || "#ffc107";
+      const originalBackground = htmlElement.style.backgroundColor;
+      const originalTransition = htmlElement.style.transition;
+
+      htmlElement.style.transition = `background-color ${duration}ms ease-out`;
+      htmlElement.style.backgroundColor = color;
+
+      setTimeout(() => {
+        htmlElement.style.backgroundColor = originalBackground;
+        setTimeout(() => {
+          htmlElement.style.transition = originalTransition;
+        }, duration);
+      }, 50);
+      break;
+    }
+    case "animate": {
+      const duration = parseInt(
+        computed.getPropertyValue("--lvt-animate-duration").trim() || "300", 10
+      );
+      const animation = config || "fade";
+      htmlElement.style.setProperty("--lvt-animate-duration", `${duration}ms`);
+
+      switch (animation) {
+        case "fade":
+          htmlElement.style.animation = `lvt-fade-in var(--lvt-animate-duration) ease-out`;
+          break;
+        case "slide":
+          htmlElement.style.animation = `lvt-slide-in var(--lvt-animate-duration) ease-out`;
+          break;
+        case "scale":
+          htmlElement.style.animation = `lvt-scale-in var(--lvt-animate-duration) ease-out`;
+          break;
+        default:
+          console.warn(`Unknown lvt-fx:animate mode: ${animation}`);
+      }
+      htmlElement.addEventListener("animationend", () => {
+        htmlElement.style.animation = "";
+      }, { once: true });
+      break;
+    }
+    case "scroll": {
+      const rawBehavior = computed.getPropertyValue("--lvt-scroll-behavior").trim();
+      const behavior: ScrollBehavior = VALID_SCROLL_BEHAVIORS.has(rawBehavior)
+        ? (rawBehavior as ScrollBehavior) : "auto";
+      const threshold = parseInt(
+        computed.getPropertyValue("--lvt-scroll-threshold").trim() || "100", 10
+      );
+      const mode = config || "bottom";
+
+      switch (mode) {
+        case "bottom":
+          htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
+          break;
+        case "bottom-sticky": {
+          const isNearBottom = htmlElement.scrollHeight - htmlElement.scrollTop - htmlElement.clientHeight <= threshold;
+          if (isNearBottom) htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
+          break;
+        }
+        case "top":
+          htmlElement.scrollTo({ top: 0, behavior });
+          break;
+        case "preserve":
+          break;
+        default:
+          console.warn(`Unknown lvt-fx:scroll mode: ${mode}`);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Set up document-level lifecycle listeners for lvt-fx: attributes with :on:{lifecycle}.
+ * Called once at connect time. Fires the appropriate effect when a lifecycle event occurs.
+ */
+export function setupFxLifecycleListeners(): void {
+  const lifecycles = ["pending", "success", "error", "done"];
+  lifecycles.forEach(lifecycle => {
+    document.addEventListener(`lvt:${lifecycle}`, (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const actionName = customEvent.detail?.action;
+      // Process all lvt-fx: elements in the document
+      document.querySelectorAll("*").forEach(el => {
+        for (const attr of el.attributes) {
+          if (!attr.name.startsWith("lvt-fx:")) continue;
+          const parsed = parseFxTrigger(attr.name);
+          if (!parsed.trigger || parsed.trigger !== lifecycle) continue;
+          if (parsed.actionName && parsed.actionName !== actionName) continue;
+
+          const effect = attr.name.match(/^lvt-fx:(\w+)/i)?.[1];
+          if (!effect) continue;
+          applyFxEffect(el as HTMLElement, effect, attr.value);
+        }
+      });
+    }, true);
+  });
+}
+
+// ─── Implicit-trigger directive handlers (fire on every DOM update) ──────────
+
 /**
  * Apply scroll directives on elements with lvt-fx:scroll attributes.
+ * Only processes attributes WITHOUT :on: suffix (implicit trigger).
  * Configuration read from CSS custom properties:
  *   --lvt-scroll-behavior: auto | smooth (default: auto)
  *   --lvt-scroll-threshold: <number> (default: 100)
@@ -11,6 +203,9 @@ export function handleScrollDirectives(rootElement: Element): void {
 
   scrollElements.forEach((element) => {
     const htmlElement = element as HTMLElement;
+    // Only handle implicit triggers (no :on: suffix) — triggered attributes
+    // are handled by setupFxDOMEventTriggers / processFxLifecycleAttributes
+    if (!htmlElement.hasAttribute("lvt-fx:scroll")) return;
     const mode = htmlElement.getAttribute("lvt-fx:scroll");
     const computed = getComputedStyle(htmlElement);
     const rawBehavior = computed.getPropertyValue("--lvt-scroll-behavior").trim();
@@ -73,6 +268,8 @@ export function handleHighlightDirectives(rootElement: Element): void {
   const highlightElements = rootElement.querySelectorAll("[lvt-fx\\:highlight]");
 
   highlightElements.forEach((element) => {
+    // Only handle implicit triggers (no :on: suffix)
+    if (!element.hasAttribute("lvt-fx:highlight")) return;
     const mode = element.getAttribute("lvt-fx:highlight");
     const computed = getComputedStyle(element);
     const duration = parseInt(
@@ -109,6 +306,8 @@ export function handleAnimateDirectives(rootElement: Element): void {
   const animateElements = rootElement.querySelectorAll("[lvt-fx\\:animate]");
 
   animateElements.forEach((element) => {
+    // Only handle implicit triggers (no :on: suffix)
+    if (!element.hasAttribute("lvt-fx:animate")) return;
     const animation = element.getAttribute("lvt-fx:animate");
     const computed = getComputedStyle(element);
     const duration = parseInt(
