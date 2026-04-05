@@ -585,13 +585,21 @@ export class EventDelegator {
    * Sets up event listeners for lvt-el:*:on:{event} attributes where {event}
    * is a native DOM event (not a lifecycle state or synthetic trigger).
    *
-   * Scans the wrapper for elements with these attributes, attaches direct
-   * listeners for non-bubbling events (mouseenter, mouseleave) and delegated
-   * listeners on the wrapper for bubbling events (click, focusin, focusout, etc.).
+   * Scans scanRoot (or the full wrapper if omitted) for elements with these
+   * attributes. Attaches direct listeners for non-bubbling events (mouseenter,
+   * mouseleave) and delegated listeners on the wrapper for bubbling events
+   * (click, focusin, focusout, etc.).
+   *
+   * Bubbling delegation uses closest-match semantics: if both a child and parent
+   * have the same trigger, only the child's action fires. This differs from native
+   * event bubbling and prevents unintended double-firing in nested structures.
    *
    * Called during connect and after each DOM update to handle new elements.
+   *
+   * @param scanRoot - Subtree to scan for new attributes. Defaults to full wrapper.
+   *                   Pass the updated element after a DOM patch to avoid a full rescan.
    */
-  setupDOMEventTriggerDelegation(): void {
+  setupDOMEventTriggerDelegation(scanRoot?: Element): void {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
 
@@ -603,8 +611,9 @@ export class EventDelegator {
     const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
     const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
 
-    // Scan all elements for lvt-el:*:on:{event} attributes
-    wrapperElement.querySelectorAll("*").forEach(el => {
+    // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes
+    const root = scanRoot || wrapperElement;
+    root.querySelectorAll("*").forEach(el => {
       const triggers = new Set<string>();
       for (const attr of el.attributes) {
         if (!attr.name.startsWith("lvt-el:")) continue;

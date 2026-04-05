@@ -171,20 +171,41 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
  * Set up document-level lifecycle listeners for lvt-fx: attributes with :on:{lifecycle}.
  * Called once per wrapper at connect time. Scoped to the provided root element so
  * multiple LiveTemplateClient instances on the same page don't cross-fire effects.
+ * Stores listener references on the element for teardown via teardownFxLifecycleListeners.
  */
 export function setupFxLifecycleListeners(rootElement: Element): void {
   const guardKey = "__lvtFxLifecycleSetup";
   if ((rootElement as any)[guardKey]) return;
   (rootElement as any)[guardKey] = true;
 
+  const listeners: Array<{ event: string; handler: EventListener }> = [];
   const lifecycles = ["pending", "success", "error", "done"];
   lifecycles.forEach(lifecycle => {
-    document.addEventListener(`lvt:${lifecycle}`, (e: Event) => {
+    const handler = (e: Event) => {
       const customEvent = e as CustomEvent;
       const actionName = customEvent.detail?.action;
       processFxLifecycleAttributes(rootElement, lifecycle, actionName);
-    }, true);
+    };
+    document.addEventListener(`lvt:${lifecycle}`, handler, true);
+    listeners.push({ event: `lvt:${lifecycle}`, handler });
   });
+  (rootElement as any).__lvtFxLifecycleListeners = listeners;
+}
+
+/**
+ * Remove document-level lifecycle listeners registered by setupFxLifecycleListeners.
+ * Call on disconnect to prevent listener accumulation across reconnects.
+ */
+export function teardownFxLifecycleListeners(rootElement: Element): void {
+  const listeners: Array<{ event: string; handler: EventListener }> | undefined =
+    (rootElement as any).__lvtFxLifecycleListeners;
+  if (listeners) {
+    listeners.forEach(({ event, handler }) => {
+      document.removeEventListener(event, handler, true);
+    });
+    delete (rootElement as any).__lvtFxLifecycleListeners;
+  }
+  delete (rootElement as any).__lvtFxLifecycleSetup;
 }
 
 // ─── Implicit-trigger directive handlers (fire on every DOM update) ──────────
