@@ -596,6 +596,7 @@ export class EventDelegator {
     if (!wrapperElement) return;
 
     const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    if (!wrapperId) return;
     // Non-bubbling events need direct attachment
     const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
     // Track which bubbling events we've already delegated at wrapper level

@@ -392,7 +392,7 @@ export class LiveTemplateClient {
     setupReactiveAttributeListeners();
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
-    setupFxLifecycleListeners();
+    setupFxLifecycleListeners(this.wrapperElement);
 
     // Initialize focus tracking
     this.focusManager.attach(this.wrapperElement);

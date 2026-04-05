@@ -169,20 +169,20 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
 
 /**
  * Set up document-level lifecycle listeners for lvt-fx: attributes with :on:{lifecycle}.
- * Called once at connect time. Fires the appropriate effect when a lifecycle event occurs.
- * Guarded against duplicate registration.
+ * Called once per wrapper at connect time. Scoped to the provided root element so
+ * multiple LiveTemplateClient instances on the same page don't cross-fire effects.
  */
-let fxLifecycleListenersSetup = false;
-export function setupFxLifecycleListeners(): void {
-  if (fxLifecycleListenersSetup) return;
-  fxLifecycleListenersSetup = true;
+export function setupFxLifecycleListeners(rootElement: Element): void {
+  const guardKey = "__lvtFxLifecycleSetup";
+  if ((rootElement as any)[guardKey]) return;
+  (rootElement as any)[guardKey] = true;
 
   const lifecycles = ["pending", "success", "error", "done"];
   lifecycles.forEach(lifecycle => {
     document.addEventListener(`lvt:${lifecycle}`, (e: Event) => {
       const customEvent = e as CustomEvent;
       const actionName = customEvent.detail?.action;
-      processFxLifecycleAttributes(document.documentElement, lifecycle, actionName);
+      processFxLifecycleAttributes(rootElement, lifecycle, actionName);
     }, true);
   });
 }
