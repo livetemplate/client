@@ -140,6 +140,8 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
 
       setTimeout(() => {
         if (!htmlElement.isConnected) {
+          htmlElement.style.backgroundColor = originalBackground;
+          htmlElement.style.transition = originalTransition;
           (htmlElement as any).__lvtHighlighting = false;
           return;
         }
