@@ -44,9 +44,10 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
       const effect = attr.name.match(/^lvt-fx:(\w+)/i)?.[1];
       if (!effect) continue;
 
-      const value = attr.value;
+      const attrNameCapture = attr.name;
       const listener = () => {
-        applyFxEffect(el as HTMLElement, effect, value);
+        const currentValue = el.getAttribute(attrNameCapture) || "";
+        applyFxEffect(el as HTMLElement, effect, currentValue);
       };
       el.addEventListener(parsed.trigger, listener);
       (el as any)[listenerKey] = listener;
