@@ -103,6 +103,10 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       htmlElement.style.backgroundColor = color;
 
       setTimeout(() => {
+        if (!htmlElement.isConnected) {
+          (htmlElement as any).__lvtHighlighting = false;
+          return;
+        }
         htmlElement.style.backgroundColor = originalBackground;
         setTimeout(() => {
           htmlElement.style.transition = originalTransition;

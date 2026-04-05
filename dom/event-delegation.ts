@@ -624,6 +624,11 @@ export class EventDelegator {
         triggers.add(trigger);
       }
 
+      // Store all listeners (direct + delegated) on wrapper for teardown
+      const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+      const allListeners: Array<{ el: Element; event: string; handler: EventListener }> =
+        (wrapperElement as any)[listenersKey] || [];
+
       for (const trigger of triggers) {
         if (NON_BUBBLING.has(trigger)) {
           // Direct attachment for non-bubbling events
@@ -632,6 +637,7 @@ export class EventDelegator {
           const listener = () => processElementInteraction(el, trigger);
           el.addEventListener(trigger, listener);
           (el as any)[key] = listener;
+          allListeners.push({ el, event: trigger, handler: listener });
         } else if (!delegated.has(trigger)) {
           // Delegated listener on wrapper for bubbling events.
           // Walks from target to wrapper, processing only the closest matching element.
@@ -655,14 +661,11 @@ export class EventDelegator {
           };
           wrapperElement.addEventListener(trigger, handler);
           delegated.add(trigger);
-          // Store for teardown
-          const listenersKey = `__lvt_el_listeners_${wrapperId}`;
-          const listeners: Array<{ event: string; handler: EventListener }> =
-            (wrapperElement as any)[listenersKey] || [];
-          listeners.push({ event: trigger, handler });
-          (wrapperElement as any)[listenersKey] = listeners;
+          allListeners.push({ el: wrapperElement, event: trigger, handler });
         }
       }
+
+      (wrapperElement as any)[listenersKey] = allListeners;
     });
 
     (wrapperElement as any)[delegatedKey] = delegated;
@@ -680,11 +683,11 @@ export class EventDelegator {
     if (!wrapperId) return;
 
     const listenersKey = `__lvt_el_listeners_${wrapperId}`;
-    const listeners: Array<{ event: string; handler: EventListener }> | undefined =
+    const listeners: Array<{ el: Element; event: string; handler: EventListener }> | undefined =
       (wrapperElement as any)[listenersKey];
     if (listeners) {
-      listeners.forEach(({ event, handler }) => {
-        wrapperElement.removeEventListener(event, handler);
+      listeners.forEach(({ el, event, handler }) => {
+        el.removeEventListener(event, handler);
       });
       delete (wrapperElement as any)[listenersKey];
     }
