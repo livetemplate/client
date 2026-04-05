@@ -611,6 +611,11 @@ export class EventDelegator {
     const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
     const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
 
+    // Track all listeners (direct + delegated) on wrapper for teardown
+    const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+    const allListeners: Array<{ el: Element; event: string; handler: EventListener }> =
+      (wrapperElement as any)[listenersKey] || [];
+
     // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes
     const root = scanRoot || wrapperElement;
     root.querySelectorAll("*").forEach(el => {
@@ -623,11 +628,6 @@ export class EventDelegator {
         if (!isDOMEventTrigger(trigger)) continue;
         triggers.add(trigger);
       }
-
-      // Store all listeners (direct + delegated) on wrapper for teardown
-      const listenersKey = `__lvt_el_listeners_${wrapperId}`;
-      const allListeners: Array<{ el: Element; event: string; handler: EventListener }> =
-        (wrapperElement as any)[listenersKey] || [];
 
       for (const trigger of triggers) {
         if (NON_BUBBLING.has(trigger)) {
@@ -664,10 +664,9 @@ export class EventDelegator {
           allListeners.push({ el: wrapperElement, event: trigger, handler });
         }
       }
-
-      (wrapperElement as any)[listenersKey] = allListeners;
     });
 
+    (wrapperElement as any)[listenersKey] = allListeners;
     (wrapperElement as any)[delegatedKey] = delegated;
   }
 

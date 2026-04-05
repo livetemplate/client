@@ -27,8 +27,13 @@ function parseFxTrigger(attrName: string): { trigger: string | null; actionName?
 /**
  * Set up DOM event listeners for lvt-fx: attributes with :on:{event} triggers.
  * Called after each DOM update to handle new elements.
+ * Stores listener references on rootElement for teardown via teardownFxDOMEventTriggers.
  */
 export function setupFxDOMEventTriggers(rootElement: Element): void {
+  const fxListenersKey = "__lvtFxDirectListeners";
+  const fxListeners: Array<{ el: Element; event: string; handler: EventListener }> =
+    (rootElement as any)[fxListenersKey] || [];
+
   rootElement.querySelectorAll("*").forEach(el => {
     for (const attr of el.attributes) {
       if (!attr.name.startsWith("lvt-fx:")) continue;
@@ -52,8 +57,27 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
       };
       el.addEventListener(parsed.trigger, listener);
       (el as any)[listenerKey] = listener;
+      fxListeners.push({ el, event: parsed.trigger, handler: listener });
     }
   });
+
+  (rootElement as any)[fxListenersKey] = fxListeners;
+}
+
+/**
+ * Remove direct DOM event listeners registered by setupFxDOMEventTriggers.
+ * Call on disconnect to prevent stale listeners across reconnects.
+ */
+export function teardownFxDOMEventTriggers(rootElement: Element): void {
+  const fxListenersKey = "__lvtFxDirectListeners";
+  const listeners: Array<{ el: Element; event: string; handler: EventListener }> | undefined =
+    (rootElement as any)[fxListenersKey];
+  if (listeners) {
+    listeners.forEach(({ el, event, handler }) => {
+      el.removeEventListener(event, handler);
+    });
+    delete (rootElement as any)[fxListenersKey];
+  }
 }
 
 /**
@@ -168,6 +192,8 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       }
       break;
     }
+    default:
+      console.warn(`Unknown lvt-fx effect: ${effect}`);
   }
 }
 

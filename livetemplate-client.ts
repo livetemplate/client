@@ -14,6 +14,7 @@ import {
   handleToastDirectives,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
+  teardownFxDOMEventTriggers,
   setupFxLifecycleListeners,
   teardownFxLifecycleListeners,
 } from "./dom/directives";
@@ -417,6 +418,7 @@ export class LiveTemplateClient {
     this.formDisabler.enable(this.wrapperElement);
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     if (this.wrapperElement) {
+      teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
     }
   }
