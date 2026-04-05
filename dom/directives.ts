@@ -46,6 +46,7 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
 
       const attrNameCapture = attr.name;
       const listener = () => {
+        if (!el.hasAttribute(attrNameCapture)) return; // attr removed by morphdom
         const currentValue = el.getAttribute(attrNameCapture) || "";
         applyFxEffect(el as HTMLElement, effect, currentValue);
       };
@@ -87,6 +88,10 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
 
   switch (effect) {
     case "highlight": {
+      // Skip if already mid-highlight to prevent stale originalBackground capture
+      if ((htmlElement as any).__lvtHighlighting) break;
+      (htmlElement as any).__lvtHighlighting = true;
+
       const duration = parseInt(
         computed.getPropertyValue("--lvt-highlight-duration").trim() || "500", 10
       );
@@ -101,6 +106,7 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         htmlElement.style.backgroundColor = originalBackground;
         setTimeout(() => {
           htmlElement.style.transition = originalTransition;
+          (htmlElement as any).__lvtHighlighting = false;
         }, duration);
       }, 50);
       break;

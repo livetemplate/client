@@ -625,11 +625,12 @@ export class EventDelegator {
         } else if (!delegated.has(trigger)) {
           // Delegated listener on wrapper for bubbling events.
           // Walks from target to wrapper, processing only the closest matching element.
+          const triggerPattern = new RegExp(`^lvt-el:\\w+:on:${trigger}$`, "i");
           wrapperElement.addEventListener(trigger, (e: Event) => {
             let target = e.target as Element | null;
             while (target && target !== wrapperElement) {
               const hasMatch = Array.from(target.attributes).some(
-                a => a.name.match(new RegExp(`^lvt-el:\\w+:on:${trigger}$`, "i"))
+                a => triggerPattern.test(a.name)
               );
               if (hasMatch) {
                 processElementInteraction(target, trigger);
