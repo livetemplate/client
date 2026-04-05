@@ -1,6 +1,6 @@
 import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
-import { executeAction, type ReactiveAction } from "./reactive-attributes";
+import { executeAction, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 
 // Methods supported by click-away, derived from ReactiveAction values
@@ -13,6 +13,9 @@ const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
   toggleattr: "toggleAttr",
 };
 const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
+
+// Non-bubbling events need direct attachment rather than wrapper delegation
+const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
 
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
@@ -579,6 +582,127 @@ export class EventDelegator {
 
     (document as any)[listenerKey] = listener;
     document.addEventListener("click", listener);
+  }
+
+  /**
+   * Sets up event listeners for lvt-el:*:on:{event} attributes where {event}
+   * is a native DOM event (not a lifecycle state or synthetic trigger).
+   *
+   * Scans scanRoot (or the full wrapper if omitted) for elements with these
+   * attributes. Attaches direct listeners for non-bubbling events (mouseenter,
+   * mouseleave) and delegated listeners on the wrapper for bubbling events
+   * (click, focusin, focusout, etc.).
+   *
+   * Bubbling delegation uses closest-match semantics: if both a child and parent
+   * have the same trigger, only the child's action fires. This differs from native
+   * event bubbling and prevents unintended double-firing in nested structures.
+   *
+   * Called during connect and after each DOM update to handle new elements.
+   *
+   * @param scanRoot - Subtree to scan for new attributes. Defaults to full wrapper.
+   *                   Pass the updated element after a DOM patch to avoid a full rescan.
+   */
+  setupDOMEventTriggerDelegation(scanRoot?: Element): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    if (!wrapperId) return;
+    // Track which bubbling events we've already delegated at wrapper level
+    const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
+    const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
+
+    // Track all listeners (direct + delegated) on wrapper for teardown
+    // Prune stale entries from elements replaced by morphdom
+    const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+    const allListeners: Array<{ el: Element; event: string; handler: EventListener; guardKey?: string }> =
+      ((wrapperElement as any)[listenersKey] || []).filter(
+        (entry: { el: Element }) => entry.el.isConnected
+      );
+
+    // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes.
+    // Process root then descendants (avoids spreading NodeList into array).
+    const root = scanRoot || wrapperElement;
+    const processEl = (el: Element) => {
+      const triggers = new Set<string>();
+      for (const attr of el.attributes) {
+        if (!attr.name.startsWith("lvt-el:")) continue;
+        const match = attr.name.match(/^lvt-el:\w+:on:([a-z-]+)$/i);
+        if (!match) continue;
+        const trigger = match[1].toLowerCase();
+        if (!isDOMEventTrigger(trigger)) continue;
+        triggers.add(trigger);
+      }
+
+      for (const trigger of triggers) {
+        if (NON_BUBBLING.has(trigger)) {
+          // Direct attachment for non-bubbling events
+          const key = `__lvt_el_${trigger}`;
+          if ((el as any)[key]) continue; // already attached
+          const listener = () => processElementInteraction(el, trigger);
+          el.addEventListener(trigger, listener);
+          (el as any)[key] = listener;
+          allListeners.push({ el, event: trigger, handler: listener, guardKey: key });
+        } else if (!delegated.has(trigger)) {
+          // Delegated listener on wrapper for bubbling events.
+          // Walks from target to wrapper, processing only the closest matching element.
+          const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const triggerPattern = new RegExp(`^lvt-el:\\w+:on:${escaped}$`, "i");
+          const handler = (e: Event) => {
+            let target = e.target as Element | null;
+            while (target && target !== wrapperElement) {
+              let hasMatch = false;
+              for (const a of target.attributes) {
+                if (triggerPattern.test(a.name)) { hasMatch = true; break; }
+              }
+              if (hasMatch) {
+                processElementInteraction(target, trigger);
+                return; // Stop at closest match
+              }
+              target = target.parentElement;
+            }
+            // Also check wrapper itself
+            if (target === wrapperElement) {
+              processElementInteraction(wrapperElement, trigger);
+            }
+          };
+          wrapperElement.addEventListener(trigger, handler);
+          delegated.add(trigger);
+          allListeners.push({ el: wrapperElement, event: trigger, handler });
+        }
+      }
+    };
+    processEl(root);
+    root.querySelectorAll("*").forEach(processEl);
+
+    (wrapperElement as any)[listenersKey] = allListeners;
+    (wrapperElement as any)[delegatedKey] = delegated;
+  }
+
+  /**
+   * Remove delegated DOM event trigger listeners added by setupDOMEventTriggerDelegation.
+   * Call on disconnect to prevent stale listeners firing on a disconnected component.
+   */
+  teardownDOMEventTriggerDelegation(): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    if (!wrapperId) return;
+
+    const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+    const listeners: Array<{ el: Element; event: string; handler: EventListener; guardKey?: string }> | undefined =
+      (wrapperElement as any)[listenersKey];
+    if (listeners) {
+      listeners.forEach(({ el, event, handler, guardKey }) => {
+        el.removeEventListener(event, handler);
+        if (guardKey) delete (el as any)[guardKey];
+      });
+      delete (wrapperElement as any)[listenersKey];
+    }
+
+    const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
+    delete (wrapperElement as any)[delegatedKey];
   }
 
   /**

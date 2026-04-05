@@ -5,6 +5,19 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- feat: `lvt-el:{method}:on:{event}` now supports any native DOM event as trigger (click, focusin, focusout, mouseenter, mouseleave, keydown, etc.) — no server round-trip, CSP-safe
+- feat: `lvt-fx:{effect}:on:{event}` supports DOM event triggers (e.g., `lvt-fx:highlight:on:click="flash"`) and lifecycle triggers (e.g., `lvt-fx:highlight:on:success="flash"`)
+
+## [v0.8.17] - 2026-04-05
+
+### Changes
+
+- fix: form.name DOM shadowing + skip File objects in FormData parsing (58cf0c2)
+
 ## [v0.8.16] - 2026-04-04
 
 ### Changes

@@ -123,7 +123,8 @@ jobs:
           LVT_PATH=$(realpath ../lvt)
 
           # Test each working example
-          for example in counter chat todos graceful-shutdown testing/01_basic; do
+          # Note: graceful-shutdown and testing/01_basic were removed from examples repo
+          for example in counter chat todos; do
             echo "Testing: $example"
             cd "$example"
 

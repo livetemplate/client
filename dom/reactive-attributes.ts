@@ -1,20 +1,21 @@
 /**
- * Reactive Attributes - Declarative DOM actions triggered by LiveTemplate lifecycle events.
+ * Reactive Attributes - Declarative DOM actions triggered by lifecycle events or interactions.
  *
- * Attribute Pattern: lvt-el:{method}:on:[{action}:]{state|interaction}="param"
+ * Attribute Pattern: lvt-el:{method}:on:{trigger}="param"
  *
- * States (lifecycle):
- *   - pending: Action started, waiting for server response
- *   - success: Action completed successfully
- *   - error: Action completed with validation errors
- *   - done: Action completed (regardless of success/error)
+ * Trigger types:
  *
- * Interactions:
- *   - click-away: Click outside the element (handled by setupClickAwayDelegation)
+ * 1. Lifecycle states (server action request-response cycle):
+ *    - pending, success, error, done
+ *    - Supports action scoping: lvt-el:reset:on:create-todo:success
  *
- * Trigger Scope:
- *   - Unscoped: lvt-el:reset:on:success (any action)
- *   - Action-scoped: lvt-el:reset:on:create-todo:success (specific action only)
+ * 2. Native DOM events (client-side, no server round-trip):
+ *    - Any browser event: click, focusin, focusout, mouseenter, mouseleave, keydown, etc.
+ *    - No action scoping (fires on the element's own event)
+ *
+ * 3. Synthetic interactions (client-side):
+ *    - click-away: Click outside the element
+ *    - No action scoping
  *
  * Methods:
  *   - reset: Calls form.reset()
@@ -44,6 +45,13 @@ export interface ReactiveBinding {
 
 const LIFECYCLE_EVENTS: LifecycleEvent[] = ["pending", "success", "error", "done"];
 const LIFECYCLE_SET = new Set<string>(LIFECYCLE_EVENTS);
+
+/**
+ * Reserved trigger keywords that are NOT native DOM events.
+ * click-away is a synthetic interaction handled by setupClickAwayDelegation.
+ * Everything else that's not a lifecycle state is treated as a native DOM event.
+ */
+export const SYNTHETIC_TRIGGERS = new Set(["click-away"]);
 
 // Lowercase method names → canonical ReactiveAction
 const METHOD_MAP: Record<string, ReactiveAction> = {
@@ -79,8 +87,10 @@ export function parseReactiveAttribute(
     if (!action) return null;
 
     const eventPart = newMatch[2];
-    // Skip interaction triggers (click-away) — handled by click-away delegation
-    if (eventPart === "click-away") return null;
+    // Skip synthetic triggers (click-away) — handled by setupClickAwayDelegation
+    if (SYNTHETIC_TRIGGERS.has(eventPart)) return null;
+    // Skip native DOM event triggers — handled by setupDOMEventTriggerDelegation
+    if (!LIFECYCLE_SET.has(eventPart) && !eventPart.includes(":")) return null;
 
     const segments = eventPart.split(":");
     const lastSegment = segments[segments.length - 1];
@@ -221,6 +231,33 @@ export function processReactiveAttributes(
       }
     });
   });
+}
+
+/**
+ * Process all lvt-el:*:on:{trigger} attributes on an element for a given trigger.
+ */
+export function processElementInteraction(element: Element, trigger: string): void {
+  for (const attr of element.attributes) {
+    const match = attr.name.match(/^lvt-el:(\w+):on:([a-z-]+)$/i);
+    if (!match) continue;
+    if (match[2].toLowerCase() !== trigger) continue;
+
+    const methodKey = match[1].toLowerCase();
+    const action = METHOD_MAP[methodKey];
+    if (!action) continue;
+
+    executeAction(element, action, attr.value);
+  }
+}
+
+/**
+ * Checks if a trigger name is a DOM event (not lifecycle or synthetic).
+ * Intentionally open — accepts any string to support both native DOM events
+ * and custom events (e.g., lvt-el:addClass:on:my-custom-event). A typo
+ * silently registers a listener that never fires; no allowlist is enforced.
+ */
+export function isDOMEventTrigger(trigger: string): boolean {
+  return !LIFECYCLE_SET.has(trigger) && !SYNTHETIC_TRIGGERS.has(trigger);
 }
 
 /**

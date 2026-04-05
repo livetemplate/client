@@ -13,6 +13,10 @@ import {
   handleScrollDirectives,
   handleToastDirectives,
   setupToastClickOutside,
+  setupFxDOMEventTriggers,
+  teardownFxDOMEventTriggers,
+  setupFxLifecycleListeners,
+  teardownFxLifecycleListeners,
 } from "./dom/directives";
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
@@ -371,6 +375,9 @@ export class LiveTemplateClient {
     // Set up click-away delegation
     this.eventDelegator.setupClickAwayDelegation();
 
+    // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
+    this.eventDelegator.setupDOMEventTriggerDelegation();
+
     // Set up click-outside listener for client-managed toast stack
     setupToastClickOutside();
 
@@ -385,6 +392,9 @@ export class LiveTemplateClient {
 
     // Set up reactive attribute listeners for lvt-el:*:on:* attributes
     setupReactiveAttributeListeners();
+
+    // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
+    setupFxLifecycleListeners(this.wrapperElement);
 
     // Initialize focus tracking
     this.focusManager.attach(this.wrapperElement);
@@ -406,6 +416,11 @@ export class LiveTemplateClient {
     this.formLifecycleManager.reset();
     this.loadingIndicator.hide();
     this.formDisabler.enable(this.wrapperElement);
+    this.eventDelegator.teardownDOMEventTriggerDelegation();
+    if (this.wrapperElement) {
+      teardownFxDOMEventTriggers(this.wrapperElement);
+      teardownFxLifecycleListeners(this.wrapperElement);
+    }
   }
 
   /**
@@ -796,14 +811,21 @@ export class LiveTemplateClient {
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Handle scroll directives
+    // Handle scroll directives (implicit trigger only)
     handleScrollDirectives(element);
 
-    // Handle highlight directives
+    // Handle highlight directives (implicit trigger only)
     handleHighlightDirectives(element);
 
-    // Handle animate directives
+    // Handle animate directives (implicit trigger only)
     handleAnimateDirectives(element);
+
+    // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
+    // Registry always lives on wrapperElement so teardown can find all entries
+    setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
+
+    // Re-scan updated subtree for lvt-el:*:on:{event} DOM triggers
+    this.eventDelegator.setupDOMEventTriggerDelegation(element);
 
     // Handle toast trigger directives (ephemeral client-side toasts)
     handleToastDirectives(element);

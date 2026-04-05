@@ -4,6 +4,8 @@ import {
   matchesEvent,
   processReactiveAttributes,
   setupReactiveAttributeListeners,
+  processElementInteraction,
+  isDOMEventTrigger,
   type ReactiveBinding,
   type LifecycleEvent,
 } from "../dom/reactive-attributes";
@@ -103,9 +105,17 @@ describe("Reactive Attributes", () => {
       });
     });
 
-    describe("click-away interaction keyword", () => {
+    describe("interaction triggers (non-lifecycle)", () => {
       it("returns null for click-away (handled by click-away delegation)", () => {
         expect(parseReactiveAttribute("lvt-el:removeclass:on:click-away", "open")).toBeNull();
+      });
+
+      it("returns null for native DOM event triggers (handled by DOM event delegation)", () => {
+        expect(parseReactiveAttribute("lvt-el:toggleclass:on:click", "open")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:addclass:on:focusin", "open")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:removeclass:on:focusout", "open")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:addclass:on:mouseenter", "visible")).toBeNull();
+        expect(parseReactiveAttribute("lvt-el:removeclass:on:mouseleave", "visible")).toBeNull();
       });
     });
 
@@ -457,6 +467,83 @@ describe("Reactive Attributes", () => {
       );
 
       expect(div.classList.contains("success-state")).toBe(true);
+    });
+  });
+
+  describe("isDOMEventTrigger", () => {
+    it("returns false for lifecycle states", () => {
+      expect(isDOMEventTrigger("pending")).toBe(false);
+      expect(isDOMEventTrigger("success")).toBe(false);
+      expect(isDOMEventTrigger("error")).toBe(false);
+      expect(isDOMEventTrigger("done")).toBe(false);
+    });
+
+    it("returns false for synthetic triggers", () => {
+      expect(isDOMEventTrigger("click-away")).toBe(false);
+    });
+
+    it("returns true for native DOM events", () => {
+      expect(isDOMEventTrigger("click")).toBe(true);
+      expect(isDOMEventTrigger("focusin")).toBe(true);
+      expect(isDOMEventTrigger("focusout")).toBe(true);
+      expect(isDOMEventTrigger("mouseenter")).toBe(true);
+      expect(isDOMEventTrigger("mouseleave")).toBe(true);
+      expect(isDOMEventTrigger("keydown")).toBe(true);
+      expect(isDOMEventTrigger("input")).toBe(true);
+    });
+  });
+
+  describe("processElementInteraction", () => {
+    it("adds class on matching trigger", () => {
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addClass:on:click", "open");
+      document.body.appendChild(div);
+
+      processElementInteraction(div, "click");
+      expect(div.classList.contains("open")).toBe(true);
+    });
+
+    it("removes class on matching trigger", () => {
+      const div = document.createElement("div");
+      div.classList.add("open");
+      div.setAttribute("lvt-el:removeClass:on:focusout", "open");
+      document.body.appendChild(div);
+
+      processElementInteraction(div, "focusout");
+      expect(div.classList.contains("open")).toBe(false);
+    });
+
+    it("toggles class on matching trigger", () => {
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:toggleClass:on:click", "open");
+      document.body.appendChild(div);
+
+      processElementInteraction(div, "click");
+      expect(div.classList.contains("open")).toBe(true);
+      processElementInteraction(div, "click");
+      expect(div.classList.contains("open")).toBe(false);
+    });
+
+    it("ignores non-matching trigger", () => {
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addClass:on:click", "open");
+      document.body.appendChild(div);
+
+      processElementInteraction(div, "mouseenter");
+      expect(div.classList.contains("open")).toBe(false);
+    });
+
+    it("handles multiple triggers on same element", () => {
+      const div = document.createElement("div");
+      div.setAttribute("lvt-el:addClass:on:mouseenter", "visible");
+      div.setAttribute("lvt-el:removeClass:on:mouseleave", "visible");
+      document.body.appendChild(div);
+
+      processElementInteraction(div, "mouseenter");
+      expect(div.classList.contains("visible")).toBe(true);
+
+      processElementInteraction(div, "mouseleave");
+      expect(div.classList.contains("visible")).toBe(false);
     });
   });
 });
