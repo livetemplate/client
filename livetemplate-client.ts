@@ -816,6 +816,9 @@ export class LiveTemplateClient {
     // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
     setupFxDOMEventTriggers(element);
 
+    // Re-scan for lvt-el:*:on:{event} DOM triggers on new/updated elements
+    this.eventDelegator.setupDOMEventTriggerDelegation();
+
     // Handle toast trigger directives (ephemeral client-side toasts)
     handleToastDirectives(element);
 

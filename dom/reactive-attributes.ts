@@ -1,21 +1,21 @@
 /**
  * Reactive Attributes - Declarative DOM actions triggered by lifecycle events or interactions.
  *
- * Attribute Pattern: lvt-el:{method}:on:[{action}:]{state|interaction}="param"
+ * Attribute Pattern: lvt-el:{method}:on:{trigger}="param"
  *
- * States (lifecycle — server action request-response cycle):
- *   - pending: Action started, waiting for server response
- *   - success: Action completed successfully
- *   - error: Action completed with validation errors
- *   - done: Action completed (regardless of success/error)
+ * Trigger types:
  *
- * Interactions (client-side — no server round-trip):
- *   - Any native DOM event (click, focusin, focusout, mouseenter, mouseleave, keydown, etc.)
- *   - click-away: Synthetic — click outside the element (not a native DOM event)
+ * 1. Lifecycle states (server action request-response cycle):
+ *    - pending, success, error, done
+ *    - Supports action scoping: lvt-el:reset:on:create-todo:success
  *
- * Trigger Scope:
- *   - Unscoped: lvt-el:reset:on:success (any action)
- *   - Action-scoped: lvt-el:reset:on:create-todo:success (specific action only)
+ * 2. Native DOM events (client-side, no server round-trip):
+ *    - Any browser event: click, focusin, focusout, mouseenter, mouseleave, keydown, etc.
+ *    - No action scoping (fires on the element's own event)
+ *
+ * 3. Synthetic interactions (client-side):
+ *    - click-away: Click outside the element
+ *    - No action scoping
  *
  * Methods:
  *   - reset: Calls form.reset()

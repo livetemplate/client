@@ -1,6 +1,6 @@
 import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
-import { executeAction, processElementInteraction, isDOMEventTrigger, SYNTHETIC_TRIGGERS, type ReactiveAction } from "./reactive-attributes";
+import { executeAction, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 
 // Methods supported by click-away, derived from ReactiveAction values
@@ -589,7 +589,7 @@ export class EventDelegator {
    * listeners for non-bubbling events (mouseenter, mouseleave) and delegated
    * listeners on the wrapper for bubbling events (click, focusin, focusout, etc.).
    *
-   * Called after each render/update to handle new elements.
+   * Called during connect and after each DOM update to handle new elements.
    */
   setupDOMEventTriggerDelegation(): void {
     const wrapperElement = this.context.getWrapperElement();
@@ -623,12 +623,23 @@ export class EventDelegator {
           el.addEventListener(trigger, listener);
           (el as any)[key] = listener;
         } else if (!delegated.has(trigger)) {
-          // Delegated listener on wrapper for bubbling events
+          // Delegated listener on wrapper for bubbling events.
+          // Walks from target to wrapper, processing only the closest matching element.
           wrapperElement.addEventListener(trigger, (e: Event) => {
             let target = e.target as Element | null;
-            while (target && target !== wrapperElement.parentElement) {
-              processElementInteraction(target, trigger);
+            while (target && target !== wrapperElement) {
+              const hasMatch = Array.from(target.attributes).some(
+                a => a.name.match(new RegExp(`^lvt-el:\\w+:on:${trigger}$`, "i"))
+              );
+              if (hasMatch) {
+                processElementInteraction(target, trigger);
+                return; // Stop at closest match
+              }
               target = target.parentElement;
+            }
+            // Also check wrapper itself
+            if (target === wrapperElement) {
+              processElementInteraction(wrapperElement, trigger);
             }
           });
           delegated.add(trigger);
