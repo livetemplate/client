@@ -251,7 +251,10 @@ export function processElementInteraction(element: Element, trigger: string): vo
 }
 
 /**
- * Checks if a trigger name is a native DOM event (not lifecycle or synthetic).
+ * Checks if a trigger name is a DOM event (not lifecycle or synthetic).
+ * Intentionally open — accepts any string to support both native DOM events
+ * and custom events (e.g., lvt-el:addClass:on:my-custom-event). A typo
+ * silently registers a listener that never fires; no allowlist is enforced.
  */
 export function isDOMEventTrigger(trigger: string): boolean {
   return !LIFECYCLE_SET.has(trigger) && !SYNTHETIC_TRIGGERS.has(trigger);

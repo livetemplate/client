@@ -636,7 +636,7 @@ export class EventDelegator {
           // Delegated listener on wrapper for bubbling events.
           // Walks from target to wrapper, processing only the closest matching element.
           const triggerPattern = new RegExp(`^lvt-el:\\w+:on:${trigger}$`, "i");
-          wrapperElement.addEventListener(trigger, (e: Event) => {
+          const handler = (e: Event) => {
             let target = e.target as Element | null;
             while (target && target !== wrapperElement) {
               const hasMatch = Array.from(target.attributes).some(
@@ -652,13 +652,45 @@ export class EventDelegator {
             if (target === wrapperElement) {
               processElementInteraction(wrapperElement, trigger);
             }
-          });
+          };
+          wrapperElement.addEventListener(trigger, handler);
           delegated.add(trigger);
+          // Store for teardown
+          const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+          const listeners: Array<{ event: string; handler: EventListener }> =
+            (wrapperElement as any)[listenersKey] || [];
+          listeners.push({ event: trigger, handler });
+          (wrapperElement as any)[listenersKey] = listeners;
         }
       }
     });
 
     (wrapperElement as any)[delegatedKey] = delegated;
+  }
+
+  /**
+   * Remove delegated DOM event trigger listeners added by setupDOMEventTriggerDelegation.
+   * Call on disconnect to prevent stale listeners firing on a disconnected component.
+   */
+  teardownDOMEventTriggerDelegation(): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    if (!wrapperId) return;
+
+    const listenersKey = `__lvt_el_listeners_${wrapperId}`;
+    const listeners: Array<{ event: string; handler: EventListener }> | undefined =
+      (wrapperElement as any)[listenersKey];
+    if (listeners) {
+      listeners.forEach(({ event, handler }) => {
+        wrapperElement.removeEventListener(event, handler);
+      });
+      delete (wrapperElement as any)[listenersKey];
+    }
+
+    const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
+    delete (wrapperElement as any)[delegatedKey];
   }
 
   /**

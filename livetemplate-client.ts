@@ -415,6 +415,7 @@ export class LiveTemplateClient {
     this.formLifecycleManager.reset();
     this.loadingIndicator.hide();
     this.formDisabler.enable(this.wrapperElement);
+    this.eventDelegator.teardownDOMEventTriggerDelegation();
     if (this.wrapperElement) {
       teardownFxLifecycleListeners(this.wrapperElement);
     }
