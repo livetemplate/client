@@ -111,6 +111,25 @@ export function parseReactiveAttribute(
 }
 
 /**
+ * Resolve the target element for an lvt-el: action.
+ * If the element has data-lvt-target, resolves to the specified element:
+ *   - "#id"           → document.getElementById(id)
+ *   - "closest:sel"   → element.closest(sel)
+ * Falls back to the element itself if no target or target not found.
+ */
+export function resolveTarget(element: Element): Element {
+  const selector = element.getAttribute("data-lvt-target");
+  if (!selector) return element;
+  if (selector.startsWith("#")) {
+    return document.getElementById(selector.slice(1)) || element;
+  }
+  if (selector.startsWith("closest:")) {
+    return element.closest(selector.slice(8)) || element;
+  }
+  return element;
+}
+
+/**
  * Execute a reactive action on an element.
  */
 export function executeAction(
@@ -227,7 +246,7 @@ export function processReactiveAttributes(
 
       const binding = parseReactiveAttribute(attr.name, attr.value);
       if (binding && matchesEvent(binding, lifecycle, actionName)) {
-        executeAction(element, binding.action, binding.param);
+        executeAction(resolveTarget(element), binding.action, binding.param);
       }
     });
   });
@@ -246,7 +265,7 @@ export function processElementInteraction(element: Element, trigger: string): vo
     const action = METHOD_MAP[methodKey];
     if (!action) continue;
 
-    executeAction(element, action, attr.value);
+    executeAction(resolveTarget(element), action, attr.value);
   }
 }
 
