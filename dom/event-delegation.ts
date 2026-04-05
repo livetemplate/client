@@ -1,6 +1,6 @@
 import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
-import { executeAction, type ReactiveAction } from "./reactive-attributes";
+import { executeAction, processElementInteraction, isDOMEventTrigger, SYNTHETIC_TRIGGERS, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 
 // Methods supported by click-away, derived from ReactiveAction values
@@ -579,6 +579,64 @@ export class EventDelegator {
 
     (document as any)[listenerKey] = listener;
     document.addEventListener("click", listener);
+  }
+
+  /**
+   * Sets up event listeners for lvt-el:*:on:{event} attributes where {event}
+   * is a native DOM event (not a lifecycle state or synthetic trigger).
+   *
+   * Scans the wrapper for elements with these attributes, attaches direct
+   * listeners for non-bubbling events (mouseenter, mouseleave) and delegated
+   * listeners on the wrapper for bubbling events (click, focusin, focusout, etc.).
+   *
+   * Called after each render/update to handle new elements.
+   */
+  setupDOMEventTriggerDelegation(): void {
+    const wrapperElement = this.context.getWrapperElement();
+    if (!wrapperElement) return;
+
+    const wrapperId = wrapperElement.getAttribute("data-lvt-id");
+    // Non-bubbling events need direct attachment
+    const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
+    // Track which bubbling events we've already delegated at wrapper level
+    const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
+    const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
+
+    // Scan all elements for lvt-el:*:on:{event} attributes
+    wrapperElement.querySelectorAll("*").forEach(el => {
+      const triggers = new Set<string>();
+      for (const attr of el.attributes) {
+        if (!attr.name.startsWith("lvt-el:")) continue;
+        const match = attr.name.match(/^lvt-el:\w+:on:([a-z-]+)$/i);
+        if (!match) continue;
+        const trigger = match[1].toLowerCase();
+        if (!isDOMEventTrigger(trigger)) continue;
+        triggers.add(trigger);
+      }
+
+      for (const trigger of triggers) {
+        if (NON_BUBBLING.has(trigger)) {
+          // Direct attachment for non-bubbling events
+          const key = `__lvt_el_${trigger}`;
+          if ((el as any)[key]) continue; // already attached
+          const listener = () => processElementInteraction(el, trigger);
+          el.addEventListener(trigger, listener);
+          (el as any)[key] = listener;
+        } else if (!delegated.has(trigger)) {
+          // Delegated listener on wrapper for bubbling events
+          wrapperElement.addEventListener(trigger, (e: Event) => {
+            let target = e.target as Element | null;
+            while (target && target !== wrapperElement.parentElement) {
+              processElementInteraction(target, trigger);
+              target = target.parentElement;
+            }
+          });
+          delegated.add(trigger);
+        }
+      }
+    });
+
+    (wrapperElement as any)[delegatedKey] = delegated;
   }
 
   /**

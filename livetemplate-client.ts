@@ -371,6 +371,9 @@ export class LiveTemplateClient {
     // Set up click-away delegation
     this.eventDelegator.setupClickAwayDelegation();
 
+    // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
+    this.eventDelegator.setupDOMEventTriggerDelegation();
+
     // Set up click-outside listener for client-managed toast stack
     setupToastClickOutside();
 
