@@ -612,9 +612,12 @@ export class EventDelegator {
     const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
 
     // Track all listeners (direct + delegated) on wrapper for teardown
+    // Prune stale entries from elements replaced by morphdom
     const listenersKey = `__lvt_el_listeners_${wrapperId}`;
     const allListeners: Array<{ el: Element; event: string; handler: EventListener }> =
-      (wrapperElement as any)[listenersKey] || [];
+      ((wrapperElement as any)[listenersKey] || []).filter(
+        (entry: { el: Element }) => entry.el.isConnected
+      );
 
     // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes
     const root = scanRoot || wrapperElement;

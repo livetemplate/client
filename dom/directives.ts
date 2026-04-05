@@ -31,8 +31,11 @@ function parseFxTrigger(attrName: string): { trigger: string | null; actionName?
  */
 export function setupFxDOMEventTriggers(rootElement: Element): void {
   const fxListenersKey = "__lvtFxDirectListeners";
+  // Prune stale entries from elements replaced by morphdom
   const fxListeners: Array<{ el: Element; event: string; handler: EventListener }> =
-    (rootElement as any)[fxListenersKey] || [];
+    ((rootElement as any)[fxListenersKey] || []).filter(
+      (entry: { el: Element }) => entry.el.isConnected
+    );
 
   rootElement.querySelectorAll("*").forEach(el => {
     for (const attr of el.attributes) {
