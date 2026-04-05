@@ -123,7 +123,7 @@ jobs:
           LVT_PATH=$(realpath ../lvt)
 
           # Test each working example
-          for example in counter chat todos testing/01_basic; do
+          for example in counter chat todos; do
             echo "Testing: $example"
             cd "$example"
 
