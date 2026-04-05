@@ -1,6 +1,6 @@
 import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
-import { executeAction, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
+import { executeAction, resolveTarget, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 
 // Methods supported by click-away, derived from ReactiveAction values
@@ -575,7 +575,7 @@ export class EventDelegator {
           if (!match) return;
           const method = CLICK_AWAY_METHOD_MAP[match[1].toLowerCase()];
           if (!method) return;
-          executeAction(element, method, attr.value);
+          executeAction(resolveTarget(element), method, attr.value);
         });
       });
     };

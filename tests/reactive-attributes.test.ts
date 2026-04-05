@@ -1,6 +1,7 @@
 import {
   parseReactiveAttribute,
   executeAction,
+  resolveTarget,
   matchesEvent,
   processReactiveAttributes,
   setupReactiveAttributeListeners,
@@ -544,6 +545,94 @@ describe("Reactive Attributes", () => {
 
       processElementInteraction(div, "mouseleave");
       expect(div.classList.contains("visible")).toBe(false);
+    });
+  });
+
+  describe("data-lvt-target", () => {
+    it("resolves #id to document.getElementById", () => {
+      const target = document.createElement("div");
+      target.id = "my-target";
+      document.body.appendChild(target);
+
+      const button = document.createElement("button");
+      button.setAttribute("data-lvt-target", "#my-target");
+      document.body.appendChild(button);
+
+      expect(resolveTarget(button)).toBe(target);
+
+      target.remove();
+      button.remove();
+    });
+
+    it("resolves closest:selector to element.closest", () => {
+      const parent = document.createElement("div");
+      parent.setAttribute("data-dropdown", "test");
+      const button = document.createElement("button");
+      button.setAttribute("data-lvt-target", "closest:[data-dropdown]");
+      parent.appendChild(button);
+      document.body.appendChild(parent);
+
+      expect(resolveTarget(button)).toBe(parent);
+
+      parent.remove();
+    });
+
+    it("falls back to self when no data-lvt-target", () => {
+      const button = document.createElement("button");
+      document.body.appendChild(button);
+
+      expect(resolveTarget(button)).toBe(button);
+
+      button.remove();
+    });
+
+    it("falls back to self when target not found", () => {
+      const button = document.createElement("button");
+      button.setAttribute("data-lvt-target", "#nonexistent");
+      document.body.appendChild(button);
+
+      expect(resolveTarget(button)).toBe(button);
+
+      button.remove();
+    });
+
+    it("processElementInteraction targets resolved element", () => {
+      const target = document.createElement("div");
+      target.id = "modal";
+      target.setAttribute("hidden", "");
+      document.body.appendChild(target);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-el:toggleAttr:on:click", "hidden");
+      button.setAttribute("data-lvt-target", "#modal");
+      document.body.appendChild(button);
+
+      processElementInteraction(button, "click");
+      expect(target.hasAttribute("hidden")).toBe(false);
+
+      processElementInteraction(button, "click");
+      expect(target.hasAttribute("hidden")).toBe(true);
+
+      target.remove();
+      button.remove();
+    });
+
+    it("toggleClass on closest ancestor", () => {
+      const parent = document.createElement("div");
+      parent.setAttribute("data-dropdown", "test");
+      const button = document.createElement("button");
+      button.setAttribute("lvt-el:toggleClass:on:click", "open");
+      button.setAttribute("data-lvt-target", "closest:[data-dropdown]");
+      parent.appendChild(button);
+      document.body.appendChild(parent);
+
+      processElementInteraction(button, "click");
+      expect(parent.classList.contains("open")).toBe(true);
+
+      processElementInteraction(button, "click");
+      expect(parent.classList.contains("open")).toBe(false);
+
+      parent.remove();
     });
   });
 });
