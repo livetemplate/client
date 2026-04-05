@@ -14,6 +14,9 @@ const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
 };
 const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 
+// Non-bubbling events need direct attachment rather than wrapper delegation
+const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
+
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
@@ -605,8 +608,6 @@ export class EventDelegator {
 
     const wrapperId = wrapperElement.getAttribute("data-lvt-id");
     if (!wrapperId) return;
-    // Non-bubbling events need direct attachment
-    const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
     // Track which bubbling events we've already delegated at wrapper level
     const delegatedKey = `__lvt_el_delegated_${wrapperId}`;
     const delegated: Set<string> = (wrapperElement as any)[delegatedKey] || new Set();
@@ -620,11 +621,9 @@ export class EventDelegator {
       );
 
     // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes.
-    // Include root itself since querySelectorAll only returns descendants —
-    // non-bubbling triggers on the root element need direct attachment too.
+    // Process root then descendants (avoids spreading NodeList into array).
     const root = scanRoot || wrapperElement;
-    const elements = [root, ...root.querySelectorAll("*")];
-    elements.forEach(el => {
+    const processEl = (el: Element) => {
       const triggers = new Set<string>();
       for (const attr of el.attributes) {
         if (!attr.name.startsWith("lvt-el:")) continue;
@@ -671,7 +670,9 @@ export class EventDelegator {
           allListeners.push({ el: wrapperElement, event: trigger, handler });
         }
       }
-    });
+    };
+    processEl(root);
+    root.querySelectorAll("*").forEach(processEl);
 
     (wrapperElement as any)[listenersKey] = allListeners;
     (wrapperElement as any)[delegatedKey] = delegated;

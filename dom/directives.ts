@@ -37,8 +37,7 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
       (entry: { el: Element }) => entry.el.isConnected
     );
 
-  // Include rootElement itself — querySelectorAll only returns descendants
-  [rootElement, ...rootElement.querySelectorAll("*")].forEach(el => {
+  const processEl = (el: Element) => {
     for (const attr of el.attributes) {
       if (!attr.name.startsWith("lvt-fx:")) continue;
       const parsed = parseFxTrigger(attr.name);
@@ -63,7 +62,11 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
       (el as any)[listenerKey] = listener;
       fxListeners.push({ el, event: parsed.trigger, handler: listener, guardKey: listenerKey });
     }
-  });
+  };
+
+  // Process root element itself then descendants (avoids spreading NodeList)
+  processEl(rootElement);
+  rootElement.querySelectorAll("*").forEach(processEl);
 
   (rootElement as any)[fxListenersKey] = fxListeners;
 }
@@ -93,7 +96,7 @@ export function processFxLifecycleAttributes(
   lifecycle: string,
   actionName?: string,
 ): void {
-  [rootElement, ...rootElement.querySelectorAll("*")].forEach(el => {
+  const processEl = (el: Element) => {
     for (const attr of el.attributes) {
       if (!attr.name.startsWith("lvt-fx:")) continue;
       const parsed = parseFxTrigger(attr.name);
@@ -106,7 +109,9 @@ export function processFxLifecycleAttributes(
 
       applyFxEffect(el as HTMLElement, effect, attr.value);
     }
-  });
+  };
+  processEl(rootElement);
+  rootElement.querySelectorAll("*").forEach(processEl);
 }
 
 /**
@@ -140,7 +145,7 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         }
         htmlElement.style.backgroundColor = originalBackground;
         setTimeout(() => {
-          htmlElement.style.transition = originalTransition;
+          if (htmlElement.isConnected) htmlElement.style.transition = originalTransition;
           (htmlElement as any).__lvtHighlighting = false;
         }, duration);
       }, 50);
