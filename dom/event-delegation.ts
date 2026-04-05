@@ -651,9 +651,10 @@ export class EventDelegator {
           const handler = (e: Event) => {
             let target = e.target as Element | null;
             while (target && target !== wrapperElement) {
-              const hasMatch = Array.from(target.attributes).some(
-                a => triggerPattern.test(a.name)
-              );
+              let hasMatch = false;
+              for (const a of target.attributes) {
+                if (triggerPattern.test(a.name)) { hasMatch = true; break; }
+              }
               if (hasMatch) {
                 processElementInteraction(target, trigger);
                 return; // Stop at closest match

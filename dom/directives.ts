@@ -93,7 +93,7 @@ export function processFxLifecycleAttributes(
   lifecycle: string,
   actionName?: string,
 ): void {
-  rootElement.querySelectorAll("*").forEach(el => {
+  [rootElement, ...rootElement.querySelectorAll("*")].forEach(el => {
     for (const attr of el.attributes) {
       if (!attr.name.startsWith("lvt-fx:")) continue;
       const parsed = parseFxTrigger(attr.name);
@@ -117,7 +117,9 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
 
   switch (effect) {
     case "highlight": {
-      // Skip if already mid-highlight to prevent stale originalBackground capture
+      // Skip if already mid-highlight to prevent stale originalBackground capture.
+      // Intentionally rate-limits to one highlight per element — overlapping triggers
+      // (rapid clicks, DOM updates during animation) are coalesced rather than stacked.
       if ((htmlElement as any).__lvtHighlighting) break;
       (htmlElement as any).__lvtHighlighting = true;
 
