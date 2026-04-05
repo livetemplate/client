@@ -32,12 +32,13 @@ function parseFxTrigger(attrName: string): { trigger: string | null; actionName?
 export function setupFxDOMEventTriggers(rootElement: Element): void {
   const fxListenersKey = "__lvtFxDirectListeners";
   // Prune stale entries from elements replaced by morphdom
-  const fxListeners: Array<{ el: Element; event: string; handler: EventListener }> =
+  const fxListeners: Array<{ el: Element; event: string; handler: EventListener; guardKey: string }> =
     ((rootElement as any)[fxListenersKey] || []).filter(
       (entry: { el: Element }) => entry.el.isConnected
     );
 
-  rootElement.querySelectorAll("*").forEach(el => {
+  // Include rootElement itself — querySelectorAll only returns descendants
+  [rootElement, ...rootElement.querySelectorAll("*")].forEach(el => {
     for (const attr of el.attributes) {
       if (!attr.name.startsWith("lvt-fx:")) continue;
       const parsed = parseFxTrigger(attr.name);
@@ -60,7 +61,7 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
       };
       el.addEventListener(parsed.trigger, listener);
       (el as any)[listenerKey] = listener;
-      fxListeners.push({ el, event: parsed.trigger, handler: listener });
+      fxListeners.push({ el, event: parsed.trigger, handler: listener, guardKey: listenerKey });
     }
   });
 
@@ -73,11 +74,12 @@ export function setupFxDOMEventTriggers(rootElement: Element): void {
  */
 export function teardownFxDOMEventTriggers(rootElement: Element): void {
   const fxListenersKey = "__lvtFxDirectListeners";
-  const listeners: Array<{ el: Element; event: string; handler: EventListener }> | undefined =
+  const listeners: Array<{ el: Element; event: string; handler: EventListener; guardKey: string }> | undefined =
     (rootElement as any)[fxListenersKey];
   if (listeners) {
-    listeners.forEach(({ el, event, handler }) => {
+    listeners.forEach(({ el, event, handler, guardKey }) => {
       el.removeEventListener(event, handler);
+      delete (el as any)[guardKey]; // Clear per-element marker so re-attach works on reconnect
     });
     delete (rootElement as any)[fxListenersKey];
   }

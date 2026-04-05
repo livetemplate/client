@@ -619,9 +619,12 @@ export class EventDelegator {
         (entry: { el: Element }) => entry.el.isConnected
       );
 
-    // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes
+    // Scan the provided subtree (or full wrapper) for lvt-el:*:on:{event} attributes.
+    // Include root itself since querySelectorAll only returns descendants —
+    // non-bubbling triggers on the root element need direct attachment too.
     const root = scanRoot || wrapperElement;
-    root.querySelectorAll("*").forEach(el => {
+    const elements = [root, ...root.querySelectorAll("*")];
+    elements.forEach(el => {
       const triggers = new Set<string>();
       for (const attr of el.attributes) {
         if (!attr.name.startsWith("lvt-el:")) continue;
