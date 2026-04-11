@@ -10,10 +10,11 @@
 let installed = false;
 
 function handleClick(e: Event): void {
-  const button = (e.target as Element).closest(
-    "button[commandfor]"
-  ) as HTMLButtonElement | null;
-  if (!button) return;
+  const el = e.target;
+  if (!el || !(el instanceof Element)) return;
+
+  const button = el.closest("button[commandfor]") as HTMLButtonElement | null;
+  if (!button || button.disabled) return;
 
   const targetId = button.getAttribute("commandfor");
   if (!targetId) return;

@@ -108,6 +108,24 @@ describe("setupInvokerPolyfill", () => {
     expect(() => button.click()).not.toThrow();
   });
 
+  it("ignores disabled buttons", () => {
+    const dialog = document.createElement("dialog");
+    dialog.id = "test-dialog";
+    const { showModal } = mockDialogMethods(dialog);
+    document.body.appendChild(dialog);
+
+    const button = document.createElement("button");
+    button.setAttribute("command", "show-modal");
+    button.setAttribute("commandfor", "test-dialog");
+    button.disabled = true;
+    document.body.appendChild(button);
+
+    setupInvokerPolyfill();
+    button.click();
+
+    expect(showModal).not.toHaveBeenCalled();
+  });
+
   it("does not call showModal on already-open dialog", () => {
     const dialog = document.createElement("dialog");
     dialog.id = "test-dialog";
