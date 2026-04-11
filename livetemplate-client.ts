@@ -24,6 +24,7 @@ import { ObserverManager } from "./dom/observer-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
+import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
@@ -392,6 +393,8 @@ export class LiveTemplateClient {
 
     // Set up reactive attribute listeners for lvt-el:*:on:* attributes
     setupReactiveAttributeListeners();
+
+    setupInvokerPolyfill();
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
