@@ -394,7 +394,6 @@ export class LiveTemplateClient {
     // Set up reactive attribute listeners for lvt-el:*:on:* attributes
     setupReactiveAttributeListeners();
 
-    // Polyfill command/commandfor for dialog open/close (Chrome 135+ only natively)
     setupInvokerPolyfill();
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
