@@ -26,6 +26,7 @@ describe("setupInvokerPolyfill", () => {
 
   afterEach(() => {
     teardownInvokerPolyfill();
+    delete (HTMLButtonElement.prototype as any).commandForElement;
     document.body.innerHTML = "";
   });
 
@@ -206,9 +207,7 @@ describe("setupInvokerPolyfill", () => {
 
     // Polyfill should not have installed its listener
     expect(showModal).not.toHaveBeenCalled();
-
-    // Clean up the mock property
-    delete (HTMLButtonElement.prototype as any).commandForElement;
+    // commandForElement cleanup is handled by afterEach
   });
 
   it("ignores unknown commands", () => {

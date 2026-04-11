@@ -38,7 +38,7 @@ export function setupInvokerPolyfill(): void {
   document.addEventListener("click", handleClick);
 }
 
-/** Reset polyfill state. Exported for testing only. */
+/** @internal Reset polyfill state. Test-only — do not call from production code. */
 export function teardownInvokerPolyfill(): void {
   if (installed) {
     document.removeEventListener("click", handleClick);
