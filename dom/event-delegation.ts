@@ -22,7 +22,7 @@ export interface EventDelegationContext {
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
   parseValue(value: string): any;
   send(message: any): void;
-  sendHTTPMultipart(form: HTMLFormElement, action: string): void;
+  sendHTTPMultipart(form: HTMLFormElement, action: string, formData?: FormData): void;
   setActiveSubmission(
     form: HTMLFormElement | null,
     button: HTMLButtonElement | null,
@@ -302,6 +302,26 @@ export class EventDelegator {
                 });
               }
 
+              // Tier 1 file upload detection — must happen BEFORE setActiveSubmission
+              // which disables the fieldset. Once the fieldset is disabled, FormData
+              // excludes all its child fields, so we must build FormData here if we
+              // need it for HTTP multipart upload.
+              let tier1FormData: FormData | null = null;
+              if (
+                eventType === "submit" &&
+                targetElement instanceof HTMLFormElement
+              ) {
+                const tier1FileInputs = targetElement.querySelectorAll<HTMLInputElement>(
+                  'input[type="file"]:not([lvt-upload])'
+                );
+                const hasFiles = Array.from(tier1FileInputs).some(
+                  (input) => input.files && input.files.length > 0
+                );
+                if (hasFiles) {
+                  tier1FormData = new FormData(targetElement);
+                }
+              }
+
               if (
                 eventType === "submit" &&
                 targetElement instanceof HTMLFormElement
@@ -352,21 +372,12 @@ export class EventDelegator {
                 this.context.getWebSocketReadyState()
               );
 
-              // Tier 1 file uploads: forms with file inputs (without lvt-upload)
-              // are submitted via HTTP fetch with FormData instead of WebSocket.
-              // Binary files can't be sent efficiently over WebSocket (base64 overhead).
-              if (targetElement instanceof HTMLFormElement) {
-                const tier1FileInputs = targetElement.querySelectorAll<HTMLInputElement>(
-                  'input[type="file"]:not([lvt-upload])'
-                );
-                const hasFiles = Array.from(tier1FileInputs).some(
-                  (input) => input.files && input.files.length > 0
-                );
-                if (hasFiles) {
-                  this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
-                  this.context.sendHTTPMultipart(targetElement, action);
-                  return;
-                }
+              // Tier 1 file uploads: send via HTTP fetch with FormData captured
+              // BEFORE the fieldset was disabled by setActiveSubmission.
+              if (tier1FormData !== null && targetElement instanceof HTMLFormElement) {
+                this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
+                this.context.sendHTTPMultipart(targetElement, action, tier1FormData);
+                return;
               }
 
               this.context.send(message);

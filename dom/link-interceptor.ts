@@ -9,9 +9,13 @@ export interface LinkInterceptorContext {
  * Intercepts <a> clicks within the LiveTemplate wrapper for SPA navigation.
  * Same-origin links are fetched via fetch() and the wrapper content is replaced.
  * External links, target="_blank", download, and lvt-nav:no-intercept are skipped.
+ *
+ * Uses AbortController to cancel in-flight fetches when a new navigation
+ * starts (rapid clicks, back/forward during fetch).
  */
 export class LinkInterceptor {
   private popstateListener: (() => void) | null = null;
+  private abortController: AbortController | null = null;
 
   constructor(
     private readonly context: LinkInterceptorContext,
@@ -70,10 +74,15 @@ export class LinkInterceptor {
   }
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
+    // Cancel any in-flight navigation fetch
+    this.abortController?.abort();
+    this.abortController = new AbortController();
+
     try {
       const response = await fetch(href, {
         credentials: "include",
         headers: { Accept: "text/html" },
+        signal: this.abortController.signal,
       });
 
       if (!response.ok) {
@@ -82,12 +91,18 @@ export class LinkInterceptor {
       }
 
       const html = await response.text();
-      this.context.handleNavigationResponse(html);
 
+      // Push state BEFORE handling response so that cross-handler
+      // navigation reconnects the WebSocket to the correct URL.
+      // connect() derives the WebSocket path from window.location.
       if (pushState) {
         window.history.pushState(null, "", href);
       }
-    } catch {
+
+      this.context.handleNavigationResponse(html);
+    } catch (e: unknown) {
+      // AbortError means a new navigation superseded this one — ignore
+      if (e instanceof DOMException && e.name === "AbortError") return;
       window.location.href = href;
     }
   }

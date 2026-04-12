@@ -153,8 +153,8 @@ export class LiveTemplateClient {
         getRateLimitedHandlers: () => this.rateLimitedHandlers,
         parseValue: (value: string) => this.parseValue(value),
         send: (message: any) => this.send(message),
-        sendHTTPMultipart: (form: HTMLFormElement, action: string) =>
-          this.sendHTTPMultipart(form, action),
+        sendHTTPMultipart: (form: HTMLFormElement, action: string, formData?: FormData) =>
+          this.sendHTTPMultipart(form, action, formData),
         setActiveSubmission: (
           form: HTMLFormElement | null,
           button: HTMLButtonElement | null,
@@ -537,15 +537,23 @@ export class LiveTemplateClient {
    * Send form with file inputs via HTTP POST multipart/form-data.
    * Used for Tier 1 file uploads where binary files are submitted via
    * HTTP fetch instead of WebSocket (avoids base64 encoding overhead).
+   *
+   * The optional formData parameter allows callers to pass pre-captured
+   * form data (e.g., captured BEFORE setActiveSubmission disabled the
+   * fieldset, which would otherwise exclude all fields from FormData).
    */
-  sendHTTPMultipart(form: HTMLFormElement, action: string): void {
-    this.doSendHTTPMultipart(form, action);
+  sendHTTPMultipart(form: HTMLFormElement, action: string, formData?: FormData): void {
+    this.doSendHTTPMultipart(form, action, formData);
   }
 
-  private async doSendHTTPMultipart(form: HTMLFormElement, action: string): Promise<void> {
+  private async doSendHTTPMultipart(
+    form: HTMLFormElement,
+    action: string,
+    prebuiltFormData?: FormData
+  ): Promise<void> {
     try {
       const liveUrl = this.options.liveUrl || "/live";
-      const formData = new FormData(form);
+      const formData = prebuiltFormData || new FormData(form);
       formData.set("lvt-action", action);
 
       const response = await fetch(liveUrl, {
@@ -580,30 +588,107 @@ export class LiveTemplateClient {
    * Extracts the wrapper content from the full HTML page and replaces
    * the current wrapper content. Content comes from same-origin fetch
    * responses only (link interceptor skips external origins).
+   *
+   * Supports both same-handler navigation (same data-lvt-id) and
+   * cross-handler navigation (different data-lvt-id). Cross-handler
+   * navigation disconnects the old WebSocket, replaces the wrapper
+   * content and ID, and reconnects to the new handler. The URL must
+   * already be updated via pushState before this method is called
+   * (done in LinkInterceptor.navigate) so the WebSocket connects to
+   * the correct handler.
    */
   private handleNavigationResponse(html: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
-    const lvtId = this.wrapperElement.getAttribute("data-lvt-id");
-    const newWrapper = lvtId
-      ? doc.querySelector(`[data-lvt-id="${lvtId}"]`)
-      : null;
+    const oldId = this.wrapperElement.getAttribute("data-lvt-id");
 
-    if (newWrapper) {
-      // Replace wrapper content with same-origin server response
-      // Safe: content is from our own server via same-origin fetch
-      this.wrapperElement.replaceChildren(...Array.from(newWrapper.childNodes).map(n => n.cloneNode(true)));
-    } else {
-      const body = doc.querySelector("body");
-      if (body) {
-        this.wrapperElement.replaceChildren(...Array.from(body.childNodes).map(n => n.cloneNode(true)));
-      }
+    // Update document title from the fetched page
+    const newTitle = doc.querySelector("title");
+    if (newTitle) {
+      document.title = newTitle.textContent || "";
     }
 
+    // Try same-handler wrapper first (same data-lvt-id)
+    const sameWrapper = oldId
+      ? doc.querySelector(`[data-lvt-id="${oldId}"]`)
+      : null;
+
+    if (sameWrapper) {
+      this.wrapperElement.replaceChildren(
+        ...Array.from(sameWrapper.childNodes).map((n) => n.cloneNode(true))
+      );
+      this.eventDelegator.setupEventDelegation();
+      this.linkInterceptor.setup(this.wrapperElement);
+      return;
+    }
+
+    // Check for a different handler's wrapper (cross-handler navigation)
+    const newWrapper = doc.querySelector("[data-lvt-id]");
+    if (newWrapper) {
+      const newId = newWrapper.getAttribute("data-lvt-id");
+
+      // Clean up stale event listeners keyed to the old wrapper ID
+      this.cleanupListenersForWrapper(oldId);
+
+      this.disconnect();
+      this.wrapperElement.setAttribute("data-lvt-id", newId!);
+      this.wrapperElement.replaceChildren(
+        ...Array.from(newWrapper.childNodes).map((n) => n.cloneNode(true))
+      );
+
+      // Scroll to top for cross-handler navigation
+      window.scrollTo(0, 0);
+
+      // Update liveUrl to the current page (pushState already ran in
+      // LinkInterceptor.navigate before this method is called).
+      this.options.liveUrl =
+        window.location.pathname + window.location.search;
+      // Reconnect to the new handler. The server sends an initial tree
+      // that produces the same DOM as the fetched HTML.
+      this.connect(`[data-lvt-id="${newId}"]`).catch(() => {
+        window.location.href = window.location.href;
+      });
+      return;
+    }
+
+    // Non-LiveTemplate page — use body content fallback
+    const body = doc.querySelector("body");
+    if (body) {
+      this.wrapperElement.replaceChildren(
+        ...Array.from(body.childNodes).map((n) => n.cloneNode(true))
+      );
+    }
     this.eventDelegator.setupEventDelegation();
     this.linkInterceptor.setup(this.wrapperElement);
+  }
+
+  /**
+   * Remove stale event listeners keyed to a specific wrapper ID.
+   * Called before cross-handler navigation changes the wrapper ID,
+   * to prevent orphaned listeners from accumulating.
+   */
+  private cleanupListenersForWrapper(wrapperId: string | null): void {
+    if (!wrapperId) return;
+
+    // Clean up link interceptor listener
+    const linkKey = `__lvt_link_intercept_${wrapperId}`;
+    const linkListener = (document as any)[linkKey];
+    if (linkListener) {
+      document.removeEventListener("click", linkListener);
+      delete (document as any)[linkKey];
+    }
+
+    // Clean up delegated event listeners
+    for (const eventType of ["click", "submit", "change", "input"]) {
+      const delegatedKey = `__lvt_delegated_${eventType}_${wrapperId}`;
+      const delegatedListener = (document as any)[delegatedKey];
+      if (delegatedListener) {
+        document.removeEventListener(eventType, delegatedListener, false);
+        delete (document as any)[delegatedKey];
+      }
+    }
   }
 
   /**
