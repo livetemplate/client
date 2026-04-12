@@ -340,18 +340,21 @@ export class EventDelegator {
                   (input) => input.files && input.files.length > 0
                 );
                 if (hasFiles) {
-                  // Pass the submitter so its name/value is included in
-                  // FormData. Without this, multi-button forms lose the
-                  // clicked button's name/value (e.g.
-                  // <button name="action" value="save">).
+                  // Include the submitter's name/value so multi-button
+                  // forms preserve the clicked button's entry (e.g.
+                  // <button name="action" value="save">). We avoid the
+                  // two-argument FormData constructor (Chrome 112+,
+                  // Firefox 111+, Safari 16.4+ — March 2023) and set
+                  // the submitter value manually for broader browser
+                  // compatibility.
                   const submitter = (e as SubmitEvent).submitter as
                     | HTMLButtonElement
                     | HTMLInputElement
                     | null;
-                  tier1FormData = new FormData(
-                    targetElement,
-                    submitter ?? undefined
-                  );
+                  tier1FormData = new FormData(targetElement);
+                  if (submitter?.name) {
+                    tier1FormData.set(submitter.name, submitter.value);
+                  }
                 }
               }
 

@@ -563,6 +563,10 @@ export class LiveTemplateClient {
    * The optional formData parameter allows callers to pass pre-captured
    * form data (e.g., captured BEFORE setActiveSubmission disabled the
    * fieldset, which would otherwise exclude all fields from FormData).
+   *
+   * NOTE: If a prebuilt FormData is passed, it will be mutated — this
+   * method sets the "lvt-action" entry on it. Callers should treat the
+   * passed FormData as consumed and not reuse it afterwards.
    */
   sendHTTPMultipart(form: HTMLFormElement, action: string, formData?: FormData): void {
     this.doSendHTTPMultipart(form, action, formData);
@@ -575,6 +579,8 @@ export class LiveTemplateClient {
   ): Promise<void> {
     try {
       const liveUrl = this.getLiveUrl();
+      // Note: this mutates prebuiltFormData if provided. Callers must
+      // not reuse the passed FormData after this call.
       const formData = prebuiltFormData || new FormData(form);
       formData.set("lvt-action", action);
 
@@ -711,11 +717,24 @@ export class LiveTemplateClient {
       // we prefer a manual escape over CSS.escape() which is not
       // available in jsdom test environments.
       //
-      // Epoch semantics: if a newer navigation supersedes this one, any
-      // work it already did (disconnect, setup, new connect) is still
-      // valid for the newer navigation — we must NOT tear it down.
-      // The success branch has no work to do either way, so we only
-      // guard the failure branch to avoid stale reloads.
+      // Epoch semantics: the failure branch is guarded by the epoch
+      // check to avoid stale reloads. The success branch has no work
+      // to do — there's nothing for handleNavigationResponse to undo
+      // on success.
+      //
+      // Known limitation: if two cross-handler navigations run in rapid
+      // succession (A then B), A's connect() might still be executing
+      // its post-await setup (useHTTP assignment, initial state
+      // rendering, event delegation) when B starts. Because there's
+      // only one WebSocketManager transport at a time, B's disconnect()
+      // kills A's in-flight transport, and B's setup happens on the
+      // wrapper with B's ID. If A's post-await code runs AFTER B sets
+      // the wrapper ID, A's querySelector lookup would already be
+      // stale (it captured the wrapper synchronously before the await).
+      // A true fix requires making connect() itself cancellable with
+      // an AbortSignal, which is out of scope for this PR. In practice,
+      // two successive SPA navigations within a single event loop tick
+      // are rare, and the idempotent setup methods minimize fallout.
       const escapedId = newId.replace(/[\\"]/g, "\\$&");
       const selector = `[data-lvt-id="${escapedId}"]`;
       this.connect(selector).catch((err) => {
