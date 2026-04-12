@@ -78,6 +78,19 @@ export class LiveTemplateClient {
   // Message tracking for deterministic E2E testing
   private messageCount: number = 0;
 
+  // Cross-handler navigation: track the latest in-flight connect() so a
+  // subsequent navigation can supersede an earlier one. Incremented on
+  // each cross-handler navigation; handlers check the epoch to avoid
+  // applying stale connection results.
+  private navigationEpoch: number = 0;
+
+  // Override for the live URL used by HTTP send and multipart methods.
+  // Updated on cross-handler navigation so HTTP requests go to the new
+  // handler path. When null, falls back to options.liveUrl. We avoid
+  // mutating the options object so callers holding a reference don't
+  // observe side-effects.
+  private liveUrlOverride: string | null = null;
+
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
     const resolvedLevel = logLevel ?? (debug ? "debug" : "info");
@@ -153,8 +166,8 @@ export class LiveTemplateClient {
         getRateLimitedHandlers: () => this.rateLimitedHandlers,
         parseValue: (value: string) => this.parseValue(value),
         send: (message: any) => this.send(message),
-        sendHTTPMultipart: (form: HTMLFormElement, action: string) =>
-          this.sendHTTPMultipart(form, action),
+        sendHTTPMultipart: (form: HTMLFormElement, action: string, formData: FormData) =>
+          this.sendHTTPMultipart(form, action, formData),
         setActiveSubmission: (
           form: HTMLFormElement | null,
           button: HTMLButtonElement | null,
@@ -500,11 +513,20 @@ export class LiveTemplateClient {
   }
 
   /**
+   * Get the current live URL for HTTP methods. Falls back to
+   * options.liveUrl when no override is set. Cross-handler navigation
+   * uses setLiveUrl() to update the override without mutating options.
+   */
+  private getLiveUrl(): string {
+    return this.liveUrlOverride || this.options.liveUrl || "/live";
+  }
+
+  /**
    * Send action via HTTP POST
    */
   private async sendHTTP(message: any): Promise<void> {
     try {
-      const liveUrl = this.options.liveUrl || "/live";
+      const liveUrl = this.getLiveUrl();
       const response = await fetch(liveUrl, {
         method: "POST",
         credentials: "include", // Include cookies for session
@@ -537,16 +559,25 @@ export class LiveTemplateClient {
    * Send form with file inputs via HTTP POST multipart/form-data.
    * Used for Tier 1 file uploads where binary files are submitted via
    * HTTP fetch instead of WebSocket (avoids base64 encoding overhead).
+   *
+   * IMPORTANT: Callers must pass pre-captured form data (formData).
+   * FormData must be built BEFORE setActiveSubmission disables the
+   * form's fieldset — otherwise FormData would be empty because
+   * disabled fieldsets exclude all child fields. The caller is also
+   * responsible for setting the "lvt-action" entry; this method will
+   * not mutate the passed FormData.
    */
-  sendHTTPMultipart(form: HTMLFormElement, action: string): void {
-    this.doSendHTTPMultipart(form, action);
+  sendHTTPMultipart(form: HTMLFormElement, action: string, formData: FormData): void {
+    this.doSendHTTPMultipart(form, action, formData);
   }
 
-  private async doSendHTTPMultipart(form: HTMLFormElement, action: string): Promise<void> {
+  private async doSendHTTPMultipart(
+    form: HTMLFormElement,
+    action: string,
+    formData: FormData
+  ): Promise<void> {
     try {
-      const liveUrl = this.options.liveUrl || "/live";
-      const formData = new FormData(form);
-      formData.set("lvt-action", action);
+      const liveUrl = this.getLiveUrl();
 
       const response = await fetch(liveUrl, {
         method: "POST",
@@ -580,28 +611,150 @@ export class LiveTemplateClient {
    * Extracts the wrapper content from the full HTML page and replaces
    * the current wrapper content. Content comes from same-origin fetch
    * responses only (link interceptor skips external origins).
+   *
+   * Supports both same-handler navigation (same data-lvt-id) and
+   * cross-handler navigation (different data-lvt-id). Cross-handler
+   * navigation disconnects the old WebSocket, replaces the wrapper
+   * content and ID, and reconnects to the new handler. The URL must
+   * already be updated via pushState before this method is called
+   * (done in LinkInterceptor.navigate) so the WebSocket connects to
+   * the correct handler.
    */
   private handleNavigationResponse(html: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
-    const lvtId = this.wrapperElement.getAttribute("data-lvt-id");
-    const newWrapper = lvtId
-      ? doc.querySelector(`[data-lvt-id="${lvtId}"]`)
-      : null;
+    const oldId = this.wrapperElement.getAttribute("data-lvt-id");
 
-    if (newWrapper) {
-      // Replace wrapper content with same-origin server response
-      // Safe: content is from our own server via same-origin fetch
-      this.wrapperElement.replaceChildren(...Array.from(newWrapper.childNodes).map(n => n.cloneNode(true)));
-    } else {
-      const body = doc.querySelector("body");
-      if (body) {
-        this.wrapperElement.replaceChildren(...Array.from(body.childNodes).map(n => n.cloneNode(true)));
-      }
+    // Update document title from the fetched page. Only apply if the
+    // new title is non-empty — blanking the title would be surprising
+    // and unhelpful.
+    const newTitleText = doc.querySelector("title")?.textContent;
+    if (newTitleText) {
+      document.title = newTitleText;
     }
 
+    // Try same-handler wrapper first (same data-lvt-id)
+    const sameWrapper = oldId
+      ? doc.querySelector(`[data-lvt-id="${oldId}"]`)
+      : null;
+
+    if (sameWrapper) {
+      this.wrapperElement.replaceChildren(
+        ...Array.from(sameWrapper.childNodes).map((n) => n.cloneNode(true))
+      );
+      this.eventDelegator.setupEventDelegation();
+      this.linkInterceptor.setup(this.wrapperElement);
+      return;
+    }
+
+    // Check for a different handler's wrapper (cross-handler navigation)
+    const newWrapper = doc.querySelector("[data-lvt-id]");
+    if (newWrapper) {
+      const newId = newWrapper.getAttribute("data-lvt-id");
+      // Guard: attribute exists (we queried by [data-lvt-id]) but could be empty
+      if (!newId) {
+        this.logger.warn("Cross-handler navigation: new wrapper has empty data-lvt-id");
+        window.location.reload();
+        return;
+      }
+
+      // Clean up stale event listeners keyed to the old wrapper ID.
+      // Each component knows its own listener keys, so we delegate.
+      this.linkInterceptor.teardownForWrapper(oldId);
+      this.eventDelegator.teardownForWrapper(oldId);
+
+      // Supersede any previous in-flight connect() from an earlier navigation
+      const myEpoch = ++this.navigationEpoch;
+
+      this.disconnect();
+      this.wrapperElement.setAttribute("data-lvt-id", newId);
+      this.wrapperElement.replaceChildren(
+        ...Array.from(newWrapper.childNodes).map((n) => n.cloneNode(true))
+      );
+
+      // Set up event delegation and link interception immediately so the
+      // new content has working listeners BEFORE the async connect() runs.
+      // connect() will re-run these internally, which is safe: both setup
+      // methods are idempotent — they remove any existing listener with
+      // the same key before adding the new one. Calling them twice in
+      // quick succession results in a single active listener per event
+      // type per wrapper ID.
+      this.eventDelegator.setupEventDelegation();
+      this.linkInterceptor.setup(this.wrapperElement);
+
+      // Scroll to top for cross-handler navigation
+      window.scrollTo(0, 0);
+
+      // Update the live URL used by HTTP methods AND the WebSocket
+      // manager to derive the reconnect path. We use private overrides
+      // on both so the caller-provided options object is never mutated.
+      // Hash fragments are intentionally excluded — the WebSocket path
+      // comes from pathname+search only.
+      //
+      // liveUrl convention: it is always the CURRENT PAGE PATH, not a
+      // separate endpoint. Each LiveTemplate handler route is both the
+      // HTTP page and the WebSocket endpoint for that handler, so the
+      // page path and the WebSocket path are always the same. Apps that
+      // need a different WebSocket endpoint should set `wsUrl`, which
+      // takes precedence over `liveUrl` in WebSocketManager.
+      const newLiveUrl =
+        window.location.pathname + window.location.search;
+      this.liveUrlOverride = newLiveUrl;
+      this.webSocketManager.setLiveUrl(newLiveUrl);
+
+      // Reconnect to the new handler. The server sends an initial tree
+      // that produces the same DOM as the fetched HTML.
+      //
+      // Escape the wrapper ID to defend against (pathological) server
+      // responses with special characters that would break the
+      // attribute selector. Only `"` and `\` need escaping inside a
+      // double-quoted attribute value selector (`[attr="..."]`), and
+      // we prefer a manual escape over CSS.escape() which is not
+      // available in jsdom test environments.
+      //
+      // Epoch semantics: the failure branch is guarded by the epoch
+      // check to avoid stale reloads. The success branch has no work
+      // to do — there's nothing for handleNavigationResponse to undo
+      // on success.
+      //
+      // Known limitation: if two cross-handler navigations run in rapid
+      // succession (A then B), A's connect() might still be executing
+      // its post-await setup (useHTTP assignment, initial state
+      // rendering, event delegation) when B starts. Because there's
+      // only one WebSocketManager transport at a time, B's disconnect()
+      // kills A's in-flight transport, and B's setup happens on the
+      // wrapper with B's ID. If A's post-await code runs AFTER B sets
+      // the wrapper ID, A's querySelector lookup would already be
+      // stale (it captured the wrapper synchronously before the await).
+      // A true fix requires making connect() itself cancellable with
+      // an AbortSignal, which is out of scope for this PR. In practice,
+      // two successive SPA navigations within a single event loop tick
+      // are rare, and the idempotent setup methods minimize fallout.
+      const escapedId = newId.replace(/[\\"]/g, "\\$&");
+      const selector = `[data-lvt-id="${escapedId}"]`;
+      this.connect(selector).catch((err) => {
+        if (myEpoch !== this.navigationEpoch) return;
+        this.logger.error("Cross-handler reconnect failed:", err);
+        window.location.reload();
+      });
+      return;
+    }
+
+    // Non-LiveTemplate page — disconnect the old WebSocket (it's pointing
+    // to a handler whose DOM is about to be replaced) and tear down the
+    // old listeners keyed to the previous wrapper ID, then use body
+    // content fallback.
+    this.linkInterceptor.teardownForWrapper(oldId);
+    this.eventDelegator.teardownForWrapper(oldId);
+    this.disconnect();
+    const body = doc.querySelector("body");
+    if (body) {
+      this.wrapperElement.replaceChildren(
+        ...Array.from(body.childNodes).map((n) => n.cloneNode(true))
+      );
+    }
     this.eventDelegator.setupEventDelegation();
     this.linkInterceptor.setup(this.wrapperElement);
   }

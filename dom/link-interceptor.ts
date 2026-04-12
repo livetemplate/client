@@ -9,14 +9,46 @@ export interface LinkInterceptorContext {
  * Intercepts <a> clicks within the LiveTemplate wrapper for SPA navigation.
  * Same-origin links are fetched via fetch() and the wrapper content is replaced.
  * External links, target="_blank", download, and lvt-nav:no-intercept are skipped.
+ *
+ * Uses AbortController to cancel in-flight fetches when a new navigation
+ * starts (rapid clicks, back/forward during fetch).
  */
 export class LinkInterceptor {
   private popstateListener: (() => void) | null = null;
+  private abortController: AbortController | null = null;
 
   constructor(
     private readonly context: LinkInterceptorContext,
     private readonly logger: Logger
   ) {}
+
+  /**
+   * Remove the click listener registered by setup() for a specific
+   * wrapper ID. Call this before cross-handler navigation changes the
+   * wrapper's data-lvt-id, to prevent orphaned listeners.
+   *
+   * Also aborts any in-flight navigate() fetch so it cannot call
+   * handleNavigationResponse after teardown and trigger a duplicate
+   * or out-of-date navigation.
+   */
+  teardownForWrapper(wrapperId: string | null): void {
+    // Abort any in-flight fetch — whether or not a wrapper ID is passed.
+    // The caller may be tearing down before a cross-handler transition,
+    // and we don't want a pending fetch to land post-teardown.
+    this.abortController?.abort();
+    this.abortController = null;
+
+    if (!wrapperId) return;
+    const listenerKey = `__lvt_link_intercept_${wrapperId}`;
+    const existing = (document as any)[listenerKey];
+    if (existing) {
+      // Explicit capture flag (false) for consistency with
+      // EventDelegator.teardownForWrapper — defaults match but
+      // explicit is clearer.
+      document.removeEventListener("click", existing, false);
+      delete (document as any)[listenerKey];
+    }
+  }
 
   setup(wrapper: Element): void {
     const wrapperId = wrapper.getAttribute("data-lvt-id");
@@ -70,10 +102,15 @@ export class LinkInterceptor {
   }
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
+    // Cancel any in-flight navigation fetch
+    this.abortController?.abort();
+    this.abortController = new AbortController();
+
     try {
       const response = await fetch(href, {
         credentials: "include",
         headers: { Accept: "text/html" },
+        signal: this.abortController.signal,
       });
 
       if (!response.ok) {
@@ -82,12 +119,18 @@ export class LinkInterceptor {
       }
 
       const html = await response.text();
-      this.context.handleNavigationResponse(html);
 
+      // Push state BEFORE handling response so that cross-handler
+      // navigation reconnects the WebSocket to the correct URL.
+      // connect() derives the WebSocket path from window.location.
       if (pushState) {
         window.history.pushState(null, "", href);
       }
-    } catch {
+
+      this.context.handleNavigationResponse(html);
+    } catch (e: unknown) {
+      // AbortError means a new navigation superseded this one — ignore
+      if (e instanceof DOMException && e.name === "AbortError") return;
       window.location.href = href;
     }
   }

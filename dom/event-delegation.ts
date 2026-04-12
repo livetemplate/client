@@ -22,7 +22,7 @@ export interface EventDelegationContext {
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
   parseValue(value: string): any;
   send(message: any): void;
-  sendHTTPMultipart(form: HTMLFormElement, action: string): void;
+  sendHTTPMultipart(form: HTMLFormElement, action: string, formData: FormData): void;
   setActiveSubmission(
     form: HTMLFormElement | null,
     button: HTMLButtonElement | null,
@@ -35,11 +35,45 @@ export interface EventDelegationContext {
 /**
  * Handles all DOM event delegation concerns for LiveTemplateClient.
  */
+// All event types registered by setupEventDelegation. Exported so
+// teardownForWrapper() can remove them all without drift.
+export const DELEGATED_EVENT_TYPES = [
+  "click",
+  "submit",
+  "change",
+  "input",
+  "search",
+  "keydown",
+  "keyup",
+  "focus",
+  "blur",
+  "mouseenter",
+  "mouseleave",
+] as const;
+
 export class EventDelegator {
   constructor(
     private readonly context: EventDelegationContext,
     private readonly logger: Logger
   ) {}
+
+  /**
+   * Remove all document-level event listeners registered by
+   * setupEventDelegation for a specific wrapper ID. Call this before
+   * a cross-handler navigation changes the wrapper's data-lvt-id, to
+   * prevent listener leaks.
+   */
+  teardownForWrapper(wrapperId: string | null): void {
+    if (!wrapperId) return;
+    for (const eventType of DELEGATED_EVENT_TYPES) {
+      const listenerKey = `__lvt_delegated_${eventType}_${wrapperId}`;
+      const existingListener = (document as any)[listenerKey];
+      if (existingListener) {
+        document.removeEventListener(eventType, existingListener, false);
+        delete (document as any)[listenerKey];
+      }
+    }
+  }
 
   private extractButtonData(button: HTMLButtonElement | HTMLInputElement, data: Record<string, any>): void {
     if (button.value) {
@@ -57,19 +91,7 @@ export class EventDelegator {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
 
-    const eventTypes = [
-      "click",
-      "submit",
-      "change",
-      "input",
-      "search", // Fired when clearing input type="search" via X button
-      "keydown",
-      "keyup",
-      "focus",
-      "blur",
-      "mouseenter",
-      "mouseleave",
-    ];
+    const eventTypes = DELEGATED_EVENT_TYPES;
     const wrapperId = wrapperElement.getAttribute("data-lvt-id");
     const rateLimitedHandlers = this.context.getRateLimitedHandlers();
 
@@ -302,6 +324,46 @@ export class EventDelegator {
                 });
               }
 
+              // Tier 1 file upload detection — must happen BEFORE setActiveSubmission
+              // which disables the fieldset. Once the fieldset is disabled, FormData
+              // excludes all its child fields, so we must build FormData here if we
+              // need it for HTTP multipart upload.
+              let tier1FormData: FormData | null = null;
+              if (
+                eventType === "submit" &&
+                targetElement instanceof HTMLFormElement
+              ) {
+                const tier1FileInputs = targetElement.querySelectorAll<HTMLInputElement>(
+                  'input[type="file"]:not([lvt-upload])'
+                );
+                const hasFiles = Array.from(tier1FileInputs).some(
+                  (input) => input.files && input.files.length > 0
+                );
+                if (hasFiles) {
+                  // Include the submitter's name/value so multi-button
+                  // forms preserve the clicked button's entry (e.g.
+                  // <button name="action" value="save">). We avoid the
+                  // two-argument FormData constructor (Chrome 112+,
+                  // Firefox 111+, Safari 16.4+ — March 2023) and set
+                  // the submitter value manually for broader browser
+                  // compatibility.
+                  const submitter = (e as SubmitEvent).submitter as
+                    | HTMLButtonElement
+                    | HTMLInputElement
+                    | null;
+                  tier1FormData = new FormData(targetElement);
+                  if (submitter?.name) {
+                    tier1FormData.set(submitter.name, submitter.value);
+                  }
+                  // Set the action field here (not inside sendHTTPMultipart)
+                  // so the client-owned FormData is fully prepared before
+                  // being passed to another method. This keeps
+                  // sendHTTPMultipart from mutating a caller-supplied
+                  // FormData object.
+                  tier1FormData.set("lvt-action", action);
+                }
+              }
+
               if (
                 eventType === "submit" &&
                 targetElement instanceof HTMLFormElement
@@ -352,21 +414,17 @@ export class EventDelegator {
                 this.context.getWebSocketReadyState()
               );
 
-              // Tier 1 file uploads: forms with file inputs (without lvt-upload)
-              // are submitted via HTTP fetch with FormData instead of WebSocket.
-              // Binary files can't be sent efficiently over WebSocket (base64 overhead).
-              if (targetElement instanceof HTMLFormElement) {
-                const tier1FileInputs = targetElement.querySelectorAll<HTMLInputElement>(
-                  'input[type="file"]:not([lvt-upload])'
+              // Tier 1 file uploads: send via HTTP fetch with FormData captured
+              // BEFORE the fieldset was disabled by setActiveSubmission.
+              // tier1FormData is only set when targetElement is a form.
+              if (tier1FormData !== null) {
+                this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
+                this.context.sendHTTPMultipart(
+                  targetElement as HTMLFormElement,
+                  action,
+                  tier1FormData
                 );
-                const hasFiles = Array.from(tier1FileInputs).some(
-                  (input) => input.files && input.files.length > 0
-                );
-                if (hasFiles) {
-                  this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
-                  this.context.sendHTTPMultipart(targetElement, action);
-                  return;
-                }
+                return;
               }
 
               this.context.send(message);
