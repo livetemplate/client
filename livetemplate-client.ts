@@ -641,8 +641,10 @@ export class LiveTemplateClient {
         return;
       }
 
-      // Clean up stale event listeners keyed to the old wrapper ID
-      this.cleanupListenersForWrapper(oldId);
+      // Clean up stale event listeners keyed to the old wrapper ID.
+      // Each component knows its own listener keys, so we delegate.
+      this.linkInterceptor.teardownForWrapper(oldId);
+      this.eventDelegator.teardownForWrapper(oldId);
 
       // Supersede any previous in-flight connect() from an earlier navigation
       const myEpoch = ++this.navigationEpoch;
@@ -662,23 +664,36 @@ export class LiveTemplateClient {
       // Scroll to top for cross-handler navigation
       window.scrollTo(0, 0);
 
-      // Update liveUrl to the current page (pushState already ran in
-      // LinkInterceptor.navigate before this method is called).
+      // Update the live URL used by the WebSocket manager to derive the
+      // reconnect path. We mutate options.liveUrl (the options object is
+      // the client's internal working copy — we never expose it or reuse
+      // the caller's reference beyond the constructor) so the subsequent
+      // connect() call picks up the new path without needing to thread
+      // the URL through connect()'s signature.
       this.options.liveUrl =
         window.location.pathname + window.location.search;
 
       // Reconnect to the new handler. The server sends an initial tree
       // that produces the same DOM as the fetched HTML. If another
       // navigation supersedes this one, the epoch check discards the
-      // stale result.
-      this.connect(`[data-lvt-id="${newId}"]`).catch((err) => {
-        if (myEpoch !== this.navigationEpoch) {
-          // Superseded by a newer navigation — ignore this failure
-          return;
+      // stale result — both in the success (.then) and failure (.catch)
+      // branches. A stale success means another navigation started while
+      // this one was still connecting, so we must disconnect what we
+      // just connected.
+      const checkEpoch = (): boolean => myEpoch === this.navigationEpoch;
+      this.connect(`[data-lvt-id="${newId}"]`).then(
+        () => {
+          if (!checkEpoch()) {
+            // Superseded — tear down the stale connection we just opened
+            this.disconnect();
+          }
+        },
+        (err) => {
+          if (!checkEpoch()) return;
+          this.logger.error("Cross-handler reconnect failed:", err);
+          window.location.reload();
         }
-        this.logger.error("Cross-handler reconnect failed:", err);
-        window.location.reload();
-      });
+      );
       return;
     }
 
@@ -694,33 +709,6 @@ export class LiveTemplateClient {
     }
     this.eventDelegator.setupEventDelegation();
     this.linkInterceptor.setup(this.wrapperElement);
-  }
-
-  /**
-   * Remove stale event listeners keyed to a specific wrapper ID.
-   * Called before cross-handler navigation changes the wrapper ID,
-   * to prevent orphaned listeners from accumulating.
-   */
-  private cleanupListenersForWrapper(wrapperId: string | null): void {
-    if (!wrapperId) return;
-
-    // Clean up link interceptor listener
-    const linkKey = `__lvt_link_intercept_${wrapperId}`;
-    const linkListener = (document as any)[linkKey];
-    if (linkListener) {
-      document.removeEventListener("click", linkListener);
-      delete (document as any)[linkKey];
-    }
-
-    // Clean up delegated event listeners
-    for (const eventType of ["click", "submit", "change", "input"]) {
-      const delegatedKey = `__lvt_delegated_${eventType}_${wrapperId}`;
-      const delegatedListener = (document as any)[delegatedKey];
-      if (delegatedListener) {
-        document.removeEventListener(eventType, delegatedListener, false);
-        delete (document as any)[delegatedKey];
-      }
-    }
   }
 
   /**

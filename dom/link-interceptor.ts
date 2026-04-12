@@ -22,6 +22,21 @@ export class LinkInterceptor {
     private readonly logger: Logger
   ) {}
 
+  /**
+   * Remove the click listener registered by setup() for a specific
+   * wrapper ID. Call this before cross-handler navigation changes the
+   * wrapper's data-lvt-id, to prevent orphaned listeners.
+   */
+  teardownForWrapper(wrapperId: string | null): void {
+    if (!wrapperId) return;
+    const listenerKey = `__lvt_link_intercept_${wrapperId}`;
+    const existing = (document as any)[listenerKey];
+    if (existing) {
+      document.removeEventListener("click", existing);
+      delete (document as any)[listenerKey];
+    }
+  }
+
   setup(wrapper: Element): void {
     const wrapperId = wrapper.getAttribute("data-lvt-id");
     const listenerKey = `__lvt_link_intercept_${wrapperId}`;

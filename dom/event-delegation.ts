@@ -35,11 +35,45 @@ export interface EventDelegationContext {
 /**
  * Handles all DOM event delegation concerns for LiveTemplateClient.
  */
+// All event types registered by setupEventDelegation. Exported so
+// teardownForWrapper() can remove them all without drift.
+export const DELEGATED_EVENT_TYPES = [
+  "click",
+  "submit",
+  "change",
+  "input",
+  "search",
+  "keydown",
+  "keyup",
+  "focus",
+  "blur",
+  "mouseenter",
+  "mouseleave",
+] as const;
+
 export class EventDelegator {
   constructor(
     private readonly context: EventDelegationContext,
     private readonly logger: Logger
   ) {}
+
+  /**
+   * Remove all document-level event listeners registered by
+   * setupEventDelegation for a specific wrapper ID. Call this before
+   * a cross-handler navigation changes the wrapper's data-lvt-id, to
+   * prevent listener leaks.
+   */
+  teardownForWrapper(wrapperId: string | null): void {
+    if (!wrapperId) return;
+    for (const eventType of DELEGATED_EVENT_TYPES) {
+      const listenerKey = `__lvt_delegated_${eventType}_${wrapperId}`;
+      const existingListener = (document as any)[listenerKey];
+      if (existingListener) {
+        document.removeEventListener(eventType, existingListener, false);
+        delete (document as any)[listenerKey];
+      }
+    }
+  }
 
   private extractButtonData(button: HTMLButtonElement | HTMLInputElement, data: Record<string, any>): void {
     if (button.value) {
@@ -57,19 +91,7 @@ export class EventDelegator {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
 
-    const eventTypes = [
-      "click",
-      "submit",
-      "change",
-      "input",
-      "search", // Fired when clearing input type="search" via X button
-      "keydown",
-      "keyup",
-      "focus",
-      "blur",
-      "mouseenter",
-      "mouseleave",
-    ];
+    const eventTypes = DELEGATED_EVENT_TYPES;
     const wrapperId = wrapperElement.getAttribute("data-lvt-id");
     const rateLimitedHandlers = this.context.getRateLimitedHandlers();
 
