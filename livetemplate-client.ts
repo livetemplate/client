@@ -78,6 +78,12 @@ export class LiveTemplateClient {
   // Message tracking for deterministic E2E testing
   private messageCount: number = 0;
 
+  // Cross-handler navigation: track the latest in-flight connect() so a
+  // subsequent navigation can supersede an earlier one. Incremented on
+  // each cross-handler navigation; handlers check the epoch to avoid
+  // applying stale connection results.
+  private navigationEpoch: number = 0;
+
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
     const resolvedLevel = logLevel ?? (debug ? "debug" : "info");
@@ -628,15 +634,30 @@ export class LiveTemplateClient {
     const newWrapper = doc.querySelector("[data-lvt-id]");
     if (newWrapper) {
       const newId = newWrapper.getAttribute("data-lvt-id");
+      // Guard: attribute exists (we queried by [data-lvt-id]) but could be empty
+      if (!newId) {
+        this.logger.warn("Cross-handler navigation: new wrapper has empty data-lvt-id");
+        window.location.reload();
+        return;
+      }
 
       // Clean up stale event listeners keyed to the old wrapper ID
       this.cleanupListenersForWrapper(oldId);
 
+      // Supersede any previous in-flight connect() from an earlier navigation
+      const myEpoch = ++this.navigationEpoch;
+
       this.disconnect();
-      this.wrapperElement.setAttribute("data-lvt-id", newId!);
+      this.wrapperElement.setAttribute("data-lvt-id", newId);
       this.wrapperElement.replaceChildren(
         ...Array.from(newWrapper.childNodes).map((n) => n.cloneNode(true))
       );
+
+      // Set up event delegation and link interception immediately so the
+      // new content has working listeners BEFORE the async connect() runs.
+      // connect() will re-run these internally, but we can't wait for it.
+      this.eventDelegator.setupEventDelegation();
+      this.linkInterceptor.setup(this.wrapperElement);
 
       // Scroll to top for cross-handler navigation
       window.scrollTo(0, 0);
@@ -645,15 +666,26 @@ export class LiveTemplateClient {
       // LinkInterceptor.navigate before this method is called).
       this.options.liveUrl =
         window.location.pathname + window.location.search;
+
       // Reconnect to the new handler. The server sends an initial tree
-      // that produces the same DOM as the fetched HTML.
-      this.connect(`[data-lvt-id="${newId}"]`).catch(() => {
-        window.location.href = window.location.href;
+      // that produces the same DOM as the fetched HTML. If another
+      // navigation supersedes this one, the epoch check discards the
+      // stale result.
+      this.connect(`[data-lvt-id="${newId}"]`).catch((err) => {
+        if (myEpoch !== this.navigationEpoch) {
+          // Superseded by a newer navigation — ignore this failure
+          return;
+        }
+        this.logger.error("Cross-handler reconnect failed:", err);
+        window.location.reload();
       });
       return;
     }
 
-    // Non-LiveTemplate page — use body content fallback
+    // Non-LiveTemplate page — disconnect the old WebSocket (it's pointing
+    // to a handler whose DOM is about to be replaced) and use body
+    // content fallback.
+    this.disconnect();
     const body = doc.querySelector("body");
     if (body) {
       this.wrapperElement.replaceChildren(

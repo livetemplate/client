@@ -62,6 +62,9 @@ describe("handleNavigationResponse", () => {
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockResolvedValue(undefined);
 
       const html = [
         "<html><body>",
@@ -77,12 +80,16 @@ describe("handleNavigationResponse", () => {
       expect(wrapper.textContent).toContain("Handler B content");
 
       disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
     });
 
     it("disconnects old handler", () => {
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockResolvedValue(undefined);
 
       const html = [
         "<html><body>",
@@ -97,6 +104,7 @@ describe("handleNavigationResponse", () => {
       expect(disconnectSpy).toHaveBeenCalledTimes(1);
 
       disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
     });
 
     it("reconnects to the new handler", () => {
@@ -153,6 +161,9 @@ describe("handleNavigationResponse", () => {
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockResolvedValue(undefined);
 
       // Simulate an existing listener keyed to old wrapper ID
       const oldListener = jest.fn();
@@ -175,12 +186,55 @@ describe("handleNavigationResponse", () => {
       ).toBeUndefined();
 
       disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
+    });
+
+    it("sets up event delegation and link interception immediately (before async connect)", () => {
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      // Make connect() return a promise that never resolves to prove the
+      // synchronous setup happens regardless of whether connect completes
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockReturnValue(new Promise(() => {}));
+      // Spy on the real internal setup methods
+      const eventSetupSpy = jest.spyOn(
+        (client as any).eventDelegator,
+        "setupEventDelegation"
+      );
+      const linkSetupSpy = jest.spyOn(
+        (client as any).linkInterceptor,
+        "setup"
+      );
+
+      const html = [
+        "<html><body>",
+        '<div data-lvt-id="lvt-handler-b">',
+        "<p>Handler B</p>",
+        "</div>",
+        "</body></html>",
+      ].join("");
+
+      callHandleNavigationResponse(html);
+
+      // Both setup methods must have been called synchronously
+      expect(eventSetupSpy).toHaveBeenCalled();
+      expect(linkSetupSpy).toHaveBeenCalled();
+
+      disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
+      eventSetupSpy.mockRestore();
+      linkSetupSpy.mockRestore();
     });
 
     it("scrolls to top on cross-handler navigation", () => {
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockResolvedValue(undefined);
       const scrollSpy = jest
         .spyOn(window, "scrollTo")
         .mockImplementation(() => {});
@@ -198,6 +252,7 @@ describe("handleNavigationResponse", () => {
       expect(scrollSpy).toHaveBeenCalledWith(0, 0);
 
       disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
       scrollSpy.mockRestore();
     });
   });
@@ -254,6 +309,10 @@ describe("handleNavigationResponse", () => {
 
   describe("non-LiveTemplate response", () => {
     it("uses body content when response has no data-lvt-id wrapper", () => {
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+
       const html = [
         "<html><body>",
         "<div><p>Plain HTML page</p></div>",
@@ -264,6 +323,26 @@ describe("handleNavigationResponse", () => {
 
       expect(wrapper.textContent).toContain("Plain HTML page");
       expect(wrapper.getAttribute("data-lvt-id")).toBe("lvt-handler-a");
+
+      disconnectSpy.mockRestore();
+    });
+
+    it("disconnects old WebSocket on non-LiveTemplate fallback", () => {
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+
+      const html = [
+        "<html><body>",
+        "<div><p>Plain HTML page</p></div>",
+        "</body></html>",
+      ].join("");
+
+      callHandleNavigationResponse(html);
+
+      expect(disconnectSpy).toHaveBeenCalledTimes(1);
+
+      disconnectSpy.mockRestore();
     });
   });
 

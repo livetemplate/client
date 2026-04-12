@@ -374,9 +374,14 @@ export class EventDelegator {
 
               // Tier 1 file uploads: send via HTTP fetch with FormData captured
               // BEFORE the fieldset was disabled by setActiveSubmission.
-              if (tier1FormData !== null && targetElement instanceof HTMLFormElement) {
+              // tier1FormData is only set when targetElement is a form.
+              if (tier1FormData !== null) {
                 this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
-                this.context.sendHTTPMultipart(targetElement, action, tier1FormData);
+                this.context.sendHTTPMultipart(
+                  targetElement as HTMLFormElement,
+                  action,
+                  tier1FormData
+                );
                 return;
               }
 
