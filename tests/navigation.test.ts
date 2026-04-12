@@ -276,6 +276,9 @@ describe("handleNavigationResponse", () => {
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client, "connect")
+        .mockResolvedValue(undefined);
 
       const html = [
         "<html><head><title>Handler B Title</title></head><body>",
@@ -290,6 +293,7 @@ describe("handleNavigationResponse", () => {
       expect(document.title).toBe("Handler B Title");
 
       disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
     });
 
     it("does not change title when response has no title element", () => {
@@ -343,6 +347,38 @@ describe("handleNavigationResponse", () => {
       expect(disconnectSpy).toHaveBeenCalledTimes(1);
 
       disconnectSpy.mockRestore();
+    });
+
+    it("tears down stale listeners on non-LiveTemplate fallback", () => {
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      // Spy on teardownForWrapper to verify it's called with the old ID
+      const linkTeardownSpy = jest.spyOn(
+        (client as any).linkInterceptor,
+        "teardownForWrapper"
+      );
+      const eventTeardownSpy = jest.spyOn(
+        (client as any).eventDelegator,
+        "teardownForWrapper"
+      );
+
+      const html = [
+        "<html><body>",
+        "<div><p>Plain HTML page</p></div>",
+        "</body></html>",
+      ].join("");
+
+      callHandleNavigationResponse(html);
+
+      // Both teardown methods must be called with the old wrapper ID
+      // before the fallback path re-registers listeners.
+      expect(linkTeardownSpy).toHaveBeenCalledWith("lvt-handler-a");
+      expect(eventTeardownSpy).toHaveBeenCalledWith("lvt-handler-a");
+
+      disconnectSpy.mockRestore();
+      linkTeardownSpy.mockRestore();
+      eventTeardownSpy.mockRestore();
     });
   });
 

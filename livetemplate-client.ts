@@ -657,7 +657,11 @@ export class LiveTemplateClient {
 
       // Set up event delegation and link interception immediately so the
       // new content has working listeners BEFORE the async connect() runs.
-      // connect() will re-run these internally, but we can't wait for it.
+      // connect() will re-run these internally, which is safe: both setup
+      // methods are idempotent — they remove any existing listener with
+      // the same key before adding the new one. Calling them twice in
+      // quick succession results in a single active listener per event
+      // type per wrapper ID.
       this.eventDelegator.setupEventDelegation();
       this.linkInterceptor.setup(this.wrapperElement);
 
@@ -672,6 +676,13 @@ export class LiveTemplateClient {
       // the URL through connect()'s signature. Hash fragments are
       // intentionally excluded — the WebSocket path comes from
       // pathname+search only.
+      //
+      // liveUrl convention: it is always the CURRENT PAGE PATH, not a
+      // separate endpoint. Each LiveTemplate handler route is both the
+      // HTTP page and the WebSocket endpoint for that handler, so the
+      // page path and the WebSocket path are always the same. Apps that
+      // need a different WebSocket endpoint should set `wsUrl`, which
+      // takes precedence over `liveUrl` in WebSocketManager.
       this.options.liveUrl =
         window.location.pathname + window.location.search;
 
@@ -704,8 +715,11 @@ export class LiveTemplateClient {
     }
 
     // Non-LiveTemplate page — disconnect the old WebSocket (it's pointing
-    // to a handler whose DOM is about to be replaced) and use body
+    // to a handler whose DOM is about to be replaced) and tear down the
+    // old listeners keyed to the previous wrapper ID, then use body
     // content fallback.
+    this.linkInterceptor.teardownForWrapper(oldId);
+    this.eventDelegator.teardownForWrapper(oldId);
     this.disconnect();
     const body = doc.querySelector("body");
     if (body) {
