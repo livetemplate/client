@@ -689,28 +689,25 @@ export class LiveTemplateClient {
       // Reconnect to the new handler. The server sends an initial tree
       // that produces the same DOM as the fetched HTML.
       //
+      // Escape the wrapper ID to defend against (pathological) server
+      // responses with special characters that would break the
+      // attribute selector. Only `"` and `\` need escaping inside a
+      // double-quoted attribute value selector (`[attr="..."]`), and
+      // we prefer a manual escape over CSS.escape() which is not
+      // available in jsdom test environments.
+      //
       // Epoch semantics: if a newer navigation supersedes this one, any
       // work it already did (disconnect, setup, new connect) is still
       // valid for the newer navigation — we must NOT tear it down.
-      //   - Success branch: do nothing if superseded. The newer
-      //     navigation called disconnect() synchronously when it
-      //     started, so this connect's transport was already replaced
-      //     before it could resolve. Calling this.disconnect() here
-      //     would kill the newer navigation's connection.
-      //   - Failure branch: only reload if still current. A failure
-      //     from a superseded attempt is irrelevant.
-      const checkEpoch = (): boolean => myEpoch === this.navigationEpoch;
-      this.connect(`[data-lvt-id="${newId}"]`).then(
-        () => {
-          // No-op if superseded: the newer navigation owns the transport.
-          if (!checkEpoch()) return;
-        },
-        (err) => {
-          if (!checkEpoch()) return;
-          this.logger.error("Cross-handler reconnect failed:", err);
-          window.location.reload();
-        }
-      );
+      // The success branch has no work to do either way, so we only
+      // guard the failure branch to avoid stale reloads.
+      const escapedId = newId.replace(/[\\"]/g, "\\$&");
+      const selector = `[data-lvt-id="${escapedId}"]`;
+      this.connect(selector).catch((err) => {
+        if (myEpoch !== this.navigationEpoch) return;
+        this.logger.error("Cross-handler reconnect failed:", err);
+        window.location.reload();
+      });
       return;
     }
 
