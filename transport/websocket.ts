@@ -130,8 +130,21 @@ export interface WebSocketConnectResult {
 
 export class WebSocketManager {
   private transport: WebSocketTransport | null = null;
+  // Optional override for liveUrl, set by the client on cross-handler
+  // navigation. When set, takes precedence over options.liveUrl. This
+  // avoids mutating the caller-provided options object.
+  private liveUrlOverride: string | null = null;
 
   constructor(private readonly config: WebSocketManagerConfig) {}
+
+  /**
+   * Update the live URL used for WebSocket reconnection. Called by the
+   * client on cross-handler navigation so the next connect() uses the
+   * new page path without mutating the shared options object.
+   */
+  setLiveUrl(liveUrl: string): void {
+    this.liveUrlOverride = liveUrl;
+  }
 
   async connect(): Promise<WebSocketConnectResult> {
     const liveUrl = this.getLiveUrl();
@@ -198,7 +211,7 @@ export class WebSocketManager {
   }
 
   private getWebSocketUrl(): string {
-    const liveUrl = this.config.options.liveUrl || "/live";
+    const liveUrl = this.liveUrlOverride || this.config.options.liveUrl || "/live";
     const baseUrl = this.config.options.wsUrl;
     if (baseUrl) {
       return baseUrl;
@@ -208,7 +221,11 @@ export class WebSocketManager {
   }
 
   private getLiveUrl(): string {
-    return this.config.options.liveUrl || window.location.pathname + window.location.search;
+    return (
+      this.liveUrlOverride ||
+      this.config.options.liveUrl ||
+      window.location.pathname + window.location.search
+    );
   }
 }
 

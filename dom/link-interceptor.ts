@@ -26,8 +26,18 @@ export class LinkInterceptor {
    * Remove the click listener registered by setup() for a specific
    * wrapper ID. Call this before cross-handler navigation changes the
    * wrapper's data-lvt-id, to prevent orphaned listeners.
+   *
+   * Also aborts any in-flight navigate() fetch so it cannot call
+   * handleNavigationResponse after teardown and trigger a duplicate
+   * or out-of-date navigation.
    */
   teardownForWrapper(wrapperId: string | null): void {
+    // Abort any in-flight fetch — whether or not a wrapper ID is passed.
+    // The caller may be tearing down before a cross-handler transition,
+    // and we don't want a pending fetch to land post-teardown.
+    this.abortController?.abort();
+    this.abortController = null;
+
     if (!wrapperId) return;
     const listenerKey = `__lvt_link_intercept_${wrapperId}`;
     const existing = (document as any)[listenerKey];

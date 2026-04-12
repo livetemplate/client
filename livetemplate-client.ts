@@ -84,6 +84,13 @@ export class LiveTemplateClient {
   // applying stale connection results.
   private navigationEpoch: number = 0;
 
+  // Override for the live URL used by HTTP send and multipart methods.
+  // Updated on cross-handler navigation so HTTP requests go to the new
+  // handler path. When null, falls back to options.liveUrl. We avoid
+  // mutating the options object so callers holding a reference don't
+  // observe side-effects.
+  private liveUrlOverride: string | null = null;
+
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
     const resolvedLevel = logLevel ?? (debug ? "debug" : "info");
@@ -506,11 +513,20 @@ export class LiveTemplateClient {
   }
 
   /**
+   * Get the current live URL for HTTP methods. Falls back to
+   * options.liveUrl when no override is set. Cross-handler navigation
+   * uses setLiveUrl() to update the override without mutating options.
+   */
+  private getLiveUrl(): string {
+    return this.liveUrlOverride || this.options.liveUrl || "/live";
+  }
+
+  /**
    * Send action via HTTP POST
    */
   private async sendHTTP(message: any): Promise<void> {
     try {
-      const liveUrl = this.options.liveUrl || "/live";
+      const liveUrl = this.getLiveUrl();
       const response = await fetch(liveUrl, {
         method: "POST",
         credentials: "include", // Include cookies for session
@@ -558,7 +574,7 @@ export class LiveTemplateClient {
     prebuiltFormData?: FormData
   ): Promise<void> {
     try {
-      const liveUrl = this.options.liveUrl || "/live";
+      const liveUrl = this.getLiveUrl();
       const formData = prebuiltFormData || new FormData(form);
       formData.set("lvt-action", action);
 
@@ -668,14 +684,11 @@ export class LiveTemplateClient {
       // Scroll to top for cross-handler navigation
       window.scrollTo(0, 0);
 
-      // Update the live URL used by the WebSocket manager to derive the
-      // reconnect path. We mutate options.liveUrl (the options object is
-      // the client's internal working copy — we never expose it or reuse
-      // the caller's reference beyond the constructor) so the subsequent
-      // connect() call picks up the new path without needing to thread
-      // the URL through connect()'s signature. Hash fragments are
-      // intentionally excluded — the WebSocket path comes from
-      // pathname+search only.
+      // Update the live URL used by HTTP methods AND the WebSocket
+      // manager to derive the reconnect path. We use private overrides
+      // on both so the caller-provided options object is never mutated.
+      // Hash fragments are intentionally excluded — the WebSocket path
+      // comes from pathname+search only.
       //
       // liveUrl convention: it is always the CURRENT PAGE PATH, not a
       // separate endpoint. Each LiveTemplate handler route is both the
@@ -683,8 +696,10 @@ export class LiveTemplateClient {
       // page path and the WebSocket path are always the same. Apps that
       // need a different WebSocket endpoint should set `wsUrl`, which
       // takes precedence over `liveUrl` in WebSocketManager.
-      this.options.liveUrl =
+      const newLiveUrl =
         window.location.pathname + window.location.search;
+      this.liveUrlOverride = newLiveUrl;
+      this.webSocketManager.setLiveUrl(newLiveUrl);
 
       // Reconnect to the new handler. The server sends an initial tree
       // that produces the same DOM as the fetched HTML.
