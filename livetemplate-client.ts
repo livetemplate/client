@@ -563,10 +563,8 @@ export class LiveTemplateClient {
    * The optional formData parameter allows callers to pass pre-captured
    * form data (e.g., captured BEFORE setActiveSubmission disabled the
    * fieldset, which would otherwise exclude all fields from FormData).
-   *
-   * NOTE: If a prebuilt FormData is passed, it will be mutated — this
-   * method sets the "lvt-action" entry on it. Callers should treat the
-   * passed FormData as consumed and not reuse it afterwards.
+   * When a prebuilt FormData is passed, the caller is responsible for
+   * setting the "lvt-action" entry — this method will not mutate it.
    */
   sendHTTPMultipart(form: HTMLFormElement, action: string, formData?: FormData): void {
     this.doSendHTTPMultipart(form, action, formData);
@@ -579,10 +577,15 @@ export class LiveTemplateClient {
   ): Promise<void> {
     try {
       const liveUrl = this.getLiveUrl();
-      // Note: this mutates prebuiltFormData if provided. Callers must
-      // not reuse the passed FormData after this call.
-      const formData = prebuiltFormData || new FormData(form);
-      formData.set("lvt-action", action);
+      let formData: FormData;
+      if (prebuiltFormData) {
+        // Caller has already populated lvt-action — don't mutate.
+        formData = prebuiltFormData;
+      } else {
+        // Build fresh FormData and set our own action.
+        formData = new FormData(form);
+        formData.set("lvt-action", action);
+      }
 
       const response = await fetch(liveUrl, {
         method: "POST",

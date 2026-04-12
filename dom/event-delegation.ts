@@ -355,6 +355,12 @@ export class EventDelegator {
                   if (submitter?.name) {
                     tier1FormData.set(submitter.name, submitter.value);
                   }
+                  // Set the action field here (not inside sendHTTPMultipart)
+                  // so the client-owned FormData is fully prepared before
+                  // being passed to another method. This keeps
+                  // sendHTTPMultipart from mutating a caller-supplied
+                  // FormData object.
+                  tier1FormData.set("lvt-action", action);
                 }
               }
 
