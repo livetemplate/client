@@ -22,7 +22,7 @@ export interface EventDelegationContext {
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
   parseValue(value: string): any;
   send(message: any): void;
-  sendHTTPMultipart(form: HTMLFormElement, action: string, formData?: FormData): void;
+  sendHTTPMultipart(form: HTMLFormElement, action: string, formData: FormData): void;
   setActiveSubmission(
     form: HTMLFormElement | null,
     button: HTMLButtonElement | null,
