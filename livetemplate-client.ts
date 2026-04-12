@@ -669,24 +669,30 @@ export class LiveTemplateClient {
       // the client's internal working copy — we never expose it or reuse
       // the caller's reference beyond the constructor) so the subsequent
       // connect() call picks up the new path without needing to thread
-      // the URL through connect()'s signature.
+      // the URL through connect()'s signature. Hash fragments are
+      // intentionally excluded — the WebSocket path comes from
+      // pathname+search only.
       this.options.liveUrl =
         window.location.pathname + window.location.search;
 
       // Reconnect to the new handler. The server sends an initial tree
-      // that produces the same DOM as the fetched HTML. If another
-      // navigation supersedes this one, the epoch check discards the
-      // stale result — both in the success (.then) and failure (.catch)
-      // branches. A stale success means another navigation started while
-      // this one was still connecting, so we must disconnect what we
-      // just connected.
+      // that produces the same DOM as the fetched HTML.
+      //
+      // Epoch semantics: if a newer navigation supersedes this one, any
+      // work it already did (disconnect, setup, new connect) is still
+      // valid for the newer navigation — we must NOT tear it down.
+      //   - Success branch: do nothing if superseded. The newer
+      //     navigation called disconnect() synchronously when it
+      //     started, so this connect's transport was already replaced
+      //     before it could resolve. Calling this.disconnect() here
+      //     would kill the newer navigation's connection.
+      //   - Failure branch: only reload if still current. A failure
+      //     from a superseded attempt is irrelevant.
       const checkEpoch = (): boolean => myEpoch === this.navigationEpoch;
       this.connect(`[data-lvt-id="${newId}"]`).then(
         () => {
-          if (!checkEpoch()) {
-            // Superseded — tear down the stale connection we just opened
-            this.disconnect();
-          }
+          // No-op if superseded: the newer navigation owns the transport.
+          if (!checkEpoch()) return;
         },
         (err) => {
           if (!checkEpoch()) return;

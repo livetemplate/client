@@ -32,7 +32,10 @@ export class LinkInterceptor {
     const listenerKey = `__lvt_link_intercept_${wrapperId}`;
     const existing = (document as any)[listenerKey];
     if (existing) {
-      document.removeEventListener("click", existing);
+      // Explicit capture flag (false) for consistency with
+      // EventDelegator.teardownForWrapper — defaults match but
+      // explicit is clearer.
+      document.removeEventListener("click", existing, false);
       delete (document as any)[listenerKey];
     }
   }
