@@ -240,6 +240,15 @@ export class WebSocketManager {
       },
       onError: (event) => {
         this.config.onError?.(event);
+        // If we're already connected, onDisconnected is fired via the
+        // subsequent onClose — per WHATWG WebSocket spec, onclose always
+        // fires after onerror when the connection is lost post-open.
+        // We rely on that invariant here rather than double-firing
+        // onDisconnected (which would require tracking a separate
+        // "already disconnected" flag).
+        //
+        // If we're NOT yet connected, this rejects openPromise so the
+        // catch block falls back to HTTP. settleOpen is a no-op post-open.
         settleOpen(new Error("WebSocket errored before it opened"));
       },
     });

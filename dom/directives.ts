@@ -23,9 +23,12 @@ let animatedElements = new WeakSet<Element>();
  * an element animated in case 1 would be silently skipped in case 2.
  * Production code should never call this.
  *
- * The double-underscore prefix and the `@internal` tag signal that
- * this is not part of the public API. TypeScript's API Extractor and
- * similar tools exclude `@internal` exports from generated d.ts files.
+ * The double-underscore prefix and the `@internal` tag signal that this
+ * is not part of the public API. The `@internal` tag is only enforced
+ * when TypeScript's API Extractor (or equivalent) is configured to
+ * strip it from generated `.d.ts` files — this project does not
+ * currently run API Extractor, so the tag is aspirational enforcement
+ * backed by the `__` naming convention and this docstring.
  *
  * @internal
  */
