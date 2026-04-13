@@ -158,27 +158,41 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       break;
     }
     case "animate": {
+      // "Entry animation" semantics: play once per element lifetime. Every
+      // tree update re-walks lvt-fx:* attributes, so without this guard an
+      // unchanged row re-fires the animation on every patch. Morphdom
+      // creates fresh DOM nodes for new rows (flag starts undefined and
+      // the animation fires once); reused nodes retain the flag and skip.
+      if ((htmlElement as any).__lvtAnimated) break;
+      (htmlElement as any).__lvtAnimated = true;
+
       const duration = parseInt(
-        computed.getPropertyValue("--lvt-animate-duration").trim() || "300", 10
+        computed.getPropertyValue("--lvt-animate-duration").trim() || "500", 10
       );
       const animation = config || "fade";
-      htmlElement.style.setProperty("--lvt-animate-duration", `${duration}ms`);
 
+      let animationValue = "";
       switch (animation) {
         case "fade":
-          htmlElement.style.animation = `lvt-fade-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-fade-in ${duration}ms ease-out`;
           break;
         case "slide":
-          htmlElement.style.animation = `lvt-slide-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-slide-in ${duration}ms ease-out`;
           break;
         case "scale":
-          htmlElement.style.animation = `lvt-scale-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-scale-in ${duration}ms ease-out`;
           break;
         default:
           console.warn(`Unknown lvt-fx:animate mode: ${animation}`);
       }
+      if (!animationValue) break;
+      htmlElement.style.animation = animationValue;
       htmlElement.addEventListener("animationend", () => {
         htmlElement.style.animation = "";
+        htmlElement.style.removeProperty("--lvt-animate-duration");
+        if (htmlElement.getAttribute("style") === "") {
+          htmlElement.removeAttribute("style");
+        }
       }, { once: true });
       break;
     }

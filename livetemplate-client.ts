@@ -427,16 +427,28 @@ export class LiveTemplateClient {
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
-    this.observerManager.teardown();
-    this.changeAutoWirer.teardown();
-    this.formLifecycleManager.reset();
-    this.loadingIndicator.hide();
-    this.formDisabler.enable(this.wrapperElement);
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
     }
+    this.resetSessionState();
+  }
+
+  // resetSessionState clears all per-session manager state. Called by both
+  // disconnect() (with additional transport/event teardown) and reset().
+  // Essential for cross-handler SPA navigation: without treeRenderer.reset(),
+  // accumulated tree state from the old handler merges into the new one.
+  private resetSessionState(): void {
+    this.treeRenderer.reset();
+    this.focusManager.reset();
+    this.observerManager.teardown();
+    this.changeAutoWirer.teardown();
+    this.formLifecycleManager.reset();
+    this.loadingIndicator.hide();
+    this.formDisabler.enable(this.wrapperElement);
+    this.lvtId = null;
+    this.isInitialized = false;
   }
 
   /**
@@ -1030,14 +1042,7 @@ export class LiveTemplateClient {
    * Reset client state (useful for testing)
    */
   reset(): void {
-    this.treeRenderer.reset();
-    this.focusManager.reset();
-    this.observerManager.teardown();
-    this.changeAutoWirer.teardown();
-    this.formLifecycleManager.reset();
-    this.loadingIndicator.hide();
-    this.formDisabler.enable(this.wrapperElement);
-    this.lvtId = null;
+    this.resetSessionState();
   }
 
   /**

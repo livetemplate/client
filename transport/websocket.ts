@@ -158,6 +158,18 @@ export class WebSocketManager {
       return { usingWebSocket: false, initialState };
     }
 
+    // Await onopen before resolving, so downstream setup runs with a ready
+    // transport. Without this, observer callbacks during CONNECTING fall
+    // back to HTTP, which hits a separate server state path than the WS
+    // event loop — producing stale/desynced responses.
+    let resolveOpen: (value: WebSocketConnectResult) => void;
+    let rejectOpen: (reason?: unknown) => void;
+    const openPromise = new Promise<WebSocketConnectResult>((resolve, reject) => {
+      resolveOpen = resolve;
+      rejectOpen = reject;
+    });
+    let settled = false;
+
     this.transport = new WebSocketTransport({
       url: this.getWebSocketUrl(),
       autoReconnect: this.config.options.autoReconnect,
@@ -166,6 +178,10 @@ export class WebSocketManager {
       maxReconnectAttempts: 10, // 10 attempts before giving up
       onOpen: () => {
         this.config.onConnected();
+        if (!settled) {
+          settled = true;
+          resolveOpen({ usingWebSocket: true });
+        }
       },
       onMessage: (event) => {
         try {
@@ -177,6 +193,10 @@ export class WebSocketManager {
       },
       onClose: () => {
         this.config.onDisconnected();
+        if (!settled) {
+          settled = true;
+          rejectOpen(new Error("WebSocket closed before it opened"));
+        }
       },
       onReconnectAttempt: (attempt, delay) => {
         this.config.onReconnectAttempt?.(attempt, delay);
@@ -186,11 +206,22 @@ export class WebSocketManager {
       },
       onError: (event) => {
         this.config.onError?.(event);
+        if (!settled) {
+          settled = true;
+          rejectOpen(new Error("WebSocket errored before it opened"));
+        }
       },
     });
 
     this.transport.connect();
-    return { usingWebSocket: true };
+
+    try {
+      return await openPromise;
+    } catch (err) {
+      this.config.logger.warn("WebSocket open failed, falling back to HTTP", err);
+      const initialState = await fetchInitialState(liveUrl, this.config.logger);
+      return { usingWebSocket: false, initialState };
+    }
   }
 
   disconnect(): void {
