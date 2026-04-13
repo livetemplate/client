@@ -1,8 +1,17 @@
 import { ObserverManager, ObserverContext } from "../dom/observer-manager";
 import { createLogger } from "../utils/logger";
 
-// Mock IntersectionObserver
+// Mock IntersectionObserver. Tracks instances and disconnect calls so tests
+// can assert not just that a fresh observer was built, but that the old one
+// was torn down — guards against silent leaks where a stale observer keeps
+// firing callbacks against a detached sentinel.
 class MockIntersectionObserver {
+  static instances: MockIntersectionObserver[] = [];
+  static reset(): void {
+    MockIntersectionObserver.instances.length = 0;
+  }
+
+  disconnected = false;
   callback: IntersectionObserverCallback;
   options?: IntersectionObserverInit;
   elements: Element[] = [];
@@ -10,6 +19,7 @@ class MockIntersectionObserver {
   constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
     this.callback = callback;
     this.options = options;
+    MockIntersectionObserver.instances.push(this);
   }
 
   observe(element: Element) {
@@ -21,6 +31,7 @@ class MockIntersectionObserver {
   }
 
   disconnect() {
+    this.disconnected = true;
     this.elements = [];
   }
 
@@ -50,6 +61,7 @@ describe("ObserverManager", () => {
 
   beforeEach(() => {
     document.body.innerHTML = "";
+    MockIntersectionObserver.reset();
     mockSend = jest.fn();
     mockConsole = {
       debug: jest.fn(),
@@ -170,6 +182,13 @@ describe("ObserverManager", () => {
         (call) => call[1] === "Observer set up successfully"
       );
       expect(setupCalls.length).toBe(2);
+
+      // The old observer MUST be disconnected before the new one is created —
+      // otherwise it keeps firing callbacks against the detached sentinel and
+      // leaks memory until GC collects a chain that the observer itself holds.
+      expect(MockIntersectionObserver.instances.length).toBe(2);
+      expect(MockIntersectionObserver.instances[0].disconnected).toBe(true);
+      expect(MockIntersectionObserver.instances[1].disconnected).toBe(false);
     });
   });
 
@@ -240,8 +259,13 @@ describe("ObserverManager", () => {
       manager.setupInfiniteScrollObserver();
       manager.setupInfiniteScrollMutationObserver();
 
-      // Should not throw
       expect(() => manager.teardown()).not.toThrow();
+
+      // IntersectionObserver instance created by setupInfiniteScrollObserver
+      // must be disconnected — verifies teardown actually cleans up, not just
+      // that it doesn't throw.
+      expect(MockIntersectionObserver.instances.length).toBe(1);
+      expect(MockIntersectionObserver.instances[0].disconnected).toBe(true);
     });
 
     it("is safe to call when no observers are set up", () => {

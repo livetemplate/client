@@ -7,6 +7,14 @@ const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 // Tracks elements whose entry animation has already played. Kept as a
 // module-level WeakSet (rather than stashed on the DOM node) so it's
 // type-safe and automatically cleaned up when elements are GC'd.
+//
+// Semantic: once per element lifetime. An element added to this set will
+// NEVER animate again, even if the same node is updated in place. This is
+// intentional — lvt-fx:animate is an entry animation, not a per-update
+// flash. Morphdom creates fresh DOM nodes for newly-inserted range items
+// (which are not in the set, so they animate) while reusing nodes for
+// in-place updates (already in the set, so they skip). Use cases that
+// want a visible pulse on every update should reach for lvt-fx:highlight.
 const animatedElements = new WeakSet<Element>();
 
 /**
