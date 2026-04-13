@@ -21,7 +21,13 @@ let animatedElements = new WeakSet<Element>();
  * Test-only: reset the module-level animatedElements WeakSet. Required
  * for tests that reuse the same DOM nodes across cases — without this,
  * an element animated in case 1 would be silently skipped in case 2.
- * Production code should never need to call this.
+ * Production code should never call this.
+ *
+ * The double-underscore prefix and the `@internal` tag signal that
+ * this is not part of the public API. TypeScript's API Extractor and
+ * similar tools exclude `@internal` exports from generated d.ts files.
+ *
+ * @internal
  */
 export function __resetAnimatedElementsForTesting(): void {
   animatedElements = new WeakSet<Element>();

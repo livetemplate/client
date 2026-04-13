@@ -218,13 +218,19 @@ export class WebSocketManager {
         }
       },
       onClose: () => {
-        // Only notify the client of disconnection if we'd actually
-        // connected. Close-before-open (failure path) must not masquerade
-        // as a disconnect, since no onConnected() ever fired.
+        // Branch on whether we'd actually connected:
+        //   - Success path (onOpen fired): notify client of disconnection
+        //     via onDisconnected(). Do NOT call settleOpen — it's already
+        //     resolved, and we'd needlessly construct an Error object
+        //     that shows up in any log/trace capturing rejection reasons.
+        //   - Failure path (close before open): reject the openPromise
+        //     with a descriptive Error. onDisconnected is NOT fired
+        //     because we were never "connected" from the client's POV.
         if (hasConnected) {
           this.config.onDisconnected();
+        } else {
+          settleOpen(new Error("WebSocket closed before it opened"));
         }
-        settleOpen(new Error("WebSocket closed before it opened"));
       },
       onReconnectAttempt: (attempt, delay) => {
         this.config.onReconnectAttempt?.(attempt, delay);
