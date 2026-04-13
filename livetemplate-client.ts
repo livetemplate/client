@@ -427,16 +427,37 @@ export class LiveTemplateClient {
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
-    this.observerManager.teardown();
-    this.changeAutoWirer.teardown();
-    this.formLifecycleManager.reset();
-    this.loadingIndicator.hide();
-    this.formDisabler.enable(this.wrapperElement);
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
     }
+    this.resetSessionState();
+  }
+
+  // resetSessionState clears all per-session manager state. Called by both
+  // disconnect() (with additional transport/event teardown) and reset().
+  // Essential for cross-handler SPA navigation: without treeRenderer.reset(),
+  // accumulated tree state from the old handler merges into the new one.
+  //
+  // Note on isInitialized: setting this to false is intentional and is
+  // a behavioral change from the prior reset() which left it sticky.
+  // The prior behavior was an inconsistency — "reset" that didn't
+  // actually put the client in a pre-init state. After reset, the next
+  // payload is treated as an initial render: loading indicator shows,
+  // forms are enabled, data-lvt-loading is removed. This matches the
+  // post-disconnect contract and the documented "useful for testing"
+  // intent — tests can observe the init transition a second time.
+  private resetSessionState(): void {
+    this.treeRenderer.reset();
+    this.focusManager.reset();
+    this.observerManager.teardown();
+    this.changeAutoWirer.teardown();
+    this.formLifecycleManager.reset();
+    this.loadingIndicator.hide();
+    this.formDisabler.enable(this.wrapperElement);
+    this.lvtId = null;
+    this.isInitialized = false;
   }
 
   /**
@@ -1027,17 +1048,24 @@ export class LiveTemplateClient {
   }
 
   /**
-   * Reset client state (useful for testing)
+   * Reset client state (useful for testing).
+   *
+   * Puts the client back into its pre-initialization state: tree state,
+   * focus state, observers, change auto-wirer, form lifecycle, loading
+   * indicator, form disabler, lvtId, AND isInitialized are all cleared.
+   *
+   * Behavioral note: `isInitialized` is set to false here. Prior to the
+   * introduction of `resetSessionState()`, `reset()` left this flag sticky,
+   * which was an inconsistency — a "reset" that didn't actually put the
+   * client in a pre-init state. After calling reset(), the next payload
+   * is treated as an initial render: the loading indicator will briefly
+   * appear, forms are re-enabled, and `data-lvt-loading` is cleared. If
+   * callers of reset() expected the prior sticky behavior, they should
+   * not rely on init-only side effects firing exactly once per client
+   * lifetime.
    */
   reset(): void {
-    this.treeRenderer.reset();
-    this.focusManager.reset();
-    this.observerManager.teardown();
-    this.changeAutoWirer.teardown();
-    this.formLifecycleManager.reset();
-    this.loadingIndicator.hide();
-    this.formDisabler.enable(this.wrapperElement);
-    this.lvtId = null;
+    this.resetSessionState();
   }
 
   /**

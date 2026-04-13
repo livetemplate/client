@@ -158,6 +158,46 @@ export class WebSocketManager {
       return { usingWebSocket: false, initialState };
     }
 
+    // Await onopen before resolving, so downstream setup runs with a ready
+    // transport. Without this, observer callbacks during CONNECTING fall
+    // back to HTTP, which hits a separate server state path than the WS
+    // event loop — producing stale/desynced responses.
+    //
+    // Three settle paths: onOpen (success), onClose/onError (immediate
+    // failure), and a 10s timeout (silent network drop — TCP may never
+    // surface a close/error event through a misbehaving middlebox).
+    let resolveOpen!: (value: WebSocketConnectResult) => void;
+    let rejectOpen!: (reason?: unknown) => void;
+    const openPromise = new Promise<WebSocketConnectResult>((resolve, reject) => {
+      resolveOpen = resolve;
+      rejectOpen = reject;
+    });
+    let settled = false;
+    // Tracks whether onOpen ever fired. Gates onDisconnected so we don't
+    // fire a spurious "disconnected" notification on the HTTP fallback
+    // path where the socket closed before it ever opened (either
+    // naturally via onClose/onError, or because the catch block
+    // explicitly disconnects the transport after the 10s timeout).
+    let hasConnected = false;
+    // Declared before settleOpen to avoid a temporal dead zone on the
+    // closure reference — settleOpen is called from onOpen/onClose/onError
+    // (all async, so safe today), but declaring the binding up front lets
+    // any future synchronous call path still work without a ReferenceError.
+    let openTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const settleOpen = (err?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (openTimeoutId !== null) {
+        clearTimeout(openTimeoutId);
+        openTimeoutId = null;
+      }
+      if (err) rejectOpen(err);
+      else resolveOpen({ usingWebSocket: true });
+    };
+    openTimeoutId = setTimeout(() => {
+      settleOpen(new Error("WebSocket open timed out after 10s"));
+    }, 10000);
+
     this.transport = new WebSocketTransport({
       url: this.getWebSocketUrl(),
       autoReconnect: this.config.options.autoReconnect,
@@ -165,7 +205,9 @@ export class WebSocketManager {
       maxReconnectDelay: 16000, // 16 seconds maximum
       maxReconnectAttempts: 10, // 10 attempts before giving up
       onOpen: () => {
+        hasConnected = true;
         this.config.onConnected();
+        settleOpen();
       },
       onMessage: (event) => {
         try {
@@ -176,7 +218,19 @@ export class WebSocketManager {
         }
       },
       onClose: () => {
-        this.config.onDisconnected();
+        // Branch on whether we'd actually connected:
+        //   - Success path (onOpen fired): notify client of disconnection
+        //     via onDisconnected(). Do NOT call settleOpen — it's already
+        //     resolved, and we'd needlessly construct an Error object
+        //     that shows up in any log/trace capturing rejection reasons.
+        //   - Failure path (close before open): reject the openPromise
+        //     with a descriptive Error. onDisconnected is NOT fired
+        //     because we were never "connected" from the client's POV.
+        if (hasConnected) {
+          this.config.onDisconnected();
+        } else {
+          settleOpen(new Error("WebSocket closed before it opened"));
+        }
       },
       onReconnectAttempt: (attempt, delay) => {
         this.config.onReconnectAttempt?.(attempt, delay);
@@ -186,11 +240,32 @@ export class WebSocketManager {
       },
       onError: (event) => {
         this.config.onError?.(event);
+        // If we're already connected, onDisconnected is fired via the
+        // subsequent onClose — per WHATWG WebSocket spec, onclose always
+        // fires after onerror when the connection is lost post-open.
+        // We rely on that invariant here rather than double-firing
+        // onDisconnected (which would require tracking a separate
+        // "already disconnected" flag).
+        //
+        // If we're NOT yet connected, this rejects openPromise so the
+        // catch block falls back to HTTP. settleOpen is a no-op post-open.
+        settleOpen(new Error("WebSocket errored before it opened"));
       },
     });
 
     this.transport.connect();
-    return { usingWebSocket: true };
+
+    try {
+      return await openPromise;
+    } catch (err) {
+      this.config.logger.warn("WebSocket open failed, falling back to HTTP", err);
+      // Stop the transport so a late onOpen or auto-reconnect doesn't fire
+      // against a client that has already committed to HTTP mode.
+      this.transport?.disconnect();
+      this.transport = null;
+      const initialState = await fetchInitialState(liveUrl, this.config.logger);
+      return { usingWebSocket: false, initialState };
+    }
   }
 
   disconnect(): void {

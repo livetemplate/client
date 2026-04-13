@@ -4,6 +4,38 @@ import { isDOMEventTrigger, SYNTHETIC_TRIGGERS } from "./reactive-attributes";
 
 const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 
+// Tracks elements whose entry animation has already played. Kept as a
+// module-level WeakSet (rather than stashed on the DOM node) so it's
+// type-safe and automatically cleaned up when elements are GC'd.
+//
+// Semantic: once per element lifetime. An element added to this set will
+// NEVER animate again, even if the same node is updated in place. This is
+// intentional — lvt-fx:animate is an entry animation, not a per-update
+// flash. Morphdom creates fresh DOM nodes for newly-inserted range items
+// (which are not in the set, so they animate) while reusing nodes for
+// in-place updates (already in the set, so they skip). Use cases that
+// want a visible pulse on every update should reach for lvt-fx:highlight.
+let animatedElements = new WeakSet<Element>();
+
+/**
+ * Test-only: reset the module-level animatedElements WeakSet. Required
+ * for tests that reuse the same DOM nodes across cases — without this,
+ * an element animated in case 1 would be silently skipped in case 2.
+ * Production code should never call this.
+ *
+ * The double-underscore prefix and the `@internal` tag signal that this
+ * is not part of the public API. The `@internal` tag is only enforced
+ * when TypeScript's API Extractor (or equivalent) is configured to
+ * strip it from generated `.d.ts` files — this project does not
+ * currently run API Extractor, so the tag is aspirational enforcement
+ * backed by the `__` naming convention and this docstring.
+ *
+ * @internal
+ */
+export function __resetAnimatedElementsForTesting(): void {
+  animatedElements = new WeakSet<Element>();
+}
+
 /**
  * Parse a lvt-fx:{effect}[:on:[{action}:]{trigger}] attribute name.
  * Returns the trigger type or null for implicit (no :on:).
@@ -158,27 +190,45 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       break;
     }
     case "animate": {
+      // "Entry animation" semantics: play once per element lifetime. Every
+      // tree update re-walks lvt-fx:* attributes, so without this guard an
+      // unchanged row re-fires the animation on every patch. Morphdom
+      // creates fresh DOM nodes for new rows (not in the WeakSet → animate);
+      // reused nodes are already in the set and skip.
+      if (animatedElements.has(htmlElement)) break;
+      animatedElements.add(htmlElement);
+
       const duration = parseInt(
-        computed.getPropertyValue("--lvt-animate-duration").trim() || "300", 10
+        computed.getPropertyValue("--lvt-animate-duration").trim() || "500", 10
       );
       const animation = config || "fade";
-      htmlElement.style.setProperty("--lvt-animate-duration", `${duration}ms`);
 
+      let animationValue = "";
       switch (animation) {
         case "fade":
-          htmlElement.style.animation = `lvt-fade-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-fade-in ${duration}ms ease-out`;
           break;
         case "slide":
-          htmlElement.style.animation = `lvt-slide-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-slide-in ${duration}ms ease-out`;
           break;
         case "scale":
-          htmlElement.style.animation = `lvt-scale-in var(--lvt-animate-duration) ease-out`;
+          animationValue = `lvt-scale-in ${duration}ms ease-out`;
           break;
         default:
           console.warn(`Unknown lvt-fx:animate mode: ${animation}`);
       }
+      if (!animationValue) break;
+      htmlElement.style.animation = animationValue;
       htmlElement.addEventListener("animationend", () => {
-        htmlElement.style.animation = "";
+        // Only remove the animation we set. Do NOT remove
+        // --lvt-animate-duration: users may have set it inline themselves
+        // (e.g. style="--lvt-animate-duration: 800") to override duration,
+        // and removing would wipe their intent. Clean up the style
+        // attribute entirely only if nothing is left on it.
+        htmlElement.style.removeProperty("animation");
+        if (htmlElement.style.length === 0) {
+          htmlElement.removeAttribute("style");
+        }
       }, { once: true });
       break;
     }

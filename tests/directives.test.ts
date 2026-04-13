@@ -236,7 +236,12 @@ describe("handleAnimateDirectives", () => {
 
     handleAnimateDirectives(document.body);
 
-    expect(target.style.getPropertyValue("--lvt-animate-duration")).toBe("1000ms");
+    // The directive inlines the duration directly into the animation
+    // shorthand rather than writing back a sanitized custom property.
+    // This prevents a phantom --lvt-animate-duration inline property
+    // from lingering after animationend cleanup.
+    expect(target.style.animation).toContain("1000ms");
+    expect(target.style.animation).toContain("lvt-fade-in");
   });
 
   it("clears animation on animationend", () => {
@@ -250,6 +255,27 @@ describe("handleAnimateDirectives", () => {
     target.dispatchEvent(new Event("animationend"));
 
     expect(target.style.animation).toBe("");
+  });
+
+  it("removes style attribute entirely on animationend when no other styles remain", () => {
+    // Build the element via DOM APIs (innerHTML would trigger our project's
+    // XSS reminder hook in tests). Attribute setup is equivalent.
+    document.body.replaceChildren();
+    const target = document.createElement("div");
+    target.id = "target";
+    target.setAttribute("lvt-fx:animate", "fade");
+    document.body.appendChild(target);
+
+    handleAnimateDirectives(document.body);
+    // Before animationend: style="animation: lvt-fade-in ...;"
+    expect(target.hasAttribute("style")).toBe(true);
+
+    target.dispatchEvent(new Event("animationend"));
+
+    // After animationend: style attribute fully removed so downstream
+    // inline-style checks see a clean element. This is the fix that lets
+    // patterns-app UI standards validation succeed on animated rows.
+    expect(target.hasAttribute("style")).toBe(false);
   });
 
   it("injects CSS keyframes only once", () => {

@@ -1,5 +1,6 @@
 import {
   WebSocketTransport,
+  WebSocketManager,
   checkWebSocketAvailability,
   fetchInitialState,
 } from "../transport/websocket";
@@ -437,6 +438,148 @@ describe("checkWebSocketAvailability", () => {
 
     expect(result).toBe(true);
     expect(mockConsole.warn).toHaveBeenCalled();
+  });
+});
+
+describe("WebSocketManager connect", () => {
+  let mockSocket: MockWebSocket | null = null;
+  let mockFetch: jest.Mock;
+  let mockLogger: ReturnType<typeof createLogger>;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockSocket = null;
+    (global as any).WebSocket = jest.fn().mockImplementation((url: string) => {
+      mockSocket = new MockWebSocket(url);
+      return mockSocket;
+    });
+    // checkWebSocketAvailability HEAD request succeeds with WS enabled.
+    mockFetch = jest.fn().mockResolvedValue({
+      headers: {
+        get: (name: string) =>
+          name === "X-LiveTemplate-WebSocket" ? "enabled" : null,
+      },
+    });
+    (global as any).fetch = mockFetch;
+    mockLogger = createLogger({
+      level: "warn",
+      sink: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() } as unknown as Console,
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  const makeManager = (handlers: {
+    onConnected?: jest.Mock;
+    onDisconnected?: jest.Mock;
+    onMessage?: jest.Mock;
+    onError?: jest.Mock;
+  }) =>
+    new WebSocketManager({
+      options: { liveUrl: "/live", wsUrl: "ws://localhost:8080" } as any,
+      onConnected: handlers.onConnected || jest.fn(),
+      onDisconnected: handlers.onDisconnected || jest.fn(),
+      onMessage: handlers.onMessage || jest.fn(),
+      onError: handlers.onError,
+      logger: mockLogger,
+    });
+
+  it("calls onConnected and NOT onDisconnected on successful open", async () => {
+    const onConnected = jest.fn();
+    const onDisconnected = jest.fn();
+    const manager = makeManager({ onConnected, onDisconnected });
+
+    const connectPromise = manager.connect();
+    // Flush the HEAD-check microtask so checkWebSocketAvailability resolves
+    // and WebSocketTransport.connect() runs.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    mockSocket!.simulateOpen();
+    const result = await connectPromise;
+
+    expect(result.usingWebSocket).toBe(true);
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(onDisconnected).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call onDisconnected when socket closes before opening (HTTP fallback)", async () => {
+    const onConnected = jest.fn();
+    const onDisconnected = jest.fn();
+    // Initial HTTP state fetch (after fallback) returns null.
+    const mockInitial = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tree: null }),
+    });
+    // Chain: first call is HEAD check (WS enabled), second is GET initial state.
+    mockFetch
+      .mockReset()
+      .mockResolvedValueOnce({
+        headers: {
+          get: (name: string) =>
+            name === "X-LiveTemplate-WebSocket" ? "enabled" : null,
+        },
+      })
+      .mockImplementationOnce(mockInitial);
+
+    const manager = makeManager({ onConnected, onDisconnected });
+
+    const connectPromise = manager.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Socket closes BEFORE onOpen fires — spurious-disconnected scenario.
+    mockSocket!.simulateClose();
+    // Let the rejection propagate, the catch block run, and fetchInitialState resolve.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    const result = await connectPromise;
+
+    expect(result.usingWebSocket).toBe(false);
+    expect(onConnected).not.toHaveBeenCalled();
+    // Critical: we never connected, so we must NOT signal "disconnected"
+    // to downstream — that would falsely flip UI state.
+    expect(onDisconnected).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call onDisconnected on the 10s open-timeout path", async () => {
+    const onConnected = jest.fn();
+    const onDisconnected = jest.fn();
+    mockFetch
+      .mockReset()
+      .mockResolvedValueOnce({
+        headers: {
+          get: (name: string) =>
+            name === "X-LiveTemplate-WebSocket" ? "enabled" : null,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tree: null }),
+      });
+
+    const manager = makeManager({ onConnected, onDisconnected });
+
+    const connectPromise = manager.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // No onOpen/onClose/onError — simulate a silent middlebox drop.
+    jest.advanceTimersByTime(10001);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    const result = await connectPromise;
+
+    expect(result.usingWebSocket).toBe(false);
+    expect(onConnected).not.toHaveBeenCalled();
+    // Even though the catch block calls transport.disconnect() (which triggers
+    // onClose), the hasConnected gate prevents a spurious onDisconnected.
+    expect(onDisconnected).not.toHaveBeenCalled();
   });
 });
 

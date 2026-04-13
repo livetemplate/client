@@ -4,10 +4,15 @@
  * These custom properties configure lvt-fx:* directives.
  * Override them in your own stylesheets to customize behavior.
  *
+ * Duration values should include the "ms" unit so the variable remains
+ * a valid CSS time value and can be used directly in animation/transition
+ * properties. The directives parse these with parseInt which strips the
+ * unit, so both forms work, but "500ms" is the recommended form.
+ *
  * Usage:
- *   [lvt-fx\:scroll] { --lvt-scroll-behavior: smooth; }
- *   [lvt-fx\:highlight] { --lvt-highlight-color: yellow; --lvt-highlight-duration: 1000; }
- *   [lvt-fx\:animate] { --lvt-animate-duration: 500; }
+ *   [lvt-fx\:scroll]    { --lvt-scroll-behavior: smooth; }
+ *   [lvt-fx\:highlight] { --lvt-highlight-color: yellow; --lvt-highlight-duration: 1000ms; }
+ *   [lvt-fx\:animate]   { --lvt-animate-duration: 500ms; }
  */
 
 :root {
@@ -16,11 +21,23 @@
   --lvt-scroll-threshold: 100;
 
   /* Highlight directive defaults */
-  --lvt-highlight-duration: 500;
+  --lvt-highlight-duration: 500ms;
   --lvt-highlight-color: #ffc107;
 
-  /* Animate directive defaults */
-  --lvt-animate-duration: 300;
+  /* Animate directive defaults — includes unit so the var can be used
+     directly in CSS animation/transition properties. The TS directive
+     reads it with parseInt() which strips the unit, so the shorthand
+     construction still works. */
+  --lvt-animate-duration: 500ms;
+}
+
+/* Flash messages from {{.lvt.FlashTag "key"}} render as <output data-flash>.
+   Pico defaults <output> to inline with no spacing; give it breathing room
+   from preceding form controls. */
+output[data-flash] {
+  display: block;
+  margin-top: 1rem;
+  padding: 0.5rem 0;
 }
 
 /* === Layout === */
