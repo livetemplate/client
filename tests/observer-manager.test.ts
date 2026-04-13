@@ -60,6 +60,7 @@ describe("ObserverManager", () => {
   let mockConsole: { debug: jest.Mock; info: jest.Mock; warn: jest.Mock; error: jest.Mock };
 
   beforeEach(() => {
+    jest.useFakeTimers();
     document.body.innerHTML = "";
     MockIntersectionObserver.reset();
     mockSend = jest.fn();
@@ -76,9 +77,13 @@ describe("ObserverManager", () => {
   });
 
   afterEach(() => {
+    // Teardown BEFORE swapping back to real timers so any pending fake
+    // setTimeout IDs inside ObserverManager are cleared against the fake
+    // timer backend they were scheduled on.
     if (manager) {
       manager.teardown();
     }
+    jest.useRealTimers();
   });
 
   describe("setupInfiniteScrollObserver", () => {
@@ -148,6 +153,85 @@ describe("ObserverManager", () => {
         (call) => call[1] === "Observer set up successfully"
       );
       expect(setupCalls.length).toBe(1);
+    });
+
+    it("releases the load_more throttle if the server never responds", () => {
+      // Build fresh wrapper + sentinel via DOM APIs to avoid the XSS-reminder
+      // hook in tests that scans innerHTML assignments.
+      document.body.replaceChildren();
+      const wrapper = document.createElement("div");
+      wrapper.id = "wrapper";
+      const sentinel = document.createElement("div");
+      sentinel.id = "scroll-sentinel";
+      wrapper.appendChild(sentinel);
+      document.body.appendChild(wrapper);
+
+      mockContext = {
+        getWrapperElement: () => document.getElementById("wrapper"),
+        send: mockSend,
+      };
+      manager = new ObserverManager(mockContext, mockLogger);
+      manager.setupInfiniteScrollObserver();
+
+      // First intersection → send load_more, arm the 30s safety timeout.
+      MockIntersectionObserver.instances[0].triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockSend).toHaveBeenCalledWith({ action: "load_more" });
+
+      // While "pending" is true, subsequent intersections must be ignored.
+      MockIntersectionObserver.instances[0].triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+
+      // Server never responds. Advance past the 30s safety net.
+      jest.advanceTimersByTime(30001);
+
+      // A warning must be logged and a fresh observer allocated so the
+      // next intersection can re-fire. MockIntersectionObserver.instances
+      // should now have a second entry.
+      expect(mockConsole.warn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringMatching(/load_more response not received/)
+      );
+      expect(MockIntersectionObserver.instances.length).toBeGreaterThanOrEqual(2);
+
+      // The next intersection re-arms the throttle and sends again.
+      const latest = MockIntersectionObserver.instances[MockIntersectionObserver.instances.length - 1];
+      latest.triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(2);
+    });
+
+    it("clears the load_more safety timeout when lvt:updated fires", () => {
+      document.body.replaceChildren();
+      const wrapper = document.createElement("div");
+      wrapper.id = "wrapper";
+      const sentinel = document.createElement("div");
+      sentinel.id = "scroll-sentinel";
+      wrapper.appendChild(sentinel);
+      document.body.appendChild(wrapper);
+
+      mockContext = {
+        getWrapperElement: () => document.getElementById("wrapper"),
+        send: mockSend,
+      };
+      manager = new ObserverManager(mockContext, mockLogger);
+      manager.setupInfiniteScrollObserver();
+
+      MockIntersectionObserver.instances[0].triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+
+      // Simulate the server's lvt:updated event for load_more.
+      wrapper.dispatchEvent(
+        new CustomEvent("lvt:updated", { detail: { action: "load_more" } })
+      );
+
+      // Advance well past the 30s safety window — no warning should fire
+      // because the timeout was cleared on the legitimate response.
+      jest.advanceTimersByTime(60000);
+
+      expect(mockConsole.warn).not.toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringMatching(/load_more response not received/)
+      );
     });
 
     it("rebuilds the observer when the sentinel node identity changes", () => {

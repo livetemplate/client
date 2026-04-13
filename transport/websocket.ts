@@ -173,6 +173,12 @@ export class WebSocketManager {
       rejectOpen = reject;
     });
     let settled = false;
+    // Tracks whether onOpen ever fired. Gates onDisconnected so we don't
+    // fire a spurious "disconnected" notification on the HTTP fallback
+    // path where the socket closed before it ever opened (either
+    // naturally via onClose/onError, or because the catch block
+    // explicitly disconnects the transport after the 10s timeout).
+    let hasConnected = false;
     const settleOpen = (err?: Error): void => {
       if (settled) return;
       settled = true;
@@ -191,6 +197,7 @@ export class WebSocketManager {
       maxReconnectDelay: 16000, // 16 seconds maximum
       maxReconnectAttempts: 10, // 10 attempts before giving up
       onOpen: () => {
+        hasConnected = true;
         this.config.onConnected();
         settleOpen();
       },
@@ -203,7 +210,12 @@ export class WebSocketManager {
         }
       },
       onClose: () => {
-        this.config.onDisconnected();
+        // Only notify the client of disconnection if we'd actually
+        // connected. Close-before-open (failure path) must not masquerade
+        // as a disconnect, since no onConnected() ever fired.
+        if (hasConnected) {
+          this.config.onDisconnected();
+        }
         settleOpen(new Error("WebSocket closed before it opened"));
       },
       onReconnectAttempt: (attempt, delay) => {

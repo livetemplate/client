@@ -439,6 +439,15 @@ export class LiveTemplateClient {
   // disconnect() (with additional transport/event teardown) and reset().
   // Essential for cross-handler SPA navigation: without treeRenderer.reset(),
   // accumulated tree state from the old handler merges into the new one.
+  //
+  // Note on isInitialized: setting this to false is intentional and is
+  // a behavioral change from the prior reset() which left it sticky.
+  // The prior behavior was an inconsistency — "reset" that didn't
+  // actually put the client in a pre-init state. After reset, the next
+  // payload is treated as an initial render: loading indicator shows,
+  // forms are enabled, data-lvt-loading is removed. This matches the
+  // post-disconnect contract and the documented "useful for testing"
+  // intent — tests can observe the init transition a second time.
   private resetSessionState(): void {
     this.treeRenderer.reset();
     this.focusManager.reset();
