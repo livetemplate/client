@@ -179,14 +179,22 @@ export class WebSocketManager {
     // naturally via onClose/onError, or because the catch block
     // explicitly disconnects the transport after the 10s timeout).
     let hasConnected = false;
+    // Declared before settleOpen to avoid a temporal dead zone on the
+    // closure reference — settleOpen is called from onOpen/onClose/onError
+    // (all async, so safe today), but declaring the binding up front lets
+    // any future synchronous call path still work without a ReferenceError.
+    let openTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const settleOpen = (err?: Error): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(openTimeoutId);
+      if (openTimeoutId !== null) {
+        clearTimeout(openTimeoutId);
+        openTimeoutId = null;
+      }
       if (err) rejectOpen(err);
       else resolveOpen({ usingWebSocket: true });
     };
-    const openTimeoutId = setTimeout(() => {
+    openTimeoutId = setTimeout(() => {
       settleOpen(new Error("WebSocket open timed out after 10s"));
     }, 10000);
 
