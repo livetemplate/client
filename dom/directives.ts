@@ -4,6 +4,11 @@ import { isDOMEventTrigger, SYNTHETIC_TRIGGERS } from "./reactive-attributes";
 
 const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 
+// Tracks elements whose entry animation has already played. Kept as a
+// module-level WeakSet (rather than stashed on the DOM node) so it's
+// type-safe and automatically cleaned up when elements are GC'd.
+const animatedElements = new WeakSet<Element>();
+
 /**
  * Parse a lvt-fx:{effect}[:on:[{action}:]{trigger}] attribute name.
  * Returns the trigger type or null for implicit (no :on:).
@@ -161,10 +166,10 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       // "Entry animation" semantics: play once per element lifetime. Every
       // tree update re-walks lvt-fx:* attributes, so without this guard an
       // unchanged row re-fires the animation on every patch. Morphdom
-      // creates fresh DOM nodes for new rows (flag starts undefined and
-      // the animation fires once); reused nodes retain the flag and skip.
-      if ((htmlElement as any).__lvtAnimated) break;
-      (htmlElement as any).__lvtAnimated = true;
+      // creates fresh DOM nodes for new rows (not in the WeakSet → animate);
+      // reused nodes are already in the set and skip.
+      if (animatedElements.has(htmlElement)) break;
+      animatedElements.add(htmlElement);
 
       const duration = parseInt(
         computed.getPropertyValue("--lvt-animate-duration").trim() || "500", 10
@@ -188,9 +193,13 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
       if (!animationValue) break;
       htmlElement.style.animation = animationValue;
       htmlElement.addEventListener("animationend", () => {
-        htmlElement.style.animation = "";
-        htmlElement.style.removeProperty("--lvt-animate-duration");
-        if (htmlElement.getAttribute("style") === "") {
+        // Only remove the animation we set. Do NOT remove
+        // --lvt-animate-duration: users may have set it inline themselves
+        // (e.g. style="--lvt-animate-duration: 800") to override duration,
+        // and removing would wipe their intent. Clean up the style
+        // attribute entirely only if nothing is left on it.
+        htmlElement.style.removeProperty("animation");
+        if (htmlElement.style.length === 0) {
           htmlElement.removeAttribute("style");
         }
       }, { once: true });

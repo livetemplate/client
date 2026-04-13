@@ -162,13 +162,27 @@ export class WebSocketManager {
     // transport. Without this, observer callbacks during CONNECTING fall
     // back to HTTP, which hits a separate server state path than the WS
     // event loop — producing stale/desynced responses.
-    let resolveOpen: (value: WebSocketConnectResult) => void;
-    let rejectOpen: (reason?: unknown) => void;
+    //
+    // Three settle paths: onOpen (success), onClose/onError (immediate
+    // failure), and a 10s timeout (silent network drop — TCP may never
+    // surface a close/error event through a misbehaving middlebox).
+    let resolveOpen!: (value: WebSocketConnectResult) => void;
+    let rejectOpen!: (reason?: unknown) => void;
     const openPromise = new Promise<WebSocketConnectResult>((resolve, reject) => {
       resolveOpen = resolve;
       rejectOpen = reject;
     });
     let settled = false;
+    const settleOpen = (err?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(openTimeoutId);
+      if (err) rejectOpen(err);
+      else resolveOpen({ usingWebSocket: true });
+    };
+    const openTimeoutId = setTimeout(() => {
+      settleOpen(new Error("WebSocket open timed out after 10s"));
+    }, 10000);
 
     this.transport = new WebSocketTransport({
       url: this.getWebSocketUrl(),
@@ -178,10 +192,7 @@ export class WebSocketManager {
       maxReconnectAttempts: 10, // 10 attempts before giving up
       onOpen: () => {
         this.config.onConnected();
-        if (!settled) {
-          settled = true;
-          resolveOpen({ usingWebSocket: true });
-        }
+        settleOpen();
       },
       onMessage: (event) => {
         try {
@@ -193,10 +204,7 @@ export class WebSocketManager {
       },
       onClose: () => {
         this.config.onDisconnected();
-        if (!settled) {
-          settled = true;
-          rejectOpen(new Error("WebSocket closed before it opened"));
-        }
+        settleOpen(new Error("WebSocket closed before it opened"));
       },
       onReconnectAttempt: (attempt, delay) => {
         this.config.onReconnectAttempt?.(attempt, delay);
@@ -206,10 +214,7 @@ export class WebSocketManager {
       },
       onError: (event) => {
         this.config.onError?.(event);
-        if (!settled) {
-          settled = true;
-          rejectOpen(new Error("WebSocket errored before it opened"));
-        }
+        settleOpen(new Error("WebSocket errored before it opened"));
       },
     });
 
@@ -219,6 +224,10 @@ export class WebSocketManager {
       return await openPromise;
     } catch (err) {
       this.config.logger.warn("WebSocket open failed, falling back to HTTP", err);
+      // Stop the transport so a late onOpen or auto-reconnect doesn't fire
+      // against a client that has already committed to HTTP mode.
+      this.transport?.disconnect();
+      this.transport = null;
       const initialState = await fetchInitialState(liveUrl, this.config.logger);
       return { usingWebSocket: false, initialState };
     }

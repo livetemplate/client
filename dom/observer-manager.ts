@@ -12,10 +12,18 @@ export class ObserverManager {
   private infiniteScrollObserver: IntersectionObserver | null = null;
   private mutationObserver: MutationObserver | null = null;
   private observedSentinel: Element | null = null;
+  private updatedListener: ((e: Event) => void) | null = null;
+  private updatedListenerWrapper: Element | null = null;
 
   // Throttles infinite-scroll dispatches: one in-flight load_more at a time.
   // Without this, rapid observer re-fires stack concurrent actions and the
   // server's per-response diffs compose into duplicate rows on the client.
+  //
+  // Cleared precisely when the server confirms the load_more response has
+  // been applied (via the `lvt:updated` event with `action === "load_more"`),
+  // NOT on every DOM mutation — an unrelated mutation (e.g. a flash message
+  // toggling, a highlight flashing) between the dispatch and the response
+  // would otherwise clear the flag early and allow a concurrent send.
   private loadMorePending = false;
 
   constructor(
@@ -26,6 +34,12 @@ export class ObserverManager {
   setupInfiniteScrollObserver(): void {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
+
+    // Attach the lvt:updated listener once per wrapper. The event fires
+    // after every tree update carrying the dispatched action's name in
+    // its detail; we use action === "load_more" as the precise signal
+    // that the throttle can be lifted.
+    this.ensureUpdatedListener(wrapperElement);
 
     const sentinel = document.getElementById("scroll-sentinel");
     if (!sentinel) {
@@ -69,6 +83,28 @@ export class ObserverManager {
     this.logger.debug("Observer set up successfully");
   }
 
+  private ensureUpdatedListener(wrapper: Element): void {
+    if (this.updatedListener && this.updatedListenerWrapper === wrapper) return;
+    // Detach any listener from the previous wrapper (e.g. after cross-
+    // handler navigation swaps the wrapper element).
+    if (this.updatedListener && this.updatedListenerWrapper) {
+      this.updatedListenerWrapper.removeEventListener("lvt:updated", this.updatedListener);
+    }
+    this.updatedListener = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.action !== "load_more") return;
+      this.loadMorePending = false;
+      // Force a fresh IntersectionObserver so its immediate callback fires
+      // with the post-mutation intersection state — lets the auto-advance
+      // cascade continue if the sentinel is still visible after the new
+      // rows are appended.
+      this.observedSentinel = null;
+      this.setupInfiniteScrollObserver();
+    };
+    wrapper.addEventListener("lvt:updated", this.updatedListener);
+    this.updatedListenerWrapper = wrapper;
+  }
+
   setupInfiniteScrollMutationObserver(): void {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
@@ -77,8 +113,11 @@ export class ObserverManager {
       this.mutationObserver.disconnect();
     }
 
+    // The mutation observer catches structural changes that replace the
+    // sentinel DOM node (e.g. morphdom recreating it on a page-level
+    // restructure). setupInfiniteScrollObserver's identity check makes
+    // the common case — same sentinel, new mutation — a cheap no-op.
     this.mutationObserver = new MutationObserver(() => {
-      this.loadMorePending = false;
       this.setupInfiniteScrollObserver();
     });
 
@@ -99,6 +138,11 @@ export class ObserverManager {
       this.mutationObserver.disconnect();
       this.mutationObserver = null;
     }
+    if (this.updatedListener && this.updatedListenerWrapper) {
+      this.updatedListenerWrapper.removeEventListener("lvt:updated", this.updatedListener);
+    }
+    this.updatedListener = null;
+    this.updatedListenerWrapper = null;
     this.observedSentinel = null;
     this.loadMorePending = false;
   }
