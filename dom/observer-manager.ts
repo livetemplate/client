@@ -51,12 +51,19 @@ export class ObserverManager {
 
     const sentinel = document.getElementById("scroll-sentinel");
     if (!sentinel) {
-      // Sentinel removed (HasMore flipped false): release the old observer.
+      // Sentinel removed (HasMore flipped false): release the old observer
+      // AND clear any in-flight load_more throttle. Without releaseLoadMore
+      // here, a HasMore flip-flop (server removes sentinel, then restores
+      // it moments later without dispatching an lvt:updated action=load_more
+      // in between) would leave loadMorePending=true with a 30s safety
+      // timer armed — silently dropping the next intersection until the
+      // timer fires.
       if (this.infiniteScrollObserver) {
         this.infiniteScrollObserver.disconnect();
         this.infiniteScrollObserver = null;
         this.observedSentinel = null;
       }
+      this.releaseLoadMore();
       return;
     }
 

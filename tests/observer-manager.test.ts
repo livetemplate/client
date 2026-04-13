@@ -200,6 +200,51 @@ describe("ObserverManager", () => {
       expect(mockSend).toHaveBeenCalledTimes(2);
     });
 
+    it("clears the load_more throttle when the sentinel disappears", () => {
+      // Regression test for HasMore flip-flop scenario:
+      //   1. Sentinel visible → load_more sent, throttle armed.
+      //   2. Server flips HasMore to false → sentinel removed from DOM.
+      //   3. Server flips HasMore back to true → sentinel reappears.
+      //   4. Next intersection must re-trigger load_more (not be silently
+      //      dropped waiting on the 30s safety timer).
+      document.body.replaceChildren();
+      const wrapper = document.createElement("div");
+      wrapper.id = "wrapper";
+      const sentinel1 = document.createElement("div");
+      sentinel1.id = "scroll-sentinel";
+      wrapper.appendChild(sentinel1);
+      document.body.appendChild(wrapper);
+
+      mockContext = {
+        getWrapperElement: () => document.getElementById("wrapper"),
+        send: mockSend,
+      };
+      manager = new ObserverManager(mockContext, mockLogger);
+      manager.setupInfiniteScrollObserver();
+
+      // Step 1: arm the throttle by triggering intersection.
+      MockIntersectionObserver.instances[0].triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+
+      // Step 2: sentinel removed (HasMore flipped false).
+      sentinel1.remove();
+      manager.setupInfiniteScrollObserver();
+      // No observer should be active at this point.
+      expect(MockIntersectionObserver.instances[0].disconnected).toBe(true);
+
+      // Step 3: sentinel reappears.
+      const sentinel2 = document.createElement("div");
+      sentinel2.id = "scroll-sentinel";
+      wrapper.appendChild(sentinel2);
+      manager.setupInfiniteScrollObserver();
+
+      // Step 4: next intersection must fire — throttle must be clear.
+      const latest =
+        MockIntersectionObserver.instances[MockIntersectionObserver.instances.length - 1];
+      latest.triggerIntersection(true);
+      expect(mockSend).toHaveBeenCalledTimes(2);
+    });
+
     it("clears the load_more safety timeout when lvt:updated fires", () => {
       document.body.replaceChildren();
       const wrapper = document.createElement("div");

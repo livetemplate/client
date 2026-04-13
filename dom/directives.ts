@@ -15,7 +15,17 @@ const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 // (which are not in the set, so they animate) while reusing nodes for
 // in-place updates (already in the set, so they skip). Use cases that
 // want a visible pulse on every update should reach for lvt-fx:highlight.
-const animatedElements = new WeakSet<Element>();
+let animatedElements = new WeakSet<Element>();
+
+/**
+ * Test-only: reset the module-level animatedElements WeakSet. Required
+ * for tests that reuse the same DOM nodes across cases — without this,
+ * an element animated in case 1 would be silently skipped in case 2.
+ * Production code should never need to call this.
+ */
+export function __resetAnimatedElementsForTesting(): void {
+  animatedElements = new WeakSet<Element>();
+}
 
 /**
  * Parse a lvt-fx:{effect}[:on:[{action}:]{trigger}] attribute name.

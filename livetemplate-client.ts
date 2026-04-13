@@ -1048,7 +1048,21 @@ export class LiveTemplateClient {
   }
 
   /**
-   * Reset client state (useful for testing)
+   * Reset client state (useful for testing).
+   *
+   * Puts the client back into its pre-initialization state: tree state,
+   * focus state, observers, change auto-wirer, form lifecycle, loading
+   * indicator, form disabler, lvtId, AND isInitialized are all cleared.
+   *
+   * Behavioral note: `isInitialized` is set to false here. Prior to the
+   * introduction of `resetSessionState()`, `reset()` left this flag sticky,
+   * which was an inconsistency — a "reset" that didn't actually put the
+   * client in a pre-init state. After calling reset(), the next payload
+   * is treated as an initial render: the loading indicator will briefly
+   * appear, forms are re-enabled, and `data-lvt-loading` is cleared. If
+   * callers of reset() expected the prior sticky behavior, they should
+   * not rely on init-only side effects firing exactly once per client
+   * lifetime.
    */
   reset(): void {
     this.resetSessionState();
