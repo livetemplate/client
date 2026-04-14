@@ -7,8 +7,15 @@ on:
 jobs:
   publish-npm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for npm OIDC trusted publishing + provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Pin to the release tag so the build matches what was tagged,
+          # not a later commit that may have landed on the branch.
+          ref: ${{ github.event.release.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -24,13 +31,21 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify package.json version matches release tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: package.json=$PKG_VERSION tag=$TAG_VERSION"
+            exit 1
+          fi
+          echo "Version match: $PKG_VERSION"
+
+      - name: Publish to npm (OIDC trusted publisher, with provenance)
+        run: npm publish --provenance --access public
 
       - name: Verify published package
         run: |
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo "Published version: $PACKAGE_VERSION"
-          npm view @livetemplate/client@$PACKAGE_VERSION
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Published version: $PKG_VERSION"
+          npm view "@livetemplate/client@$PKG_VERSION"
