@@ -62,5 +62,11 @@ jobs:
               sleep "$delay"
             fi
           done
+          # NOTE: Reaching this line means `npm publish` above already
+          # succeeded — the package IS on npm, the registry just didn't
+          # report it back within ~100s of retries. Do NOT start a rollback
+          # from this failure alone; manually check `npm view` and the
+          # package page before taking any action.
           echo "Package @livetemplate/client@$PKG_VERSION was not visible on npm after 5 attempts."
+          echo "The publish step succeeded; this is almost certainly a registry propagation delay."
           exit 1
