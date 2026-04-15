@@ -7,8 +7,15 @@ on:
 jobs:
   publish-npm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for npm OIDC trusted publishing + provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Pin to the release tag so the build matches what was tagged,
+          # not a later commit that may have landed on the branch.
+          ref: ${{ github.event.release.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -24,13 +31,42 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify package.json version matches release tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: package.json=$PKG_VERSION tag=$TAG_VERSION"
+            exit 1
+          fi
+          echo "Version match: $PKG_VERSION"
+
+      - name: Publish to npm (OIDC trusted publisher, with provenance)
+        run: npm publish --provenance --access public
 
       - name: Verify published package
         run: |
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo "Published version: $PACKAGE_VERSION"
-          npm view @livetemplate/client@$PACKAGE_VERSION
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Published version: $PKG_VERSION"
+          # npm read-after-write can lag 10–60s after a successful publish
+          # due to registry replication, so retry with progressive backoff
+          # before failing the workflow.
+          for attempt in 1 2 3 4 5; do
+            if npm view "@livetemplate/client@$PKG_VERSION"; then
+              echo "Package is visible on npm."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((attempt * 10))
+              echo "Package not yet visible on npm (attempt $attempt/5). Retrying in ${delay}s..."
+              sleep "$delay"
+            fi
+          done
+          # Reaching this line means `npm publish` above already succeeded —
+          # the package IS on npm, the registry just didn't report it back
+          # within ~100s of retries. Surface this as a GitHub Actions warning
+          # (visible in the run summary) instead of a hard failure, so a
+          # successful release never shows as red CI and nobody mistakenly
+          # starts a rollback on a propagation lag. A genuine publish failure
+          # would have aborted the workflow at the `npm publish` step itself.
+          echo "::warning title=npm registry propagation lag::Package @livetemplate/client@$PKG_VERSION was not visible on npm after 5 verification attempts (~100s). The publish step succeeded, so this is almost certainly registry replication lag. Manually confirm with 'npm view @livetemplate/client@$PKG_VERSION' before taking any action."

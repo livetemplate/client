@@ -291,26 +291,11 @@ verify_package_contents() {
     log_info "Package contents verified"
 }
 
-# Publish to npm
-publish_npm() {
-    local new_version=$1
-
-    log_step "Publishing @livetemplate/client@$new_version to npm"
-
-    # Check if logged in
-    if ! npm whoami >/dev/null 2>&1; then
-        log_error "Not logged in to npm. Run 'npm login' first"
-        exit 1
-    fi
-
-    # Publish
-    npm publish || {
-        log_error "npm publish failed"
-        exit 1
-    }
-
-    log_info "Published to npm: https://www.npmjs.com/package/@livetemplate/client/v/$new_version"
-}
+# NOTE: npm publishing is intentionally NOT done here.
+# It runs in CI via .github/workflows/publish.yml, which is triggered by the
+# GitHub release created at the end of this script. Authentication is handled
+# by npm OIDC trusted publishing (no NPM_TOKEN secret required) and the
+# resulting package gets a verified provenance attestation on npmjs.com.
 
 # Extract release notes from CHANGELOG
 extract_release_notes() {
@@ -425,8 +410,8 @@ dry_run() {
     log_info "Would run tests and builds"
     log_info "Would commit with message: chore(release): v$new_version"
     log_info "Would create tag: v$new_version"
-    log_info "Would publish @livetemplate/client@$new_version to npm"
     log_info "Would push to GitHub and create release"
+    log_info "GitHub release would trigger CI workflow to publish @livetemplate/client@$new_version to npm"
 
     echo ""
     log_info "Dry run completed successfully"
@@ -561,8 +546,8 @@ main() {
     echo "  • Generate/update CHANGELOG.md"
     echo "  • Run all tests and builds"
     echo "  • Commit and tag v$new_version"
-    echo "  • Publish @livetemplate/client@$new_version to npm"
     echo "  • Create GitHub release with release notes"
+    echo "  • Trigger CI workflow to publish @livetemplate/client@$new_version to npm"
     echo ""
 
     if [ "$dry_run_mode" = true ]; then
@@ -580,29 +565,33 @@ main() {
     log_info "Starting release process..."
     echo ""
 
-    # Execute release steps
+    # Execute release steps. Note: npm publish runs in CI (publish.yml),
+    # triggered by the GitHub release created in publish_github below.
     update_versions "$new_version"
     generate_changelog "$new_version"
     build_and_test
     verify_build "$new_version"
     verify_package_contents
     commit_and_tag "$new_version"
-    publish_npm "$new_version"
     publish_github "$new_version"
 
     echo ""
     echo "================================================"
-    log_info "✨ Release v$new_version completed successfully!"
+    log_info "✨ Release v$new_version tagged and pushed!"
     echo "================================================"
     echo ""
-    echo "📦 Published artifacts:"
-    echo "  • npm:    https://www.npmjs.com/package/@livetemplate/client/v/$new_version"
-    echo "  • GitHub: https://github.com/livetemplate/client/releases/tag/v$new_version"
-    echo "  • CDN:    https://cdn.jsdelivr.net/npm/@livetemplate/client@$new_version/dist/livetemplate-client.browser.js"
+    echo "📦 GitHub release: https://github.com/livetemplate/client/releases/tag/v$new_version"
+    echo ""
+    echo "🤖 npm publish runs on CI (triggered by the GitHub release):"
+    echo "   https://github.com/livetemplate/client/actions/workflows/publish.yml"
+    echo ""
+    echo "Once the workflow finishes, the package will be available at:"
+    echo "   • npm: https://www.npmjs.com/package/@livetemplate/client/v/$new_version"
+    echo "   • CDN: https://cdn.jsdelivr.net/npm/@livetemplate/client@$new_version/dist/livetemplate-client.browser.js"
     echo ""
     echo "📝 Next steps:"
-    echo "  • Verify the npm package"
-    echo "  • Test the CDN link"
+    echo "  • Watch the Actions tab and confirm the Publish workflow succeeds"
+    echo "  • Verify the npm package once published"
     echo "  • Update examples to use new version"
 }
 
