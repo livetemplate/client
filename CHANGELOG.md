@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.24] - 2026-04-15
+
+### Changes
+
+- chore: gitignore .claude/scheduled_tasks.lock (28e30e7)
+- ci: publish to npm via OIDC trusted publishing (#71) (9053e38)
+
+
+
 ## [v0.8.23] - 2026-04-14
 
 ### Changes
