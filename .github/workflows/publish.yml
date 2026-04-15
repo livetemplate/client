@@ -22,6 +22,14 @@ jobs:
           node-version: '20.x'
           registry-url: 'https://registry.npmjs.org'
 
+      # npm OIDC trusted publishing requires npm >= 11.5.1, which is newer
+      # than the npm bundled with Node 20.x. Without this upgrade, the npm
+      # CLI sends setup-node's placeholder NODE_AUTH_TOKEN to the registry
+      # instead of falling through to the OIDC exchange, and publish fails
+      # with a misleading E404 PUT error.
+      - name: Upgrade npm to a version that supports OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
