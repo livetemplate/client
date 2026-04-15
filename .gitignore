@@ -7,3 +7,4 @@ coverage/
 .env.local
 .npmrc
 .worktrees/
+.claude/scheduled_tasks.lock
