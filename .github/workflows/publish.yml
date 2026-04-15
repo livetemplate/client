@@ -62,11 +62,11 @@ jobs:
               sleep "$delay"
             fi
           done
-          # NOTE: Reaching this line means `npm publish` above already
-          # succeeded — the package IS on npm, the registry just didn't
-          # report it back within ~100s of retries. Do NOT start a rollback
-          # from this failure alone; manually check `npm view` and the
-          # package page before taking any action.
-          echo "Package @livetemplate/client@$PKG_VERSION was not visible on npm after 5 attempts."
-          echo "The publish step succeeded; this is almost certainly a registry propagation delay."
-          exit 1
+          # Reaching this line means `npm publish` above already succeeded —
+          # the package IS on npm, the registry just didn't report it back
+          # within ~100s of retries. Surface this as a GitHub Actions warning
+          # (visible in the run summary) instead of a hard failure, so a
+          # successful release never shows as red CI and nobody mistakenly
+          # starts a rollback on a propagation lag. A genuine publish failure
+          # would have aborted the workflow at the `npm publish` step itself.
+          echo "::warning title=npm registry propagation lag::Package @livetemplate/client@$PKG_VERSION was not visible on npm after 5 verification attempts (~100s). The publish step succeeded, so this is almost certainly registry replication lag. Manually confirm with 'npm view @livetemplate/client@$PKG_VERSION' before taking any action."
