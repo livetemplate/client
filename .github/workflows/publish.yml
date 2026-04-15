@@ -48,4 +48,19 @@ jobs:
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "Published version: $PKG_VERSION"
-          npm view "@livetemplate/client@$PKG_VERSION"
+          # npm read-after-write can lag 10–60s after a successful publish
+          # due to registry replication, so retry with progressive backoff
+          # before failing the workflow.
+          for attempt in 1 2 3 4 5; do
+            if npm view "@livetemplate/client@$PKG_VERSION"; then
+              echo "Package is visible on npm."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((attempt * 10))
+              echo "Package not yet visible on npm (attempt $attempt/5). Retrying in ${delay}s..."
+              sleep "$delay"
+            fi
+          done
+          echo "Package @livetemplate/client@$PKG_VERSION was not visible on npm after 5 attempts."
+          exit 1
