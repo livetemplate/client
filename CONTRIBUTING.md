@@ -244,8 +244,33 @@ The script will:
 3. Generate CHANGELOG.md
 4. Run tests and build
 5. Commit and tag
-6. Publish to npm
-7. Create GitHub release
+6. Push the tag and create a GitHub release
+
+Creating the GitHub release fires the `Publish` workflow
+(`.github/workflows/publish.yml`), which then:
+1. Checks out the release tag
+2. Re-runs tests and build
+3. Verifies `package.json` version matches the tag
+4. Publishes to npm using **OIDC trusted publishing** with `--provenance`
+   (no `NPM_TOKEN` secret — npm trusts the GitHub Actions OIDC identity,
+   configured once on npmjs.com under the package's Trusted Publishers)
+5. Runs a post-publish `npm view` check with retry/backoff
+
+### Watching a release
+
+- **Green workflow**: package is live. Confirm on the package page —
+  a "Provenance" badge should link back to the workflow run.
+- **Green workflow with a yellow "npm registry propagation lag"
+  warning annotation**: the `npm publish` step succeeded but the
+  post-publish `npm view` verification could not confirm visibility
+  within ~100s (npm registry replication can lag 10–60s and
+  occasionally longer). The package IS published — manually confirm
+  with `npm view @livetemplate/client@<version>` before taking any
+  action. Do **not** deprecate or roll back based on this warning alone.
+- **Failed workflow at `Publish to npm`**: real publish failure.
+  Fix and re-run from the Actions UI; no need to recreate the tag.
+- **Never use `npm unpublish`** — npm forbids it after 72h and it
+  breaks downstream installs. Use `npm deprecate` for bad versions.
 
 ## Protocol Changes
 
