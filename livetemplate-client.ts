@@ -111,7 +111,20 @@ export class LiveTemplateClient {
     this.options = {
       autoReconnect: false, // Disable autoReconnect by default to avoid connection loops
       reconnectDelay: 1000,
-      liveUrl: window.location.pathname + window.location.search, // Connect to current page (including query params)
+      // liveUrl captures the current page URL (path + search) so the
+      // initial WebSocket handshake reaches the server with the same
+      // query params Mount saw on the HTTP GET. This is intentional —
+      // without the search, the WS-side Mount re-runs with empty data
+      // and drifts state from the HTTP render.
+      //
+      // For *same-handler* SPA navigation (changing query params on
+      // the same path), the client does NOT reconnect — instead it
+      // sends an in-band {action:"__navigate__", data:<params>} message
+      // over the existing WebSocket, and the server re-runs Mount with
+      // the new data. See sendNavigate() and handleNavigationResponse()
+      // for the SPA path. Cross-handler SPA navigation still does the
+      // fetch-and-replaceChildren+reconnect dance.
+      liveUrl: window.location.pathname + window.location.search,
       ...restOptions,
     };
 
@@ -189,6 +202,7 @@ export class LiveTemplateClient {
       {
         getWrapperElement: () => this.wrapperElement,
         handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+        sendNavigate: (href: string) => this.sendNavigate(href),
       },
       this.logger.child("LinkInterceptor")
     );
@@ -543,6 +557,36 @@ export class LiveTemplateClient {
   }
 
   /**
+   * Send an in-band navigate message over the existing WebSocket.
+   *
+   * This is the client side of the same-handler SPA navigation flow.
+   * Rather than disconnect + reconnect to land a URL change (which is
+   * what cross-handler nav does and what the old same-handler path
+   * silently skipped), we parse the target URL's query params into a
+   * data map and send {action: "__navigate__", data: params}. The
+   * server special-cases this action name in its event loop (see
+   * livetemplate/mount.go) and re-runs Mount with the new data without
+   * tearing down the connection.
+   *
+   * Equivalent to Phoenix LiveView's live_patch / handle_params:
+   * path-level identity for the socket, Mount-level re-projection for
+   * query-string changes.
+   *
+   * @param href - The target URL to navigate to. Only the search params
+   *               are consumed; the pathname is assumed to match the
+   *               current page (caller checks same-handler first).
+   */
+  private sendNavigate(href: string): void {
+    const url = new URL(href, window.location.origin);
+    const data: Record<string, string> = {};
+    url.searchParams.forEach((v, k) => {
+      data[k] = v;
+    });
+    this.logger.debug("sendNavigate", { href, data });
+    this.send({ action: "__navigate__", data });
+  }
+
+  /**
    * Send action via HTTP POST
    */
   private async sendHTTP(message: any): Promise<void> {
@@ -662,11 +706,23 @@ export class LiveTemplateClient {
       : null;
 
     if (sameWrapper) {
-      this.wrapperElement.replaceChildren(
-        ...Array.from(sameWrapper.childNodes).map((n) => n.cloneNode(true))
-      );
-      this.eventDelegator.setupEventDelegation();
-      this.linkInterceptor.setup(this.wrapperElement);
+      // Same-handler navigation = query-param change on the same path.
+      // Instead of replacing the whole DOM (which would require a full
+      // WebSocket reconnect to keep server state in sync — the former
+      // behaviour silently dropped the second part and caused stale
+      // state bugs like devbox-dash's "always shows the second session"
+      // regression), we send an in-band navigate message over the
+      // existing WebSocket. The server's event loop intercepts the
+      // reserved __navigate__ action, re-runs Mount with the new query
+      // params, and pushes a tree update back — which the normal
+      // WebSocket message handler applies via morphdom. No reconnect,
+      // no DOM churn, no stale state.
+      //
+      // We've already parsed the fetched HTML above, but for
+      // same-handler nav we throw it away — the server-authored tree
+      // update is the source of truth and will overwrite any local DOM
+      // differences via morphdom.
+      this.sendNavigate(window.location.href);
       return;
     }
 
@@ -942,6 +998,56 @@ export class LiveTemplateClient {
         }
       },
       onBeforeElUpdated: (fromEl, toEl) => {
+        // Honour lvt-preserve: the client owns this element's entire
+        // subtree and morphdom should never touch any of it.
+        // Attributes, content, descendants all stay exactly as the DOM
+        // currently has them. Equivalent to Phoenix LiveView's
+        // phx-update="ignore" and Turbo's data-turbo-permanent. Useful
+        // for third-party widgets (maps, date pickers, charts) that
+        // mutate their own DOM, and for scroll containers with
+        // JS-managed scrollTop.
+        //
+        // For the subtler case of "preserve my *attributes* but still
+        // let children update" (e.g. <details open>, <select> with
+        // user-selected options), use lvt-preserve-attrs below.
+        if (
+          fromEl.nodeType === Node.ELEMENT_NODE &&
+          (fromEl as Element).hasAttribute("lvt-preserve")
+        ) {
+          return false;
+        }
+
+        // Honour lvt-preserve-attrs: the client owns this element's own
+        // attributes (e.g. the <details open> state the user toggled),
+        // but its children should still be diffed against the new tree.
+        // This is the right fit for collapsible pickers where the
+        // *container* state is user-managed but the *items* inside are
+        // server-authored and must reflect the latest data.
+        //
+        // Implementation: copy fromEl's attributes that are missing from
+        // toEl onto toEl before morphdom runs its attribute diff. This
+        // makes morphdom see the user-owned attrs as "already present"
+        // in the new version, so it doesn't remove them. Attributes that
+        // exist in both fromEl and toEl take toEl's value (server wins
+        // over client for attributes the template does control), which
+        // preserves the ability to update className etc. on the same
+        // element from the server.
+        if (
+          fromEl.nodeType === Node.ELEMENT_NODE &&
+          (fromEl as Element).hasAttribute("lvt-preserve-attrs") &&
+          toEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          const fromAttrs = (fromEl as Element).attributes;
+          const toElement = toEl as Element;
+          for (let i = 0; i < fromAttrs.length; i++) {
+            const attr = fromAttrs[i];
+            if (!toElement.hasAttribute(attr.name)) {
+              toElement.setAttribute(attr.name, attr.value);
+            }
+          }
+          // Fall through to normal diff path so children are still updated.
+        }
+
         // Skip update entirely for focused form elements to preserve user
         // input. This also skips attribute updates (class, disabled, aria-*)
         // and the lvt-updated hook — use data-lvt-force-update to override.

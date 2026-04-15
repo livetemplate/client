@@ -26,7 +26,25 @@ describe("handleNavigationResponse", () => {
   };
 
   describe("same-handler navigation", () => {
-    it("replaces wrapper children when response has same data-lvt-id", () => {
+    // As of the __navigate__ refactor, same-handler navigation does NOT
+    // replace wrapper children from the fetched HTML. Instead it sends
+    // an in-band __navigate__ message to the existing WebSocket; the
+    // server re-runs Mount with the new query params and pushes a tree
+    // update back, which the normal WS message handler morphs into the
+    // DOM. The fetched HTML is discarded for same-handler nav — the
+    // server-authored tree update is the source of truth.
+    //
+    // This avoids the "clicking any session always shows the first one"
+    // bug where DOM was replaced but the server's connSt.state stayed
+    // pinned to the old query params, and the next refresh tick clobbered
+    // the DOM back to the old content.
+    it("sends in-band __navigate__ instead of replacing children", () => {
+      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+
+      // Point the window at a same-pathname URL with new query params so
+      // the client's sendNavigate() call picks them up.
+      history.replaceState(null, "", "/handler-a?s=new-value");
+
       const html = [
         "<html><head><title>Same Page</title></head><body>",
         '<div data-lvt-id="lvt-handler-a">',
@@ -37,12 +55,28 @@ describe("handleNavigationResponse", () => {
 
       callHandleNavigationResponse(html);
 
-      expect(wrapper.textContent).toContain("Updated content from same handler");
+      // Wrapper content should NOT have been replaced from the fetched HTML.
+      expect(wrapper.textContent).toContain("Handler A content");
+      expect(wrapper.textContent).not.toContain("Updated content from same handler");
+      // Wrapper identity unchanged.
       expect(wrapper.getAttribute("data-lvt-id")).toBe("lvt-handler-a");
+
+      // The client should have sent a __navigate__ message with the
+      // current URL's query params as data.
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      const sent = sendSpy.mock.calls[0][0];
+      expect(sent).toMatchObject({
+        action: "__navigate__",
+        data: { s: "new-value" },
+      });
+
+      sendSpy.mockRestore();
     });
 
     it("preserves wrapper element identity", () => {
       const originalWrapper = wrapper;
+      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+
       const html = [
         "<html><body>",
         '<div data-lvt-id="lvt-handler-a">',
@@ -54,6 +88,7 @@ describe("handleNavigationResponse", () => {
       callHandleNavigationResponse(html);
 
       expect((client as any).wrapperElement).toBe(originalWrapper);
+      sendSpy.mockRestore();
     });
   });
 

@@ -3,12 +3,24 @@ import type { Logger } from "../utils/logger";
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
   handleNavigationResponse(html: string): void;
+  // Send an in-band navigate message over the existing WebSocket.
+  // Used by the same-pathname fast path below: rather than fetching
+  // new HTML and replacing DOM, the client asks the server to re-run
+  // Mount with the new query params. Path-level navigation (different
+  // pathnames) still goes through handleNavigationResponse.
+  sendNavigate(href: string): void;
 }
 
 /**
  * Intercepts <a> clicks within the LiveTemplate wrapper for SPA navigation.
- * Same-origin links are fetched via fetch() and the wrapper content is replaced.
- * External links, target="_blank", download, and lvt-nav:no-intercept are skipped.
+ *
+ * - Same pathname (query-string change only) -> sends __navigate__ over WS;
+ *   no fetch, no DOM replace, no reconnect.
+ * - Different pathname (cross-handler or just different route) -> fetches
+ *   new HTML and hands it to handleNavigationResponse, which decides
+ *   between same-handler DOM replace and cross-handler reconnect.
+ * - External links, target="_blank", download, and lvt-nav:no-intercept
+ *   are skipped.
  *
  * Uses AbortController to cancel in-flight fetches when a new navigation
  * starts (rapid clicks, back/forward during fetch).
@@ -102,6 +114,30 @@ export class LinkInterceptor {
   }
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
+    // Same-pathname fast path: query-string changed on the same route.
+    // This is definitionally same-handler (the server's mux routes by
+    // path), so we can skip the fetch entirely and just send an in-band
+    // navigate message over the existing WebSocket. The server re-runs
+    // Mount with the new query params, sends back a tree update, and
+    // the normal message handler applies it via morphdom.
+    //
+    // Before this fast path existed, same-pathname clicks went through
+    // fetch + replaceChildren, which swapped DOM but left the server's
+    // connSt.state pinned to the OLD query params — producing the
+    // "clicking any session always shows the first one" bug in
+    // devbox-dash.
+    const targetURL = new URL(href, window.location.origin);
+    if (
+      targetURL.origin === window.location.origin &&
+      targetURL.pathname === window.location.pathname
+    ) {
+      if (pushState) {
+        window.history.pushState(null, "", href);
+      }
+      this.context.sendNavigate(href);
+      return;
+    }
+
     // Cancel any in-flight navigation fetch
     this.abortController?.abort();
     this.abortController = new AbortController();
