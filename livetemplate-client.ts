@@ -621,19 +621,26 @@ export class LiveTemplateClient {
           { href }
         );
       } else {
-        // WS is CONNECTING (0) or CLOSING (2). liveUrl was updated above, so
-        // the next reconnect will use the new URL. However, for CONNECTING:
-        // if the in-progress handshake succeeds and the server lands on the
-        // OLD URL before reconnect fires, the navigate is silently lost until
-        // the socket later drops and reconnects. This is an edge case only when
-        // autoReconnect is enabled and the CONNECTING handshake completes at
-        // the old URL before being superseded. With autoReconnect enabled, the
-        // next drop+reconnect recovers correctly; with autoReconnect off, there
-        // may be no recovery until the user reloads.
-        this.logger.warn(
-          "sendNavigate: WS not open; browser URL is ahead of server state until reconnect",
-          { href, readyState }
-        );
+        // WS is CONNECTING (0) or CLOSING (2). liveUrl was updated above.
+        //
+        // autoReconnect defaults to false. If it's disabled and the in-progress
+        // CONNECTING handshake succeeds at the OLD URL, the navigate is
+        // permanently lost (no future reconnect will fire). Treat this as an
+        // error since there may be no recovery path.
+        //
+        // With autoReconnect enabled the next reconnect recovers correctly, so
+        // warn is appropriate in that case.
+        if (!this.options.autoReconnect) {
+          this.logger.error(
+            "sendNavigate: WS not open and autoReconnect is disabled; navigate may be permanently lost if handshake completes at old URL",
+            { href, readyState }
+          );
+        } else {
+          this.logger.warn(
+            "sendNavigate: WS not open; browser URL is ahead of server state until reconnect",
+            { href, readyState }
+          );
+        }
       }
       return;
     }
@@ -830,41 +837,47 @@ export class LiveTemplateClient {
       this.liveUrlOverride = newLiveUrl;
       this.webSocketManager.setLiveUrl(newLiveUrl);
 
-      // Reconnect to the new handler. The server sends an initial tree
-      // that produces the same DOM as the fetched HTML.
-      //
-      // Escape the wrapper ID to defend against (pathological) server
-      // responses with special characters that would break the
-      // attribute selector. Only `"` and `\` need escaping inside a
-      // double-quoted attribute value selector (`[attr="..."]`), and
-      // we prefer a manual escape over CSS.escape() which is not
-      // available in jsdom test environments.
-      //
-      // Epoch semantics: the failure branch is guarded by the epoch
-      // check to avoid stale reloads. The success branch has no work
-      // to do — there's nothing for handleNavigationResponse to undo
-      // on success.
-      //
-      // Known limitation: if two cross-handler navigations run in rapid
-      // succession (A then B), A's connect() might still be executing
-      // its post-await setup (useHTTP assignment, initial state
-      // rendering, event delegation) when B starts. Because there's
-      // only one WebSocketManager transport at a time, B's disconnect()
-      // kills A's in-flight transport, and B's setup happens on the
-      // wrapper with B's ID. If A's post-await code runs AFTER B sets
-      // the wrapper ID, A's querySelector lookup would already be
-      // stale (it captured the wrapper synchronously before the await).
-      // A true fix requires making connect() itself cancellable with
-      // an AbortSignal, which is out of scope for this PR. In practice,
-      // two successive SPA navigations within a single event loop tick
-      // are rare, and the idempotent setup methods minimize fallout.
-      const escapedId = newId.replace(/[\\"]/g, "\\$&");
-      const selector = `[data-lvt-id="${escapedId}"]`;
-      this.connect(selector).catch((err) => {
-        if (myEpoch !== this.navigationEpoch) return;
-        this.logger.error("Cross-handler reconnect failed:", err);
-        window.location.reload();
-      });
+      // In HTTP mode there is no persistent WebSocket connection — skip
+      // connect() so we don't unexpectedly create a WebSocket. The DOM swap
+      // and event re-setup above are sufficient for HTTP-mode apps; the next
+      // user action will POST via the normal HTTP send path.
+      if (!this.useHTTP) {
+        // Reconnect to the new handler. The server sends an initial tree
+        // that produces the same DOM as the fetched HTML.
+        //
+        // Escape the wrapper ID to defend against (pathological) server
+        // responses with special characters that would break the
+        // attribute selector. Only `"` and `\` need escaping inside a
+        // double-quoted attribute value selector (`[attr="..."]`), and
+        // we prefer a manual escape over CSS.escape() which is not
+        // available in jsdom test environments.
+        //
+        // Epoch semantics: the failure branch is guarded by the epoch
+        // check to avoid stale reloads. The success branch has no work
+        // to do — there's nothing for handleNavigationResponse to undo
+        // on success.
+        //
+        // Known limitation: if two cross-handler navigations run in rapid
+        // succession (A then B), A's connect() might still be executing
+        // its post-await setup (useHTTP assignment, initial state
+        // rendering, event delegation) when B starts. Because there's
+        // only one WebSocketManager transport at a time, B's disconnect()
+        // kills A's in-flight transport, and B's setup happens on the
+        // wrapper with B's ID. If A's post-await code runs AFTER B sets
+        // the wrapper ID, A's querySelector lookup would already be
+        // stale (it captured the wrapper synchronously before the await).
+        // A true fix requires making connect() itself cancellable with
+        // an AbortSignal, which is out of scope for this PR. In practice,
+        // two successive SPA navigations within a single event loop tick
+        // are rare, and the idempotent setup methods minimize fallout.
+        const escapedId = newId.replace(/[\\"]/g, "\\$&");
+        const selector = `[data-lvt-id="${escapedId}"]`;
+        this.connect(selector).catch((err) => {
+          if (myEpoch !== this.navigationEpoch) return;
+          this.logger.error("Cross-handler reconnect failed:", err);
+          window.location.reload();
+        });
+      }
       return;
     }
 
