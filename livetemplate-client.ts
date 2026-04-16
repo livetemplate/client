@@ -582,7 +582,12 @@ export class LiveTemplateClient {
     // Note: duplicate keys (e.g. ?tag=a&tag=b) are last-write-wins here.
     // LiveTemplate routes use scalar string params by convention. Routes
     // that need repeated params should not use sendNavigate directly.
+    const seenKeys = new Set<string>();
     url.searchParams.forEach((v, k) => {
+      if (seenKeys.has(k)) {
+        this.logger.warn("sendNavigate: duplicate query param key — last value wins; server may receive incomplete data", { key: k, href });
+      }
+      seenKeys.add(k);
       data[k] = v;
     });
 
@@ -990,10 +995,13 @@ export class LiveTemplateClient {
     // duplicate DOM nodes after the closing tag. DOMParser doesn't have
     // this quirk because it returns a standalone document.
     //
-    // Regex /<script[\s>]/i is more precise than a plain string search:
-    // it avoids false positives from "<script" appearing inside attribute
-    // values (e.g. data-content="<script") or HTML comments, while still
-    // matching <script>, <script type="..."> and <SCRIPT> case-insensitively.
+    // Regex /<script[\s>]/i is more precise than a bare "<script" string
+    // match: it avoids false positives from words ending in "script" that
+    // aren't a tag (e.g. "noscript"), while still matching <script>,
+    // <script type="..."> and <SCRIPT> case-insensitively.
+    // Note: it can still match <script inside attribute values or HTML
+    // comments — a false positive is harmless (DOMParser is always safe;
+    // we just pay a small allocation cost for the parse).
     //
     // Wrap with the same tagName as the target element (not a hard-coded
     // <div>) so that DOMParser applies the correct HTML parsing rules.
@@ -1114,10 +1122,15 @@ export class LiveTemplateClient {
         // is used — JS-added classes (el.classList.add('open')) are
         // silently overwritten on the next diff. Use lvt-preserve-attrs
         // for attributes the server template does NOT set at all.
+        //
+        // We check toEl (the incoming server tree), not fromEl (the live
+        // DOM), so the server has authority: removing lvt-preserve-attrs
+        // from the template takes effect immediately on the next render,
+        // consistent with how lvt-preserve works.
         if (
-          fromEl.nodeType === Node.ELEMENT_NODE &&
-          (fromEl as Element).hasAttribute("lvt-preserve-attrs") &&
-          toEl.nodeType === Node.ELEMENT_NODE
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute("lvt-preserve-attrs") &&
+          fromEl.nodeType === Node.ELEMENT_NODE
         ) {
           const fromAttrs = (fromEl as Element).attributes;
           const toElement = toEl as Element;
