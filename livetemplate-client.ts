@@ -598,21 +598,17 @@ export class LiveTemplateClient {
       data[k] = v;
     });
 
-    // Tentatively update liveUrl — if the send succeeds this stays; if it
-    // fails we revert so liveUrlOverride stays consistent with window.location
-    // (no pushState fired on failure). An inconsistent liveUrlOverride would
-    // cause a future reconnect to land on a URL the browser doesn't show.
-    const previousLiveUrl = this.liveUrlOverride;
     const newLiveUrl = url.pathname + url.search;
-    this.liveUrlOverride = newLiveUrl;
-    this.webSocketManager.setLiveUrl(newLiveUrl);
 
     // __navigate__ is a WebSocket-only in-band action — only call send()
     // when the socket is actually OPEN.
     //
     // Note: this.useHTTP is not checked here because sendNavigate() is only
-    // reachable when canSendNavigate() returns true (i.e. !this.useHTTP),
-    // enforced by LinkInterceptor. Checking useHTTP here would be dead code.
+    // reachable when canSendNavigate() returns true (i.e. !this.useHTTP and
+    // readyState === 1), enforced by LinkInterceptor. Checking useHTTP or
+    // re-checking readyState here would be dead code in the normal call path.
+    // The guard below is a defensive fallback for direct callers that bypass
+    // canSendNavigate().
     if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */) {
       const readyState = this.webSocketManager.getReadyState();
       if (readyState === 3 /* CLOSED */) {
@@ -622,18 +618,10 @@ export class LiveTemplateClient {
           { href }
         );
       } else {
-        // WS is CONNECTING (0) or CLOSING (2). liveUrl was updated above.
-        //
-        // autoReconnect defaults to false. If it's disabled and the in-progress
-        // CONNECTING handshake succeeds at the OLD URL, the navigate is
-        // permanently lost (no future reconnect will fire). Treat this as an
-        // error since there may be no recovery path.
-        //
-        // With autoReconnect enabled the next reconnect recovers correctly, so
-        // warn is appropriate in that case.
+        // CONNECTING (0) or CLOSING (2). autoReconnect defaults to false.
         if (!this.options.autoReconnect) {
           this.logger.error(
-            "sendNavigate: WS not open and autoReconnect is disabled; navigate may be permanently lost if handshake completes at old URL",
+            "sendNavigate: WS not open and autoReconnect is disabled; navigate may be permanently lost",
             { href, readyState }
           );
         } else {
@@ -643,15 +631,15 @@ export class LiveTemplateClient {
           );
         }
       }
-      // Revert: browser URL won't change (no pushState on failure), so keep
-      // liveUrlOverride consistent with window.location to avoid a future
-      // reconnect landing on a URL the browser does not display.
-      this.liveUrlOverride = previousLiveUrl;
-      const revertUrl = previousLiveUrl ?? this.options.liveUrl ?? "/live";
-      this.webSocketManager.setLiveUrl(revertUrl);
       return false;
     }
 
+    // Socket is OPEN: commit the URL update and send the navigate message.
+    // liveUrlOverride is updated here (not before the guard) so it only
+    // advances when the message is actually sent — keeping it consistent
+    // with window.location throughout.
+    this.liveUrlOverride = newLiveUrl;
+    this.webSocketManager.setLiveUrl(newLiveUrl);
     this.logger.debug("sendNavigate", { href, data });
     this.send({ action: "__navigate__", data });
     return true;
