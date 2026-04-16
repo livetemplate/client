@@ -2,11 +2,7 @@ import type { Logger } from "../utils/logger";
 
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
-  // prePushPathname: the pathname at the moment the link was clicked,
-  // BEFORE history.pushState was called. Used by handleNavigationResponse
-  // to detect whether the pathname actually changed so it can decide between
-  // in-band sendNavigate (same path, query-param only) and a full reconnect.
-  handleNavigationResponse(html: string, href: string, prePushPathname: string): void;
+  handleNavigationResponse(html: string, href: string): void;
   // Send an in-band navigate message over the existing WebSocket.
   // Used by the same-pathname fast path below: rather than fetching
   // new HTML and replacing DOM, the client asks the server to re-run
@@ -167,11 +163,6 @@ export class LinkInterceptor {
 
       const html = await response.text();
 
-      // Capture the pathname BEFORE pushState so handleNavigationResponse
-      // can tell whether the path actually changed. After pushState,
-      // window.location.pathname is the new path and the old value is lost.
-      const prePushPathname = window.location.pathname;
-
       // Push state BEFORE handling response so that cross-handler
       // navigation reconnects the WebSocket to the correct URL.
       // connect() derives the WebSocket path from window.location.
@@ -179,7 +170,7 @@ export class LinkInterceptor {
         window.history.pushState(null, "", href);
       }
 
-      this.context.handleNavigationResponse(html, href, prePushPathname);
+      this.context.handleNavigationResponse(html, href);
     } catch (e: unknown) {
       // AbortError means a new navigation superseded this one — ignore
       if (e instanceof DOMException && e.name === "AbortError") return;

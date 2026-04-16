@@ -21,68 +21,25 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (
-    html: string,
-    href = window.location.href,
-    prePushPathname = window.location.pathname
-  ) => {
-    (client as any).handleNavigationResponse(html, href, prePushPathname);
+  const callHandleNavigationResponse = (html: string, href = window.location.href) => {
+    (client as any).handleNavigationResponse(html, href);
   };
 
   describe("same-handler navigation", () => {
-    // As of the __navigate__ refactor, same-handler navigation does NOT
-    // replace wrapper children from the fetched HTML. Instead it sends
-    // an in-band __navigate__ message to the existing WebSocket; the
-    // server re-runs Mount with the new query params and pushes a tree
-    // update back, which the normal WS message handler morphs into the
-    // DOM. The fetched HTML is discarded for same-handler nav — the
-    // server-authored tree update is the source of truth.
+    // handleNavigationResponse is only reachable via LinkInterceptor for
+    // cross-pathname fetches. Same-pathname navigations (query-param change
+    // on the same route) are caught by the fast path in link-interceptor.ts
+    // and handled via sendNavigate() directly — no fetch, no call here.
     //
-    // This avoids the "clicking any session always shows the first one"
-    // bug where DOM was replaced but the server's connSt.state stayed
-    // pinned to the old query params, and the next refresh tick clobbered
-    // the DOM back to the old content.
-    it("sends in-band __navigate__ instead of replacing children", () => {
-      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+    // When handleNavigationResponse receives a same-handler-ID response
+    // from a cross-pathname fetch, it falls through to the reconnect path
+    // (same as a genuine handler switch). The in-band __navigate__ path for
+    // same-pathname navigation is covered in navigate.test.ts.
 
-      // Point the window at a same-pathname URL with new query params so
-      // the client's sendNavigate() call picks them up.
-      history.replaceState(null, "", "/handler-a?s=new-value");
-
-      const html = [
-        "<html><head><title>Same Page</title></head><body>",
-        '<div data-lvt-id="lvt-handler-a">',
-        "<p>Updated content from same handler</p>",
-        "</div>",
-        "</body></html>",
-      ].join("");
-
-      callHandleNavigationResponse(html);
-
-      // Wrapper content should NOT have been replaced from the fetched HTML.
-      expect(wrapper.textContent).toContain("Handler A content");
-      expect(wrapper.textContent).not.toContain("Updated content from same handler");
-      // Wrapper identity unchanged.
-      expect(wrapper.getAttribute("data-lvt-id")).toBe("lvt-handler-a");
-
-      // The client should have sent a __navigate__ message with the
-      // current URL's query params as data.
-      expect(sendSpy).toHaveBeenCalledTimes(1);
-      const sent = sendSpy.mock.calls[0][0];
-      expect(sent).toMatchObject({
-        action: "__navigate__",
-        data: { s: "new-value" },
-      });
-
-      sendSpy.mockRestore();
-    });
-
-    it("falls through to reconnect when pathname changed even if handler ID matches", () => {
-      // Regression: two different routes sharing the same data-lvt-id caused
-      // sendNavigate to be called with the new URL, silently discarding the
-      // path change — the server re-ran Mount on the wrong route.
-      // Fix: the sameWrapper branch guards on prePushPathname equality before
-      // calling sendNavigate; mismatched pathname falls through to reconnect.
+    it("same-handler ID match from cross-path fetch triggers reconnect (not sendNavigate)", () => {
+      // Regression guard: two different routes sharing the same data-lvt-id
+      // must NOT call sendNavigate (which only ships query params, silently
+      // dropping the path change). The correct behaviour is a full reconnect.
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
@@ -93,20 +50,13 @@ describe("handleNavigationResponse", () => {
 
       const html = [
         "<html><body>",
-        // Same data-lvt-id, but delivered from a different path.
         '<div data-lvt-id="lvt-handler-a">',
         "<p>Content from /route-b</p>",
         "</div>",
         "</body></html>",
       ].join("");
 
-      // Simulate: user was on /route-a, navigated to /route-b (different
-      // path, same handler ID). prePushPathname is the ORIGINAL path.
-      callHandleNavigationResponse(
-        html,
-        "http://localhost/route-b?s=2",
-        "/route-a"
-      );
+      callHandleNavigationResponse(html, "http://localhost/route-b?s=2");
 
       // sendNavigate must NOT have been called — that would drop the path.
       expect(sendSpy).not.toHaveBeenCalled();

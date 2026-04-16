@@ -201,7 +201,7 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string, href: string, prePushPathname: string) => this.handleNavigationResponse(html, href, prePushPathname),
+        handleNavigationResponse: (html: string, href: string) => this.handleNavigationResponse(html, href),
         sendNavigate: (href: string) => this.sendNavigate(href),
       },
       this.logger.child("LinkInterceptor")
@@ -582,6 +582,28 @@ export class LiveTemplateClient {
     url.searchParams.forEach((v, k) => {
       data[k] = v;
     });
+
+    // Keep liveUrl in sync so that any subsequent WebSocket reconnect uses
+    // the new URL's query params rather than the initial-connect URL. This
+    // matters if the socket is mid-reconnect when sendNavigate is called —
+    // the message would not be sent, but the reconnect that follows will
+    // use the updated liveUrl and arrive at the correct state.
+    const newLiveUrl = url.pathname + url.search;
+    this.liveUrlOverride = newLiveUrl;
+    this.webSocketManager.setLiveUrl(newLiveUrl);
+
+    // If the WebSocket is not open and we are not in HTTP mode, the
+    // __navigate__ message cannot be delivered reliably. The liveUrl update
+    // above ensures the pending reconnect will use the new URL, so the
+    // user will land in the correct state once the connection recovers.
+    // Sending via the HTTP fallback is skipped here because __navigate__
+    // is a WebSocket-only in-band action; the server HTTP endpoint does
+    // not process it.
+    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ && !this.useHTTP) {
+      this.logger.warn("sendNavigate: WebSocket not open; liveUrl updated, awaiting reconnect", { href });
+      return;
+    }
+
     this.logger.debug("sendNavigate", { href, data });
     this.send({ action: "__navigate__", data });
   }
@@ -685,7 +707,7 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
-  private handleNavigationResponse(html: string, href: string, prePushPathname: string): void {
+  private handleNavigationResponse(html: string, href: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
@@ -700,45 +722,20 @@ export class LiveTemplateClient {
       document.title = newTitleText;
     }
 
-    // Try same-handler wrapper first (same data-lvt-id)
-    const sameWrapper = oldId
-      ? doc.querySelector(`[data-lvt-id="${oldId}"]`)
-      : null;
+    // sameWrapper: the fetched page has the same data-lvt-id as the current
+    // wrapper. This means two different paths share the same handler ID.
+    // handleNavigationResponse is only reached via LinkInterceptor for
+    // cross-pathname navigations (same-pathname links are caught by the fast
+    // path before a fetch is issued and handled via sendNavigate directly).
+    // For cross-pathname same-ID, a full reconnect is correct: the server
+    // must receive the new URL to re-run Mount on the right route. We fall
+    // through to the newWrapper block below, which handles both same-ID and
+    // different-ID handler switches identically.
+    //
+    // Same-pathname same-ID navigation (query-param change on the same route)
+    // is covered exclusively by LinkInterceptor's fast path and navigate.test.ts.
 
-    if (sameWrapper) {
-      // In-band navigate is only correct when the PATHNAME is unchanged.
-      // sendNavigate ships only query-param data to the server, which
-      // re-runs Mount on the existing route. If two different paths share
-      // the same handler ID, calling sendNavigate for a path change would
-      // silently discard the new path and re-run Mount on the wrong route.
-      //
-      // prePushPathname is the pathname captured BEFORE history.pushState
-      // was called, so it reliably reflects the original route even though
-      // window.location has already been updated by the time we arrive here.
-      //
-      // When the pathname IS the same (query-string-only change), the
-      // in-band navigate avoids a full WebSocket reconnect — no DOM churn,
-      // no stale-state risk from reconnect races.
-      //
-      // When the pathname changed, fall through to the cross-handler
-      // reconnect path below, which handles same-ID same-handler
-      // (different path) the same as a genuine handler switch.
-      // Note: through the normal LinkInterceptor callsite, same-pathname
-      // navigations are intercepted by the fast path before a fetch is
-      // issued, so handleNavigationResponse is only reachable when the
-      // pathname changed and targetPathname !== prePushPathname. The
-      // equality branch below is therefore structurally unreachable via
-      // LinkInterceptor; it exists as a correct fallback for any direct
-      // caller that passes a same-path href (e.g. navigation.test.ts).
-      const targetPathname = new URL(href, window.location.origin).pathname;
-      if (targetPathname === prePushPathname) {
-        this.sendNavigate(href);
-        return;
-      }
-      // Pathname changed — fall through to reconnect.
-    }
-
-    // Check for a different handler's wrapper (cross-handler navigation)
+    // Check for any handler wrapper (same-ID cross-path or different handler)
     const newWrapper = doc.querySelector("[data-lvt-id]");
     if (newWrapper) {
       const newId = newWrapper.getAttribute("data-lvt-id");
@@ -990,7 +987,13 @@ export class LiveTemplateClient {
     // Wrapping <tr>/<td>/<option> content in a <div> can trigger
     // browser re-parenting; using the real container tag avoids that.
     if (/<script[\s>]/i.test(result.html)) {
-      const wrapTag = element.tagName.toLowerCase();
+      // Guard: <body> and <html> cannot be used as wrapper tags for
+      // parseFromString — doc.body.firstElementChild would return the
+      // first child of body, not the body itself, discarding the wrap.
+      // Fall back to <div> for these edge cases; updateDOM is called on
+      // the lvt wrapper div in practice, so this branch is defensive.
+      const rawTag = element.tagName.toLowerCase();
+      const wrapTag = (rawTag === "body" || rawTag === "html") ? "div" : rawTag;
       const parser = new DOMParser();
       const doc = parser.parseFromString(
         `<${wrapTag}>${result.html}</${wrapTag}>`,
