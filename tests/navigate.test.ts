@@ -35,7 +35,7 @@ const silentLogger: Logger = {
 
 describe("LinkInterceptor same-pathname navigate bypass", () => {
   let wrapper: HTMLElement;
-  let sendNavigateSpy: jest.Mock<void, [string]>;
+  let sendNavigateSpy: jest.Mock<boolean, [string]>;
   let handleNavigationResponseSpy: jest.Mock<void, [string]>;
   let fetchMock: jest.SpyInstance;
   let interceptor: LinkInterceptor;
@@ -46,7 +46,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     wrapper.setAttribute("data-lvt-id", "nav-test-wrapper");
     document.body.appendChild(wrapper);
 
-    sendNavigateSpy = jest.fn();
+    sendNavigateSpy = jest.fn().mockReturnValue(true);
     handleNavigationResponseSpy = jest.fn();
     // jsdom doesn't ship a global fetch; define a no-op stub so jest.spyOn
     // has something to wrap. jest.restoreAllMocks() in afterEach then cleans

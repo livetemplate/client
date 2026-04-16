@@ -583,7 +583,7 @@ export class LiveTemplateClient {
    *               are consumed; the pathname is assumed to match the
    *               current page (caller checks same-handler first).
    */
-  private sendNavigate(href: string): void {
+  private sendNavigate(href: string): boolean {
     const url = new URL(href, window.location.origin);
     const data: Record<string, string> = {};
     // Note: duplicate keys (e.g. ?tag=a&tag=b) are last-write-wins here.
@@ -648,11 +648,12 @@ export class LiveTemplateClient {
           );
         }
       }
-      return;
+      return false;
     }
 
     this.logger.debug("sendNavigate", { href, data });
     this.send({ action: "__navigate__", data });
+    return true;
   }
 
   /**

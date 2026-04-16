@@ -4,15 +4,16 @@ export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
   handleNavigationResponse(html: string): void;
   // Send an in-band navigate message over the existing WebSocket.
-  // Used by the same-pathname fast path below: rather than fetching
-  // new HTML and replacing DOM, the client asks the server to re-run
-  // Mount with the new query params. Path-level navigation (different
-  // pathnames) still goes through handleNavigationResponse.
-  sendNavigate(href: string): void;
+  // Returns true if the message was sent, false if it was dropped
+  // (e.g. WS not open). The caller uses this to decide whether to push
+  // browser history state — only advancing the URL when the server will
+  // actually receive the navigate eliminates the TOCTOU window where
+  // the WS could close between canSendNavigate() and the actual send.
+  sendNavigate(href: string): boolean;
   // Returns true when an in-band navigate message can be sent (i.e.
-  // WebSocket mode is active). In HTTP mode this is always false, and
-  // the same-pathname fast path must fall through to a normal fetch so
-  // the URL and server state stay in sync.
+  // WebSocket mode is active and the socket is OPEN). In HTTP mode or
+  // when the WS is not yet open, this is false and the same-pathname
+  // fast path must fall through to a normal fetch.
   canSendNavigate(): boolean;
 }
 
@@ -156,15 +157,19 @@ export class LinkInterceptor {
         // in-band __navigate__ update.
         this.abortController?.abort();
         this.abortController = null;
-        if (pushState) {
+        // sendNavigate returns true if the WS message was actually sent.
+        // Push history state ONLY on success to prevent a TOCTOU window
+        // where the WS closes between canSendNavigate() and the actual
+        // send — which would advance the URL with no server-side effect.
+        const sent = this.context.sendNavigate(href);
+        if (sent && pushState) {
           window.history.pushState(null, "", href);
         }
-        this.context.sendNavigate(href);
         return;
       }
-      // HTTP mode (canSendNavigate=false): fall through to normal fetch even
-      // though pathname matches — skipping pushState until after fetch is not
-      // easy here, so we fall through and let handleNavigationResponse run.
+      // HTTP mode or WS not OPEN: fall through to normal fetch. pushState
+      // is handled downstream by the navigate() fetch path (after fetch
+      // resolves and handleNavigationResponse is called).
     }
 
     // Cancel any in-flight navigation fetch
