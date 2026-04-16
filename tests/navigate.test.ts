@@ -64,6 +64,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       getWrapperElement: () => wrapper,
       handleNavigationResponse: handleNavigationResponseSpy,
       sendNavigate: sendNavigateSpy,
+      canSendNavigate: () => true,
     };
     interceptor = new LinkInterceptor(ctx, silentLogger);
     interceptor.setup(wrapper);
@@ -191,5 +192,36 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     // The sendNavigate URL should be /claude (no query).
     const arg = sendNavigateSpy.mock.calls[0][0];
     expect(arg).not.toContain("s=");
+  });
+
+  it("HTTP mode: same-pathname click uses fetch, not navigate (canSendNavigate=false)", async () => {
+    // When canSendNavigate() returns false (HTTP mode), the interceptor
+    // must NOT enter the same-pathname fast path, because pushState would
+    // fire before sendNavigate is called and sendNavigate would bail early
+    // — leaving the URL permanently ahead of server state with no WS
+    // reconnect to recover it. The fix: fall through to a normal fetch.
+    interceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
+
+    const httpCtx: LinkInterceptorContext = {
+      getWrapperElement: () => wrapper,
+      handleNavigationResponse: handleNavigationResponseSpy,
+      sendNavigate: sendNavigateSpy,
+      canSendNavigate: () => false, // HTTP mode
+    };
+    const httpInterceptor = new LinkInterceptor(httpCtx, silentLogger);
+    httpInterceptor.setup(wrapper);
+
+    const link = document.createElement("a");
+    link.href = "/claude?s=new-session";
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    // Must use fetch (not sendNavigate) even though pathname matches.
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    httpInterceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
   });
 });

@@ -9,6 +9,11 @@ export interface LinkInterceptorContext {
   // Mount with the new query params. Path-level navigation (different
   // pathnames) still goes through handleNavigationResponse.
   sendNavigate(href: string): void;
+  // Returns true when an in-band navigate message can be sent (i.e.
+  // WebSocket mode is active). In HTTP mode this is always false, and
+  // the same-pathname fast path must fall through to a normal fetch so
+  // the URL and server state stay in sync.
+  canSendNavigate(): boolean;
 }
 
 /**
@@ -129,8 +134,14 @@ export class LinkInterceptor {
     const targetURL = new URL(href, window.location.origin);
     if (
       targetURL.origin === window.location.origin &&
-      targetURL.pathname === window.location.pathname
+      targetURL.pathname === window.location.pathname &&
+      this.context.canSendNavigate()
     ) {
+      // Same-pathname + WebSocket mode: use the in-band fast path.
+      // canSendNavigate() returns false in HTTP mode, which would cause
+      // pushState to fire without a corresponding server message and leave
+      // the URL permanently ahead of server state.
+      //
       // Abort any in-flight fetch even on the fast path: a user could
       // click a cross-path link (starting a fetch) and quickly click a
       // same-pathname link. Without aborting, the earlier fetch can

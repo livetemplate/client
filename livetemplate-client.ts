@@ -203,6 +203,7 @@ export class LiveTemplateClient {
         getWrapperElement: () => this.wrapperElement,
         handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
         sendNavigate: (href: string) => this.sendNavigate(href),
+        canSendNavigate: () => !this.useHTTP,
       },
       this.logger.child("LinkInterceptor")
     );
