@@ -36,7 +36,7 @@ const silentLogger: Logger = {
 describe("LinkInterceptor same-pathname navigate bypass", () => {
   let wrapper: HTMLElement;
   let sendNavigateSpy: jest.Mock<void, [string]>;
-  let handleNavigationResponseSpy: jest.Mock<void, [string, string]>;
+  let handleNavigationResponseSpy: jest.Mock<void, [string]>;
   let fetchMock: jest.SpyInstance;
   let interceptor: LinkInterceptor;
 

@@ -21,8 +21,8 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (html: string, href = window.location.href) => {
-    (client as any).handleNavigationResponse(html, href);
+  const callHandleNavigationResponse = (html: string) => {
+    (client as any).handleNavigationResponse(html);
   };
 
   describe("same-handler navigation", () => {
@@ -56,7 +56,7 @@ describe("handleNavigationResponse", () => {
         "</body></html>",
       ].join("");
 
-      callHandleNavigationResponse(html, "http://localhost/route-b?s=2");
+      callHandleNavigationResponse(html);
 
       // sendNavigate must NOT have been called — that would drop the path.
       expect(sendSpy).not.toHaveBeenCalled();

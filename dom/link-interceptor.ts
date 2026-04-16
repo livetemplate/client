@@ -2,7 +2,7 @@ import type { Logger } from "../utils/logger";
 
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
-  handleNavigationResponse(html: string, href: string): void;
+  handleNavigationResponse(html: string): void;
   // Send an in-band navigate message over the existing WebSocket.
   // Used by the same-pathname fast path below: rather than fetching
   // new HTML and replacing DOM, the client asks the server to re-run
@@ -170,7 +170,7 @@ export class LinkInterceptor {
         window.history.pushState(null, "", href);
       }
 
-      this.context.handleNavigationResponse(html, href);
+      this.context.handleNavigationResponse(html);
     } catch (e: unknown) {
       // AbortError means a new navigation superseded this one — ignore
       if (e instanceof DOMException && e.name === "AbortError") return;

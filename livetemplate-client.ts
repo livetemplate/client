@@ -201,7 +201,7 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string, href: string) => this.handleNavigationResponse(html, href),
+        handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
         sendNavigate: (href: string) => this.sendNavigate(href),
       },
       this.logger.child("LinkInterceptor")
@@ -592,15 +592,14 @@ export class LiveTemplateClient {
     this.liveUrlOverride = newLiveUrl;
     this.webSocketManager.setLiveUrl(newLiveUrl);
 
-    // If the WebSocket is not open and we are not in HTTP mode, the
-    // __navigate__ message cannot be delivered reliably. The liveUrl update
-    // above ensures the pending reconnect will use the new URL, so the
-    // user will land in the correct state once the connection recovers.
-    // Sending via the HTTP fallback is skipped here because __navigate__
-    // is a WebSocket-only in-band action; the server HTTP endpoint does
-    // not process it.
-    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ && !this.useHTTP) {
-      this.logger.warn("sendNavigate: WebSocket not open; liveUrl updated, awaiting reconnect", { href });
+    // __navigate__ is a WebSocket-only in-band action. Skip send() if:
+    //   - WebSocket is not OPEN (mid-reconnect, closed): message would be lost
+    //   - HTTP mode: send() would POST to the HTTP endpoint, which does not
+    //     process __navigate__
+    // In both cases the liveUrl update above ensures the pending/next
+    // reconnect will arrive at the correct state.
+    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ || this.useHTTP) {
+      this.logger.warn("sendNavigate: not sent (WS not open or HTTP mode); liveUrl updated", { href });
       return;
     }
 
@@ -707,7 +706,7 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
-  private handleNavigationResponse(html: string, href: string): void {
+  private handleNavigationResponse(html: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
