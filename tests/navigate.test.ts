@@ -224,4 +224,27 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
     httpInterceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
   });
+
+  it("hash-only popstate (same pathname + same search) does not trigger sendNavigate or fetch", async () => {
+    // Regression: the popstate listener calls navigate() directly, bypassing
+    // shouldSkip(). Without an explicit sameSearch guard in navigate(), a
+    // popstate to the same pathname+search with a different hash (e.g.
+    // /claude?s=initial → /claude?s=initial#section) would fire sendNavigate
+    // with data={} — a spurious server-side Mount re-run with no query change.
+    //
+    // Push a hash anchor so window.location changes to the hash URL.
+    history.pushState(null, "", "/claude?s=initial#section");
+    expect(window.location.search).toBe("?s=initial"); // search unchanged
+
+    // Dispatch popstate as the browser would on back/forward navigation.
+    window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    await Promise.resolve();
+
+    // No sendNavigate (hash-only, no search change) and no fetch.
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Restore location for other tests.
+    history.replaceState(null, "", "/claude?s=initial");
+  });
 });

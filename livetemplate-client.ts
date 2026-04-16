@@ -628,13 +628,18 @@ export class LiveTemplateClient {
           { href }
         );
       } else {
-        // WS is mid-reconnect (CONNECTING or CLOSING). The caller (link-interceptor)
-        // already pushed history state, so the browser URL reflects the new href.
-        // liveUrl was updated above, so the next WebSocket reconnect will arrive
-        // at the correct state — URL/state desync is temporary and self-healing.
+        // WS is CONNECTING (0) or CLOSING (2). liveUrl was updated above, so
+        // the next reconnect will use the new URL. However, for CONNECTING:
+        // if the in-progress handshake succeeds and the server lands on the
+        // OLD URL before reconnect fires, the navigate is silently lost until
+        // the socket later drops and reconnects. This is an edge case only when
+        // autoReconnect is enabled and the CONNECTING handshake completes at
+        // the old URL before being superseded. With autoReconnect enabled, the
+        // next drop+reconnect recovers correctly; with autoReconnect off, there
+        // may be no recovery until the user reloads.
         this.logger.warn(
           "sendNavigate: WS not open; browser URL is ahead of server state until reconnect",
-          { href }
+          { href, readyState }
         );
       }
       return;

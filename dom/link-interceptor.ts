@@ -119,41 +119,46 @@ export class LinkInterceptor {
   }
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
-    // Same-pathname fast path: query-string changed on the same route.
-    // This is definitionally same-handler (the server's mux routes by
-    // path), so we can skip the fetch entirely and just send an in-band
-    // navigate message over the existing WebSocket. The server re-runs
-    // Mount with the new query params, sends back a tree update, and
-    // the normal message handler applies it via morphdom.
-    //
-    // Before this fast path existed, same-pathname clicks went through
-    // fetch + replaceChildren, which swapped DOM but left the server's
-    // connSt.state pinned to the OLD query params — producing the
-    // "clicking any session always shows the first one" bug in
-    // devbox-dash.
     const targetURL = new URL(href, window.location.origin);
-    if (
+    const samePath =
       targetURL.origin === window.location.origin &&
-      targetURL.pathname === window.location.pathname &&
-      this.context.canSendNavigate()
-    ) {
-      // Same-pathname + WebSocket mode: use the in-band fast path.
-      // canSendNavigate() returns false in HTTP mode, which would cause
-      // pushState to fire without a corresponding server message and leave
-      // the URL permanently ahead of server state.
-      //
-      // Abort any in-flight fetch even on the fast path: a user could
-      // click a cross-path link (starting a fetch) and quickly click a
-      // same-pathname link. Without aborting, the earlier fetch can
-      // still resolve and call handleNavigationResponse, racing with the
-      // in-band __navigate__ update.
-      this.abortController?.abort();
-      this.abortController = null;
-      if (pushState) {
-        window.history.pushState(null, "", href);
+      targetURL.pathname === window.location.pathname;
+
+    if (samePath) {
+      const sameSearch = targetURL.search === window.location.search;
+      if (sameSearch) {
+        // Hash-only change or exact same URL — the browser handles scroll
+        // to the anchor; no server round-trip is needed. This guard also
+        // prevents a spurious __navigate__ from the popstate listener when
+        // the user navigates between same-pathname hash anchors (shouldSkip
+        // catches direct <a> clicks, but popstate calls navigate() directly
+        // and bypasses shouldSkip).
+        return;
       }
-      this.context.sendNavigate(href);
-      return;
+
+      if (this.context.canSendNavigate()) {
+        // Same-pathname, different search, WebSocket mode: use the in-band
+        // fast path. Before this existed, same-pathname clicks went through
+        // fetch + replaceChildren, which swapped DOM but left server state
+        // pinned to the OLD query params ("clicking any session always shows
+        // the first one" bug in devbox-dash).
+        //
+        // Abort any in-flight fetch even on the fast path: a user could
+        // click a cross-path link (starting a fetch) and quickly click a
+        // same-pathname link. Without aborting, the earlier fetch can
+        // still resolve and call handleNavigationResponse, racing with the
+        // in-band __navigate__ update.
+        this.abortController?.abort();
+        this.abortController = null;
+        if (pushState) {
+          window.history.pushState(null, "", href);
+        }
+        this.context.sendNavigate(href);
+        return;
+      }
+      // HTTP mode (canSendNavigate=false): fall through to normal fetch even
+      // though pathname matches — skipping pushState until after fetch is not
+      // easy here, so we fall through and let handleNavigationResponse run.
     }
 
     // Cancel any in-flight navigation fetch
