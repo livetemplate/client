@@ -5,6 +5,23 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `lvt-preserve` attribute: morphdom escape hatch that skips an element and its subtree entirely during diff (equivalent to Phoenix LiveView's `phx-update="ignore"`). Checked on `toEl` so the server retains authority to remove it.
+- `lvt-preserve-attrs` attribute: morphdom escape hatch that preserves user-managed attributes (e.g. `open` on `<details>`) while still diffing children. Protects attributes the server template does **not** set. Checked on `toEl` for consistent server authority.
+- In-band `__navigate__` SPA navigation: same-pathname link clicks send `{action:"__navigate__", data:<params>}` over the existing WebSocket instead of fetching new HTML. Requires server-side support (livetemplate/livetemplate#344).
+- DOMParser fallback in `updateDOM`: HTML containing `<script>` tags is now parsed via `DOMParser` to avoid a Chrome `innerHTML` bug that creates phantom duplicate DOM nodes after script tags.
+
+### Breaking Changes
+
+- **Cross-pathname same-handler navigation now always reconnects.** Previously, if two routes shared the same `data-lvt-id`, navigating between them would do an in-place DOM swap without reconnecting. This fast path has been removed; all cross-pathname navigations (regardless of handler ID) now trigger a full WebSocket reconnect. This is the correct behavior — same-ID across paths means two distinct routes, and `sendNavigate` cannot express a path change. **If your app shares a `data-lvt-id` across routes, expect a reconnect flash where there was none before.**
+
+### Deployment note
+
+The `__navigate__` in-band action is a no-op on server versions before livetemplate/livetemplate#344. Deploy the server update before or simultaneously with this client version to avoid same-pathname link clicks sending an unrecognized WebSocket action.
+
 ## [v0.8.25] - 2026-04-15
 
 ### Changes
