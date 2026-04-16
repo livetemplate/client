@@ -598,11 +598,11 @@ export class LiveTemplateClient {
       data[k] = v;
     });
 
-    // Keep liveUrl in sync so that any subsequent WebSocket reconnect uses
-    // the new URL's query params rather than the initial-connect URL. This
-    // matters if the socket is mid-reconnect when sendNavigate is called —
-    // the message would not be sent, but the reconnect that follows will
-    // use the updated liveUrl and arrive at the correct state.
+    // Tentatively update liveUrl — if the send succeeds this stays; if it
+    // fails we revert so liveUrlOverride stays consistent with window.location
+    // (no pushState fired on failure). An inconsistent liveUrlOverride would
+    // cause a future reconnect to land on a URL the browser doesn't show.
+    const previousLiveUrl = this.liveUrlOverride;
     const newLiveUrl = url.pathname + url.search;
     this.liveUrlOverride = newLiveUrl;
     this.webSocketManager.setLiveUrl(newLiveUrl);
@@ -613,11 +613,6 @@ export class LiveTemplateClient {
     // Note: this.useHTTP is not checked here because sendNavigate() is only
     // reachable when canSendNavigate() returns true (i.e. !this.useHTTP),
     // enforced by LinkInterceptor. Checking useHTTP here would be dead code.
-    //
-    // liveUrl was updated above, so a pending or future reconnect will land
-    // on the correct URL. If autoReconnect is disabled and the socket is
-    // CLOSED (readyState 3), the navigate is lost until the user reloads —
-    // emit an error so this is visible in logs.
     if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */) {
       const readyState = this.webSocketManager.getReadyState();
       if (readyState === 3 /* CLOSED */) {
@@ -648,6 +643,12 @@ export class LiveTemplateClient {
           );
         }
       }
+      // Revert: browser URL won't change (no pushState on failure), so keep
+      // liveUrlOverride consistent with window.location to avoid a future
+      // reconnect landing on a URL the browser does not display.
+      this.liveUrlOverride = previousLiveUrl;
+      const revertUrl = previousLiveUrl ?? this.options.liveUrl ?? "/live";
+      this.webSocketManager.setLiveUrl(revertUrl);
       return false;
     }
 
