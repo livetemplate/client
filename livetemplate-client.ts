@@ -617,7 +617,15 @@ export class LiveTemplateClient {
           { href }
         );
       } else {
-        this.logger.warn("sendNavigate: not sent (WS not open or HTTP mode); liveUrl updated", { href });
+        // The caller (link-interceptor) already pushed history state, so the
+        // browser URL reflects the new href. The navigate message could not
+        // be sent, but liveUrl was updated above, so the next WebSocket
+        // reconnect will arrive at the correct state — the URL/state desync
+        // is temporary and self-healing when autoReconnect is enabled.
+        this.logger.warn(
+          "sendNavigate: not sent (WS not open or HTTP mode); browser URL may be ahead of server state until reconnect",
+          { href }
+        );
       }
       return;
     }
