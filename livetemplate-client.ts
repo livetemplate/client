@@ -601,27 +601,20 @@ export class LiveTemplateClient {
     this.liveUrlOverride = newLiveUrl;
     this.webSocketManager.setLiveUrl(newLiveUrl);
 
-    // __navigate__ is a WebSocket-only in-band action. Skip send() if:
-    //   - WebSocket is not OPEN (mid-reconnect, closed): message would be lost
-    //   - HTTP mode: send() would POST to the HTTP endpoint, which does not
-    //     process __navigate__
+    // __navigate__ is a WebSocket-only in-band action — only call send()
+    // when the socket is actually OPEN.
+    //
+    // Note: this.useHTTP is not checked here because sendNavigate() is only
+    // reachable when canSendNavigate() returns true (i.e. !this.useHTTP),
+    // enforced by LinkInterceptor. Checking useHTTP here would be dead code.
+    //
     // liveUrl was updated above, so a pending or future reconnect will land
     // on the correct URL. If autoReconnect is disabled and the socket is
     // CLOSED (readyState 3), the navigate is lost until the user reloads —
     // emit an error so this is visible in logs.
-    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ || this.useHTTP) {
+    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */) {
       const readyState = this.webSocketManager.getReadyState();
-      if (this.useHTTP) {
-        // HTTP mode has no persistent connection to reconnect on — there is
-        // no self-healing path. The browser URL already changed (pushState
-        // fired before sendNavigate was called) and server state is now
-        // permanently out of sync unless the user reloads.
-        this.logger.error(
-          "sendNavigate: HTTP mode does not support in-band navigation; browser URL may be permanently out of sync. " +
-          "Use a full page navigation instead.",
-          { href }
-        );
-      } else if (readyState === 3 /* CLOSED */) {
+      if (readyState === 3 /* CLOSED */) {
         this.logger.error(
           "sendNavigate: WebSocket is CLOSED and autoReconnect may be disabled; " +
           "navigate message dropped. Reload or re-enable autoReconnect.",

@@ -133,6 +133,12 @@ export class LinkInterceptor {
         // the user navigates between same-pathname hash anchors (shouldSkip
         // catches direct <a> clicks, but popstate calls navigate() directly
         // and bypasses shouldSkip).
+        //
+        // Still abort any in-flight cross-path fetch: if a fetch was in
+        // progress when the user clicked a hash anchor, we don't want it
+        // to resolve and call handleNavigationResponse unexpectedly.
+        this.abortController?.abort();
+        this.abortController = null;
         return;
       }
 
