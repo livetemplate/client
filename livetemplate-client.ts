@@ -723,6 +723,13 @@ export class LiveTemplateClient {
       // When the pathname changed, fall through to the cross-handler
       // reconnect path below, which handles same-ID same-handler
       // (different path) the same as a genuine handler switch.
+      // Note: through the normal LinkInterceptor callsite, same-pathname
+      // navigations are intercepted by the fast path before a fetch is
+      // issued, so handleNavigationResponse is only reachable when the
+      // pathname changed and targetPathname !== prePushPathname. The
+      // equality branch below is therefore structurally unreachable via
+      // LinkInterceptor; it exists as a correct fallback for any direct
+      // caller that passes a same-path href (e.g. navigation.test.ts).
       const targetPathname = new URL(href, window.location.origin).pathname;
       if (targetPathname === prePushPathname) {
         this.sendNavigate(href);
@@ -973,14 +980,16 @@ export class LiveTemplateClient {
     // duplicate DOM nodes after the closing tag. DOMParser doesn't have
     // this quirk because it returns a standalone document.
     //
-    // Case-insensitive check: HTML tag names are case-insensitive, so
-    // <SCRIPT> or <Script> must also route through DOMParser.
+    // Regex /<script[\s>]/i is more precise than a plain string search:
+    // it avoids false positives from "<script" appearing inside attribute
+    // values (e.g. data-content="<script") or HTML comments, while still
+    // matching <script>, <script type="..."> and <SCRIPT> case-insensitively.
     //
     // Wrap with the same tagName as the target element (not a hard-coded
     // <div>) so that DOMParser applies the correct HTML parsing rules.
     // Wrapping <tr>/<td>/<option> content in a <div> can trigger
     // browser re-parenting; using the real container tag avoids that.
-    if (result.html.toLowerCase().includes("<script")) {
+    if (/<script[\s>]/i.test(result.html)) {
       const wrapTag = element.tagName.toLowerCase();
       const parser = new DOMParser();
       const doc = parser.parseFromString(
