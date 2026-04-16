@@ -21,8 +21,8 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (html: string) => {
-    (client as any).handleNavigationResponse(html);
+  const callHandleNavigationResponse = (html: string, href = window.location.href) => {
+    (client as any).handleNavigationResponse(html, href);
   };
 
   describe("same-handler navigation", () => {

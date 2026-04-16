@@ -130,6 +130,40 @@ describe("lvt-preserve attribute", () => {
     expect((cards[1] as HTMLElement).classList.contains("current")).toBe(true);
   });
 
+  it("server can remove lvt-preserve-attrs by omitting it in a later update", () => {
+    // The attribute-copy loop must NOT copy the lvt-preserve-attrs control
+    // attribute itself back onto toEl. If it did, the server could never
+    // remove the attribute in a future render (it would always be re-added
+    // by the copy loop before morphdom sees the diff).
+    const initialTree = {
+      s: [
+        `<details lvt-preserve-attrs class="picker"><summary>Pick</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="card">item</a>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const details = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(details.hasAttribute("lvt-preserve-attrs")).toBe(true);
+
+    // Server pushes an update WITHOUT lvt-preserve-attrs — it is opting
+    // the element back out of attribute preservation.
+    const updateTree = {
+      s: [
+        `<details class="picker"><summary>Pick</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="card">item</a>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const detailsAfter = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(detailsAfter).not.toBeNull();
+    // The control attribute must be gone — the server has opted out.
+    expect(detailsAfter.hasAttribute("lvt-preserve-attrs")).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that

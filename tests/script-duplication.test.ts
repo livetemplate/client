@@ -56,6 +56,26 @@ describe("inline script duplication", () => {
     expect(textOccurrences).toBe(1);
   });
 
+  it("uppercase <SCRIPT> tag also routes through DOMParser (case-insensitive)", () => {
+    // HTML tag names are case-insensitive; <SCRIPT> must be treated the
+    // same as <script> so that the DOMParser path (which prevents phantom
+    // duplication) is used regardless of casing.
+    const tree = {
+      s: [
+        '<div class="before">before</div>',
+        '<SCRIPT>var y = 2;</SCRIPT>',
+        '<div class="after">after</div>',
+      ],
+      0: "",
+      1: "",
+    };
+
+    client.updateDOM(wrapper, tree);
+
+    expect(wrapper.querySelectorAll(".after").length).toBe(1);
+    expect(wrapper.querySelectorAll(".before").length).toBe(1);
+  });
+
   it("a second updateDOM does not cause further duplication", () => {
     const tree = {
       s: [

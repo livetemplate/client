@@ -36,9 +36,8 @@ const silentLogger: Logger = {
 describe("LinkInterceptor same-pathname navigate bypass", () => {
   let wrapper: HTMLElement;
   let sendNavigateSpy: jest.Mock<void, [string]>;
-  let handleNavigationResponseSpy: jest.Mock<void, [string]>;
-  let fetchMock: jest.Mock;
-  let originalFetch: typeof fetch | undefined;
+  let handleNavigationResponseSpy: jest.Mock<void, [string, string]>;
+  let fetchMock: jest.SpyInstance;
   let interceptor: LinkInterceptor;
 
   beforeEach(() => {
@@ -49,13 +48,17 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
     sendNavigateSpy = jest.fn();
     handleNavigationResponseSpy = jest.fn();
-    // jsdom doesn't ship a global fetch, so install a mock directly
-    // and restore whatever was there (usually undefined) on teardown.
-    fetchMock = jest.fn(() =>
-      Promise.resolve(new Response("<html></html>", { status: 200 }))
-    );
-    originalFetch = (globalThis as any).fetch;
-    (globalThis as any).fetch = fetchMock;
+    // jsdom doesn't ship a global fetch; define a no-op stub so jest.spyOn
+    // has something to wrap. jest.restoreAllMocks() in afterEach then cleans
+    // up the spy automatically, even if beforeEach throws after this point.
+    if (typeof (globalThis as any).fetch !== "function") {
+      (globalThis as any).fetch = () => {};
+    }
+    fetchMock = jest
+      .spyOn(globalThis as any, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response("<html></html>", { status: 200 }))
+      );
 
     const ctx: LinkInterceptorContext = {
       getWrapperElement: () => wrapper,
@@ -72,7 +75,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
   });
 
   afterEach(() => {
-    (globalThis as any).fetch = originalFetch;
+    jest.restoreAllMocks();
     // Tear down any listeners the interceptor added to document.
     interceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
   });
@@ -131,6 +134,46 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     expect(sendNavigateSpy).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(handleNavigationResponseSpy).not.toHaveBeenCalled();
+  });
+
+  it("same-pathname click aborts any in-flight cross-path fetch", async () => {
+    // Regression: if a cross-path fetch is in flight and the user then
+    // clicks a same-pathname link, the earlier fetch must be aborted so
+    // it cannot later call handleNavigationResponse and race with the
+    // in-band __navigate__ update.
+
+    // First, initiate a cross-path fetch that never resolves until aborted.
+    let capturedSignal: AbortSignal | null = null;
+    fetchMock.mockImplementation((_url: string, opts: RequestInit) => {
+      capturedSignal = opts.signal as AbortSignal;
+      // Never resolve — the test controls when this settles via the signal.
+      return new Promise((_resolve, _reject) => {
+        opts.signal?.addEventListener("abort", () => {
+          _reject(new DOMException("AbortError", "AbortError"));
+        });
+      });
+    });
+
+    const crossPathLink = document.createElement("a");
+    crossPathLink.href = "/other-page?x=1";
+    wrapper.appendChild(crossPathLink);
+    crossPathLink.click();
+    await Promise.resolve();
+
+    // Cross-path click should have started a fetch and captured the signal.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(capturedSignal).not.toBeNull();
+    expect((capturedSignal as unknown as AbortSignal).aborted).toBe(false);
+
+    // Now click a same-pathname link — this must abort the in-flight fetch.
+    const samePathLink = document.createElement("a");
+    samePathLink.href = "/claude?s=fast-nav";
+    wrapper.appendChild(samePathLink);
+    samePathLink.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).toHaveBeenCalledTimes(1);
+    expect((capturedSignal as unknown as AbortSignal).aborted).toBe(true);
   });
 
   it("same-pathname with no query string still sends navigate (empty data)", async () => {

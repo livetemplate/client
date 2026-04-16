@@ -2,7 +2,7 @@ import type { Logger } from "../utils/logger";
 
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
-  handleNavigationResponse(html: string): void;
+  handleNavigationResponse(html: string, href: string): void;
   // Send an in-band navigate message over the existing WebSocket.
   // Used by the same-pathname fast path below: rather than fetching
   // new HTML and replacing DOM, the client asks the server to re-run
@@ -131,6 +131,13 @@ export class LinkInterceptor {
       targetURL.origin === window.location.origin &&
       targetURL.pathname === window.location.pathname
     ) {
+      // Abort any in-flight fetch even on the fast path: a user could
+      // click a cross-path link (starting a fetch) and quickly click a
+      // same-pathname link. Without aborting, the earlier fetch can
+      // still resolve and call handleNavigationResponse, racing with the
+      // in-band __navigate__ update.
+      this.abortController?.abort();
+      this.abortController = null;
       if (pushState) {
         window.history.pushState(null, "", href);
       }
@@ -163,7 +170,7 @@ export class LinkInterceptor {
         window.history.pushState(null, "", href);
       }
 
-      this.context.handleNavigationResponse(html);
+      this.context.handleNavigationResponse(html, href);
     } catch (e: unknown) {
       // AbortError means a new navigation superseded this one — ignore
       if (e instanceof DOMException && e.name === "AbortError") return;

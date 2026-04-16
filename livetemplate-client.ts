@@ -201,7 +201,7 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+        handleNavigationResponse: (html: string, href: string) => this.handleNavigationResponse(html, href),
         sendNavigate: (href: string) => this.sendNavigate(href),
       },
       this.logger.child("LinkInterceptor")
@@ -685,7 +685,7 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
-  private handleNavigationResponse(html: string): void {
+  private handleNavigationResponse(html: string, href: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
@@ -722,7 +722,10 @@ export class LiveTemplateClient {
       // same-handler nav we throw it away — the server-authored tree
       // update is the source of truth and will overwrite any local DOM
       // differences via morphdom.
-      this.sendNavigate(window.location.href);
+      // Use the original navigation target href rather than re-reading
+      // window.location.href — avoids a subtle race where another
+      // navigation could change the location between pushState and here.
+      this.sendNavigate(href);
       return;
     }
 
@@ -967,10 +970,19 @@ export class LiveTemplateClient {
     // innerHTML parser handles scripts specially and can create phantom
     // duplicate DOM nodes after the closing tag. DOMParser doesn't have
     // this quirk because it returns a standalone document.
-    if (result.html.includes("<scr" + "ipt")) {
+    //
+    // Case-insensitive check: HTML tag names are case-insensitive, so
+    // <SCRIPT> or <Script> must also route through DOMParser.
+    //
+    // Wrap with the same tagName as the target element (not a hard-coded
+    // <div>) so that DOMParser applies the correct HTML parsing rules.
+    // Wrapping <tr>/<td>/<option> content in a <div> can trigger
+    // browser re-parenting; using the real container tag avoids that.
+    if (result.html.toLowerCase().includes("<script")) {
+      const wrapTag = element.tagName.toLowerCase();
       const parser = new DOMParser();
       const doc = parser.parseFromString(
-        "<div>" + result.html + "</div>",
+        `<${wrapTag}>${result.html}</${wrapTag}>`,
         "text/html"
       );
       const root = doc.body.firstElementChild;
@@ -1064,6 +1076,16 @@ export class LiveTemplateClient {
           const toElement = toEl as Element;
           for (let i = 0; i < fromAttrs.length; i++) {
             const attr = fromAttrs[i];
+            // Skip the preserve control attributes themselves so the
+            // server can opt elements in/out across renders. If we
+            // copied lvt-preserve-attrs back onto toEl, the server
+            // could never remove the attribute in a future update.
+            if (
+              attr.name === "lvt-preserve" ||
+              attr.name === "lvt-preserve-attrs"
+            ) {
+              continue;
+            }
             if (!toElement.hasAttribute(attr.name)) {
               toElement.setAttribute(attr.name, attr.value);
             }
