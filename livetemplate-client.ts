@@ -201,7 +201,7 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string, href: string) => this.handleNavigationResponse(html, href),
+        handleNavigationResponse: (html: string, href: string, prePushPathname: string) => this.handleNavigationResponse(html, href, prePushPathname),
         sendNavigate: (href: string) => this.sendNavigate(href),
       },
       this.logger.child("LinkInterceptor")
@@ -685,7 +685,7 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
-  private handleNavigationResponse(html: string, href: string): void {
+  private handleNavigationResponse(html: string, href: string, prePushPathname: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
@@ -706,27 +706,29 @@ export class LiveTemplateClient {
       : null;
 
     if (sameWrapper) {
-      // Same-handler navigation = query-param change on the same path.
-      // Instead of replacing the whole DOM (which would require a full
-      // WebSocket reconnect to keep server state in sync — the former
-      // behaviour silently dropped the second part and caused stale
-      // state bugs like devbox-dash's "always shows the second session"
-      // regression), we send an in-band navigate message over the
-      // existing WebSocket. The server's event loop intercepts the
-      // reserved __navigate__ action, re-runs Mount with the new query
-      // params, and pushes a tree update back — which the normal
-      // WebSocket message handler applies via morphdom. No reconnect,
-      // no DOM churn, no stale state.
+      // In-band navigate is only correct when the PATHNAME is unchanged.
+      // sendNavigate ships only query-param data to the server, which
+      // re-runs Mount on the existing route. If two different paths share
+      // the same handler ID, calling sendNavigate for a path change would
+      // silently discard the new path and re-run Mount on the wrong route.
       //
-      // We've already parsed the fetched HTML above, but for
-      // same-handler nav we throw it away — the server-authored tree
-      // update is the source of truth and will overwrite any local DOM
-      // differences via morphdom.
-      // Use the original navigation target href rather than re-reading
-      // window.location.href — avoids a subtle race where another
-      // navigation could change the location between pushState and here.
-      this.sendNavigate(href);
-      return;
+      // prePushPathname is the pathname captured BEFORE history.pushState
+      // was called, so it reliably reflects the original route even though
+      // window.location has already been updated by the time we arrive here.
+      //
+      // When the pathname IS the same (query-string-only change), the
+      // in-band navigate avoids a full WebSocket reconnect — no DOM churn,
+      // no stale-state risk from reconnect races.
+      //
+      // When the pathname changed, fall through to the cross-handler
+      // reconnect path below, which handles same-ID same-handler
+      // (different path) the same as a genuine handler switch.
+      const targetPathname = new URL(href, window.location.origin).pathname;
+      if (targetPathname === prePushPathname) {
+        this.sendNavigate(href);
+        return;
+      }
+      // Pathname changed — fall through to reconnect.
     }
 
     // Check for a different handler's wrapper (cross-handler navigation)
@@ -987,12 +989,14 @@ export class LiveTemplateClient {
       );
       const root = doc.body.firstElementChild;
       if (root) {
-        while (tempWrapper.firstChild) {
-          tempWrapper.removeChild(tempWrapper.firstChild);
-        }
-        while (root.firstChild) {
-          tempWrapper.appendChild(root.firstChild);
-        }
+        // Array.from snapshots the live NodeList before replaceChildren
+        // starts moving nodes, keeping iteration stable.
+        //
+        // Note: DOMParser still re-parents bare table-cell content (tr/td
+        // without surrounding table+tbody) even when wrapTag matches.
+        // Slots rendered into table-cell elements with <script> tags are
+        // an edge case; a follow-up can add a full-table wrapper for those.
+        tempWrapper.replaceChildren(...Array.from(root.childNodes));
       } else {
         tempWrapper.innerHTML = result.html;
       }

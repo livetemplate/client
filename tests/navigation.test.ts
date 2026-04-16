@@ -21,8 +21,12 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (html: string, href = window.location.href) => {
-    (client as any).handleNavigationResponse(html, href);
+  const callHandleNavigationResponse = (
+    html: string,
+    href = window.location.href,
+    prePushPathname = window.location.pathname
+  ) => {
+    (client as any).handleNavigationResponse(html, href, prePushPathname);
   };
 
   describe("same-handler navigation", () => {
@@ -70,6 +74,47 @@ describe("handleNavigationResponse", () => {
         data: { s: "new-value" },
       });
 
+      sendSpy.mockRestore();
+    });
+
+    it("falls through to reconnect when pathname changed even if handler ID matches", () => {
+      // Regression: two different routes sharing the same data-lvt-id caused
+      // sendNavigate to be called with the new URL, silently discarding the
+      // path change — the server re-ran Mount on the wrong route.
+      // Fix: the sameWrapper branch guards on prePushPathname equality before
+      // calling sendNavigate; mismatched pathname falls through to reconnect.
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client as any, "connect")
+        .mockResolvedValue(undefined);
+      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+
+      const html = [
+        "<html><body>",
+        // Same data-lvt-id, but delivered from a different path.
+        '<div data-lvt-id="lvt-handler-a">',
+        "<p>Content from /route-b</p>",
+        "</div>",
+        "</body></html>",
+      ].join("");
+
+      // Simulate: user was on /route-a, navigated to /route-b (different
+      // path, same handler ID). prePushPathname is the ORIGINAL path.
+      callHandleNavigationResponse(
+        html,
+        "http://localhost/route-b?s=2",
+        "/route-a"
+      );
+
+      // sendNavigate must NOT have been called — that would drop the path.
+      expect(sendSpy).not.toHaveBeenCalled();
+      // Reconnect path must have fired instead.
+      expect(disconnectSpy).toHaveBeenCalled();
+
+      disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
       sendSpy.mockRestore();
     });
 
