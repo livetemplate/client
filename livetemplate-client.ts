@@ -203,7 +203,13 @@ export class LiveTemplateClient {
         getWrapperElement: () => this.wrapperElement,
         handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
         sendNavigate: (href: string) => this.sendNavigate(href),
-        canSendNavigate: () => !this.useHTTP,
+        // Only take the in-band fast path when the WS is actually OPEN.
+        // If WS is CONNECTING or CLOSED, falling through to the normal fetch
+        // path is safer: pushState fires after the fetch resolves (not before),
+        // so the browser URL never gets ahead of server state.
+        canSendNavigate: () =>
+          !this.useHTTP &&
+          this.webSocketManager.getReadyState() === 1 /* WebSocket.OPEN */,
       },
       this.logger.child("LinkInterceptor")
     );
