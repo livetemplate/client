@@ -579,6 +579,9 @@ export class LiveTemplateClient {
   private sendNavigate(href: string): void {
     const url = new URL(href, window.location.origin);
     const data: Record<string, string> = {};
+    // Note: duplicate keys (e.g. ?tag=a&tag=b) are last-write-wins here.
+    // LiveTemplate routes use scalar string params by convention. Routes
+    // that need repeated params should not use sendNavigate directly.
     url.searchParams.forEach((v, k) => {
       data[k] = v;
     });
@@ -1057,12 +1060,18 @@ export class LiveTemplateClient {
         // mutate their own DOM, and for scroll containers with
         // JS-managed scrollTop.
         //
+        // We check toEl (the incoming server version) rather than fromEl
+        // (the current DOM). This gives the server authority: if a later
+        // render omits lvt-preserve, morphdom resumes updating the element.
+        // Checking fromEl would make the attribute sticky in the DOM
+        // forever once applied, preventing the server from ever removing it.
+        //
         // For the subtler case of "preserve my *attributes* but still
         // let children update" (e.g. <details open>, <select> with
         // user-selected options), use lvt-preserve-attrs below.
         if (
-          fromEl.nodeType === Node.ELEMENT_NODE &&
-          (fromEl as Element).hasAttribute("lvt-preserve")
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute("lvt-preserve")
         ) {
           return false;
         }

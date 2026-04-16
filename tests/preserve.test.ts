@@ -130,6 +130,36 @@ describe("lvt-preserve attribute", () => {
     expect((cards[1] as HTMLElement).classList.contains("current")).toBe(true);
   });
 
+  it("server can remove lvt-preserve by omitting it in the next full template", () => {
+    // lvt-preserve is checked on toEl (the incoming server version), not
+    // fromEl (the current DOM). This means the server retains authority:
+    // a later render that omits lvt-preserve lets morphdom resume updating
+    // the element. Checking fromEl would make the attribute sticky forever.
+    const initialTree = {
+      s: [`<div lvt-preserve class="widget">`, `</div>`],
+      0: "server-initial",
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const widget = wrapper.querySelector(".widget") as HTMLElement;
+    // Simulate the widget mutating its own DOM.
+    widget.textContent = "client-modified";
+
+    // Server sends a NEW template that removes lvt-preserve.
+    const removedTree = {
+      s: [`<div class="widget">`, `</div>`],
+      0: "server-updated",
+    };
+    client.updateDOM(wrapper, removedTree);
+
+    // Now that lvt-preserve is gone from the template, morphdom should
+    // have applied the server's update, overwriting the client state.
+    const widgetAfter = wrapper.querySelector(".widget") as HTMLElement;
+    expect(widgetAfter).not.toBeNull();
+    expect(widgetAfter.textContent).toBe("server-updated");
+    expect(widgetAfter.hasAttribute("lvt-preserve")).toBe(false);
+  });
+
   it("server can remove lvt-preserve-attrs by omitting it in a later update", () => {
     // The attribute-copy loop must NOT copy the lvt-preserve-attrs control
     // attribute itself back onto toEl. If it did, the server could never
