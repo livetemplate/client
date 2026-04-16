@@ -599,10 +599,21 @@ export class LiveTemplateClient {
     //   - WebSocket is not OPEN (mid-reconnect, closed): message would be lost
     //   - HTTP mode: send() would POST to the HTTP endpoint, which does not
     //     process __navigate__
-    // In both cases the liveUrl update above ensures the pending/next
-    // reconnect will arrive at the correct state.
+    // liveUrl was updated above, so a pending or future reconnect will land
+    // on the correct URL. If autoReconnect is disabled and the socket is
+    // CLOSED (readyState 3), the navigate is lost until the user reloads —
+    // emit an error so this is visible in logs.
     if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ || this.useHTTP) {
-      this.logger.warn("sendNavigate: not sent (WS not open or HTTP mode); liveUrl updated", { href });
+      const readyState = this.webSocketManager.getReadyState();
+      if (readyState === 3 /* CLOSED */ && !this.useHTTP) {
+        this.logger.error(
+          "sendNavigate: WebSocket is CLOSED and autoReconnect may be disabled; " +
+          "navigate message dropped. Reload or re-enable autoReconnect.",
+          { href }
+        );
+      } else {
+        this.logger.warn("sendNavigate: not sent (WS not open or HTTP mode); liveUrl updated", { href });
+      }
       return;
     }
 
@@ -1012,7 +1023,13 @@ export class LiveTemplateClient {
         // an edge case; a follow-up can add a full-table wrapper for those.
         tempWrapper.replaceChildren(...Array.from(root.childNodes));
       } else {
-        tempWrapper.innerHTML = result.html;
+        // root is null when the HTML parser produced no element child for
+        // our wrapper tag (e.g. the wrapper was itself re-parented or the
+        // fragment is text-only). Fall back to doc.body children — the
+        // content is still present there, already parsed by DOMParser
+        // without the script-duplication quirk that innerHTML triggers.
+        this.logger.warn("[updateDOM] DOMParser: no wrapper root element; using doc.body children");
+        tempWrapper.replaceChildren(...Array.from(doc.body.childNodes));
       }
     } else {
       tempWrapper.innerHTML = result.html;
@@ -1091,6 +1108,12 @@ export class LiveTemplateClient {
         // over client for attributes the template does control), which
         // preserves the ability to update className etc. on the same
         // element from the server.
+        //
+        // Limitation: only *missing* attributes from fromEl are copied.
+        // If the server's toEl already has e.g. class="card", that value
+        // is used — JS-added classes (el.classList.add('open')) are
+        // silently overwritten on the next diff. Use lvt-preserve-attrs
+        // for attributes the server template does NOT set at all.
         if (
           fromEl.nodeType === Node.ELEMENT_NODE &&
           (fromEl as Element).hasAttribute("lvt-preserve-attrs") &&
