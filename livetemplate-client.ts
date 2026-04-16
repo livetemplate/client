@@ -1125,6 +1125,11 @@ export class LiveTemplateClient {
         // For the subtler case of "preserve my *attributes* but still
         // let children update" (e.g. <details open>, <select> with
         // user-selected options), use lvt-preserve-attrs below.
+        //
+        // Priority: lvt-preserve is checked first and returns early; if
+        // toEl has lvt-preserve, lvt-preserve-attrs on the same element
+        // is never reached. lvt-preserve wins (full freeze > partial
+        // attribute-only freeze).
         if (
           toEl.nodeType === Node.ELEMENT_NODE &&
           (toEl as Element).hasAttribute("lvt-preserve")

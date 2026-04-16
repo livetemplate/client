@@ -158,18 +158,23 @@ export class LinkInterceptor {
         this.abortController?.abort();
         this.abortController = null;
         // sendNavigate returns true if the WS message was actually sent.
-        // Push history state ONLY on success to prevent a TOCTOU window
-        // where the WS closes between canSendNavigate() and the actual
-        // send — which would advance the URL with no server-side effect.
+        // Push history state ONLY on success to keep window.location
+        // consistent with what the server received.
+        // If sent === false (defensive path — normally unreachable since
+        // canSendNavigate() already checked readyState), fall through to
+        // the normal fetch so the navigation isn't silently dropped.
         const sent = this.context.sendNavigate(href);
-        if (sent && pushState) {
-          window.history.pushState(null, "", href);
+        if (sent) {
+          if (pushState) {
+            window.history.pushState(null, "", href);
+          }
+          return;
         }
-        return;
+        // sendNavigate returned false — fall through to fetch as recovery.
       }
-      // HTTP mode or WS not OPEN: fall through to normal fetch. pushState
-      // is handled downstream by the navigate() fetch path (after fetch
-      // resolves and handleNavigationResponse is called).
+      // HTTP mode, WS not OPEN, or sendNavigate returned false:
+      // fall through to normal fetch. pushState is handled downstream by
+      // the fetch path (after the response resolves).
     }
 
     // Cancel any in-flight navigation fetch
