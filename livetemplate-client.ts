@@ -610,20 +610,29 @@ export class LiveTemplateClient {
     // emit an error so this is visible in logs.
     if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */ || this.useHTTP) {
       const readyState = this.webSocketManager.getReadyState();
-      if (readyState === 3 /* CLOSED */ && !this.useHTTP) {
+      if (this.useHTTP) {
+        // HTTP mode has no persistent connection to reconnect on — there is
+        // no self-healing path. The browser URL already changed (pushState
+        // fired before sendNavigate was called) and server state is now
+        // permanently out of sync unless the user reloads.
+        this.logger.error(
+          "sendNavigate: HTTP mode does not support in-band navigation; browser URL may be permanently out of sync. " +
+          "Use a full page navigation instead.",
+          { href }
+        );
+      } else if (readyState === 3 /* CLOSED */) {
         this.logger.error(
           "sendNavigate: WebSocket is CLOSED and autoReconnect may be disabled; " +
           "navigate message dropped. Reload or re-enable autoReconnect.",
           { href }
         );
       } else {
-        // The caller (link-interceptor) already pushed history state, so the
-        // browser URL reflects the new href. The navigate message could not
-        // be sent, but liveUrl was updated above, so the next WebSocket
-        // reconnect will arrive at the correct state — the URL/state desync
-        // is temporary and self-healing when autoReconnect is enabled.
+        // WS is mid-reconnect (CONNECTING or CLOSING). The caller (link-interceptor)
+        // already pushed history state, so the browser URL reflects the new href.
+        // liveUrl was updated above, so the next WebSocket reconnect will arrive
+        // at the correct state — URL/state desync is temporary and self-healing.
         this.logger.warn(
-          "sendNavigate: not sent (WS not open or HTTP mode); browser URL may be ahead of server state until reconnect",
+          "sendNavigate: WS not open; browser URL is ahead of server state until reconnect",
           { href }
         );
       }
@@ -811,6 +820,12 @@ export class LiveTemplateClient {
       // page path and the WebSocket path are always the same. Apps that
       // need a different WebSocket endpoint should set `wsUrl`, which
       // takes precedence over `liveUrl` in WebSocketManager.
+      //
+      // Invariant: link-interceptor.ts calls pushState BEFORE invoking
+      // handleNavigationResponse, so window.location here always
+      // reflects the final target URL (not the previous one). This is
+      // why liveUrlOverride is never stale for cross-pathname navigations
+      // even if sendNavigate had previously set it to a same-pathname URL.
       const newLiveUrl =
         window.location.pathname + window.location.search;
       this.liveUrlOverride = newLiveUrl;
@@ -1154,8 +1169,12 @@ export class LiveTemplateClient {
             ) {
               continue;
             }
-            if (!toElement.hasAttribute(attr.name)) {
-              toElement.setAttribute(attr.name, attr.value);
+            // Use hasAttributeNS / setAttributeNS to preserve namespace
+            // info (e.g. xlink:href on SVG elements). For plain HTML
+            // attributes namespaceURI is null, so this degrades to the
+            // same behaviour as setAttribute.
+            if (!toElement.hasAttributeNS(attr.namespaceURI, attr.localName)) {
+              toElement.setAttributeNS(attr.namespaceURI, attr.name, attr.value);
             }
           }
           // Fall through to normal diff path so children are still updated.
