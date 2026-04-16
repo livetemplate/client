@@ -963,7 +963,30 @@ export class LiveTemplateClient {
       );
     }
 
-    tempWrapper.innerHTML = result.html;
+    // Use DOMParser when the HTML contains <script> tags. Browsers'
+    // innerHTML parser handles scripts specially and can create phantom
+    // duplicate DOM nodes after the closing tag. DOMParser doesn't have
+    // this quirk because it returns a standalone document.
+    if (result.html.includes("<scr" + "ipt")) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(
+        "<div>" + result.html + "</div>",
+        "text/html"
+      );
+      const root = doc.body.firstElementChild;
+      if (root) {
+        while (tempWrapper.firstChild) {
+          tempWrapper.removeChild(tempWrapper.firstChild);
+        }
+        while (root.firstChild) {
+          tempWrapper.appendChild(root.firstChild);
+        }
+      } else {
+        tempWrapper.innerHTML = result.html;
+      }
+    } else {
+      tempWrapper.innerHTML = result.html;
+    }
 
     if (this.logger.isDebugEnabled()) {
       this.logger.debug(
