@@ -111,7 +111,20 @@ export class LiveTemplateClient {
     this.options = {
       autoReconnect: false, // Disable autoReconnect by default to avoid connection loops
       reconnectDelay: 1000,
-      liveUrl: window.location.pathname + window.location.search, // Connect to current page (including query params)
+      // liveUrl captures the current page URL (path + search) so the
+      // initial WebSocket handshake reaches the server with the same
+      // query params Mount saw on the HTTP GET. This is intentional —
+      // without the search, the WS-side Mount re-runs with empty data
+      // and drifts state from the HTTP render.
+      //
+      // For *same-handler* SPA navigation (changing query params on
+      // the same path), the client does NOT reconnect — instead it
+      // sends an in-band {action:"__navigate__", data:<params>} message
+      // over the existing WebSocket, and the server re-runs Mount with
+      // the new data. See sendNavigate() and handleNavigationResponse()
+      // for the SPA path. Cross-handler SPA navigation still does the
+      // fetch-and-replaceChildren+reconnect dance.
+      liveUrl: window.location.pathname + window.location.search,
       ...restOptions,
     };
 
@@ -189,6 +202,14 @@ export class LiveTemplateClient {
       {
         getWrapperElement: () => this.wrapperElement,
         handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+        sendNavigate: (href: string) => this.sendNavigate(href),
+        // Only take the in-band fast path when the WS is actually OPEN.
+        // If WS is CONNECTING or CLOSED, falling through to the normal fetch
+        // path is safer: pushState fires after the fetch resolves (not before),
+        // so the browser URL never gets ahead of server state.
+        canSendNavigate: () =>
+          !this.useHTTP &&
+          this.webSocketManager.getReadyState() === 1 /* WebSocket.OPEN */,
       },
       this.logger.child("LinkInterceptor")
     );
@@ -543,6 +564,88 @@ export class LiveTemplateClient {
   }
 
   /**
+   * Send an in-band navigate message over the existing WebSocket.
+   *
+   * This is the client side of the same-handler SPA navigation flow.
+   * Rather than disconnect + reconnect to land a URL change (which is
+   * what cross-handler nav does and what the old same-handler path
+   * silently skipped), we parse the target URL's query params into a
+   * data map and send {action: "__navigate__", data: params}. The
+   * server special-cases this action name in its event loop (see
+   * livetemplate/mount.go) and re-runs Mount with the new data without
+   * tearing down the connection.
+   *
+   * Equivalent to Phoenix LiveView's live_patch / handle_params:
+   * path-level identity for the socket, Mount-level re-projection for
+   * query-string changes.
+   *
+   * @param href - The target URL to navigate to. Only the search params
+   *               are consumed; the pathname is assumed to match the
+   *               current page (caller checks same-handler first).
+   */
+  private sendNavigate(href: string): boolean {
+    const url = new URL(href, window.location.origin);
+    const data: Record<string, string> = {};
+    // Note: duplicate keys (e.g. ?tag=a&tag=b) are last-write-wins here.
+    // LiveTemplate routes use scalar string params by convention. Routes
+    // that need repeated params should not use sendNavigate directly.
+    const seenKeys = new Set<string>();
+    url.searchParams.forEach((v, k) => {
+      if (seenKeys.has(k)) {
+        this.logger.warn("sendNavigate: duplicate query param key — last value wins; server may receive incomplete data", { key: k, href });
+      }
+      seenKeys.add(k);
+      data[k] = v;
+    });
+
+    const newLiveUrl = url.pathname + url.search;
+
+    // __navigate__ is a WebSocket-only in-band action — only call send()
+    // when the socket is actually OPEN.
+    //
+    // Note: this.useHTTP is not checked here because sendNavigate() is only
+    // reachable when canSendNavigate() returns true (i.e. !this.useHTTP and
+    // readyState === 1), enforced by LinkInterceptor. Checking useHTTP or
+    // re-checking readyState here would be dead code in the normal call path.
+    // The guard below is a defensive fallback for direct callers that bypass
+    // canSendNavigate().
+    if (this.webSocketManager.getReadyState() !== 1 /* WebSocket.OPEN */) {
+      const readyState = this.webSocketManager.getReadyState();
+      if (readyState === 3 /* CLOSED */) {
+        this.logger.error(
+          "sendNavigate: WebSocket is CLOSED and autoReconnect may be disabled; " +
+          "navigate message dropped. Reload or re-enable autoReconnect.",
+          { href }
+        );
+      } else {
+        // CONNECTING (0) or CLOSING (2). autoReconnect defaults to false.
+        if (!this.options.autoReconnect) {
+          this.logger.error(
+            "sendNavigate: WS not open and autoReconnect is disabled; navigate may be permanently lost",
+            { href, readyState }
+          );
+        } else {
+          this.logger.warn(
+            "sendNavigate: WS not open; browser URL is ahead of server state until reconnect",
+            { href, readyState }
+          );
+        }
+      }
+      return false;
+    }
+
+    // Socket is OPEN: commit the URL update and send the navigate message.
+    // liveUrlOverride is updated here (not before the guard) so it only
+    // advances when the message is actually sent — keeping it consistent
+    // with window.location throughout.
+    this.liveUrlOverride = newLiveUrl;
+    this.webSocketManager.setLiveUrl(newLiveUrl);
+    this.logger.debug("sendNavigate", { href, data });
+    this.send({ action: "__navigate__", data });
+    return true;
+  }
+
+  /**
    * Send action via HTTP POST
    */
   private async sendHTTP(message: any): Promise<void> {
@@ -656,21 +759,20 @@ export class LiveTemplateClient {
       document.title = newTitleText;
     }
 
-    // Try same-handler wrapper first (same data-lvt-id)
-    const sameWrapper = oldId
-      ? doc.querySelector(`[data-lvt-id="${oldId}"]`)
-      : null;
+    // sameWrapper: the fetched page has the same data-lvt-id as the current
+    // wrapper. This means two different paths share the same handler ID.
+    // handleNavigationResponse is only reached via LinkInterceptor for
+    // cross-pathname navigations (same-pathname links are caught by the fast
+    // path before a fetch is issued and handled via sendNavigate directly).
+    // For cross-pathname same-ID, a full reconnect is correct: the server
+    // must receive the new URL to re-run Mount on the right route. We fall
+    // through to the newWrapper block below, which handles both same-ID and
+    // different-ID handler switches identically.
+    //
+    // Same-pathname same-ID navigation (query-param change on the same route)
+    // is covered exclusively by LinkInterceptor's fast path and navigate.test.ts.
 
-    if (sameWrapper) {
-      this.wrapperElement.replaceChildren(
-        ...Array.from(sameWrapper.childNodes).map((n) => n.cloneNode(true))
-      );
-      this.eventDelegator.setupEventDelegation();
-      this.linkInterceptor.setup(this.wrapperElement);
-      return;
-    }
-
-    // Check for a different handler's wrapper (cross-handler navigation)
+    // Check for any handler wrapper (same-ID cross-path or different handler)
     const newWrapper = doc.querySelector("[data-lvt-id]");
     if (newWrapper) {
       const newId = newWrapper.getAttribute("data-lvt-id");
@@ -720,46 +822,58 @@ export class LiveTemplateClient {
       // page path and the WebSocket path are always the same. Apps that
       // need a different WebSocket endpoint should set `wsUrl`, which
       // takes precedence over `liveUrl` in WebSocketManager.
+      //
+      // Invariant: link-interceptor.ts calls pushState BEFORE invoking
+      // handleNavigationResponse, so window.location here always
+      // reflects the final target URL (not the previous one). This is
+      // why liveUrlOverride is never stale for cross-pathname navigations
+      // even if sendNavigate had previously set it to a same-pathname URL.
       const newLiveUrl =
         window.location.pathname + window.location.search;
       this.liveUrlOverride = newLiveUrl;
       this.webSocketManager.setLiveUrl(newLiveUrl);
 
-      // Reconnect to the new handler. The server sends an initial tree
-      // that produces the same DOM as the fetched HTML.
-      //
-      // Escape the wrapper ID to defend against (pathological) server
-      // responses with special characters that would break the
-      // attribute selector. Only `"` and `\` need escaping inside a
-      // double-quoted attribute value selector (`[attr="..."]`), and
-      // we prefer a manual escape over CSS.escape() which is not
-      // available in jsdom test environments.
-      //
-      // Epoch semantics: the failure branch is guarded by the epoch
-      // check to avoid stale reloads. The success branch has no work
-      // to do — there's nothing for handleNavigationResponse to undo
-      // on success.
-      //
-      // Known limitation: if two cross-handler navigations run in rapid
-      // succession (A then B), A's connect() might still be executing
-      // its post-await setup (useHTTP assignment, initial state
-      // rendering, event delegation) when B starts. Because there's
-      // only one WebSocketManager transport at a time, B's disconnect()
-      // kills A's in-flight transport, and B's setup happens on the
-      // wrapper with B's ID. If A's post-await code runs AFTER B sets
-      // the wrapper ID, A's querySelector lookup would already be
-      // stale (it captured the wrapper synchronously before the await).
-      // A true fix requires making connect() itself cancellable with
-      // an AbortSignal, which is out of scope for this PR. In practice,
-      // two successive SPA navigations within a single event loop tick
-      // are rare, and the idempotent setup methods minimize fallout.
-      const escapedId = newId.replace(/[\\"]/g, "\\$&");
-      const selector = `[data-lvt-id="${escapedId}"]`;
-      this.connect(selector).catch((err) => {
-        if (myEpoch !== this.navigationEpoch) return;
-        this.logger.error("Cross-handler reconnect failed:", err);
-        window.location.reload();
-      });
+      // In HTTP mode there is no persistent WebSocket connection — skip
+      // connect() so we don't unexpectedly create a WebSocket. The DOM swap
+      // and event re-setup above are sufficient for HTTP-mode apps; the next
+      // user action will POST via the normal HTTP send path.
+      if (!this.useHTTP) {
+        // Reconnect to the new handler. The server sends an initial tree
+        // that produces the same DOM as the fetched HTML.
+        //
+        // Escape the wrapper ID to defend against (pathological) server
+        // responses with special characters that would break the
+        // attribute selector. Only `"` and `\` need escaping inside a
+        // double-quoted attribute value selector (`[attr="..."]`), and
+        // we prefer a manual escape over CSS.escape() which is not
+        // available in jsdom test environments.
+        //
+        // Epoch semantics: the failure branch is guarded by the epoch
+        // check to avoid stale reloads. The success branch has no work
+        // to do — there's nothing for handleNavigationResponse to undo
+        // on success.
+        //
+        // Known limitation: if two cross-handler navigations run in rapid
+        // succession (A then B), A's connect() might still be executing
+        // its post-await setup (useHTTP assignment, initial state
+        // rendering, event delegation) when B starts. Because there's
+        // only one WebSocketManager transport at a time, B's disconnect()
+        // kills A's in-flight transport, and B's setup happens on the
+        // wrapper with B's ID. If A's post-await code runs AFTER B sets
+        // the wrapper ID, A's querySelector lookup would already be
+        // stale (it captured the wrapper synchronously before the await).
+        // A true fix requires making connect() itself cancellable with
+        // an AbortSignal, which is out of scope for this PR. In practice,
+        // two successive SPA navigations within a single event loop tick
+        // are rare, and the idempotent setup methods minimize fallout.
+        const escapedId = newId.replace(/[\\"]/g, "\\$&");
+        const selector = `[data-lvt-id="${escapedId}"]`;
+        this.connect(selector).catch((err) => {
+          if (myEpoch !== this.navigationEpoch) return;
+          this.logger.error("Cross-handler reconnect failed:", err);
+          window.location.reload();
+        });
+      }
       return;
     }
 
@@ -907,7 +1021,58 @@ export class LiveTemplateClient {
       );
     }
 
-    tempWrapper.innerHTML = result.html;
+    // Use DOMParser when the HTML contains <script> tags. Browsers'
+    // innerHTML parser handles scripts specially and can create phantom
+    // duplicate DOM nodes after the closing tag. DOMParser doesn't have
+    // this quirk because it returns a standalone document.
+    //
+    // Regex /<script[\s>]/i is more precise than a bare "<script" string
+    // match: it avoids false positives from words ending in "script" that
+    // aren't a tag (e.g. "noscript"), while still matching <script>,
+    // <script type="..."> and <SCRIPT> case-insensitively.
+    // Note: it can still match <script inside attribute values or HTML
+    // comments — a false positive is harmless (DOMParser is always safe;
+    // we just pay a small allocation cost for the parse).
+    //
+    // Wrap with the same tagName as the target element (not a hard-coded
+    // <div>) so that DOMParser applies the correct HTML parsing rules.
+    // Wrapping <tr>/<td>/<option> content in a <div> can trigger
+    // browser re-parenting; using the real container tag avoids that.
+    if (/<script[\s>]/i.test(result.html)) {
+      // Guard: <body> and <html> cannot be used as wrapper tags for
+      // parseFromString — doc.body.firstElementChild would return the
+      // first child of body, not the body itself, discarding the wrap.
+      // Fall back to <div> for these edge cases; updateDOM is called on
+      // the lvt wrapper div in practice, so this branch is defensive.
+      const rawTag = element.tagName.toLowerCase();
+      const wrapTag = (rawTag === "body" || rawTag === "html") ? "div" : rawTag;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(
+        `<${wrapTag}>${result.html}</${wrapTag}>`,
+        "text/html"
+      );
+      const root = doc.body.firstElementChild;
+      if (root) {
+        // Array.from snapshots the live NodeList before replaceChildren
+        // starts moving nodes, keeping iteration stable.
+        //
+        // Note: DOMParser still re-parents bare table-cell content (tr/td
+        // without surrounding table+tbody) even when wrapTag matches.
+        // Slots rendered into table-cell elements with <script> tags are
+        // an edge case; a follow-up can add a full-table wrapper for those.
+        tempWrapper.replaceChildren(...Array.from(root.childNodes));
+      } else {
+        // root is null when the HTML parser produced no element child for
+        // our wrapper tag (e.g. the wrapper was itself re-parented or the
+        // fragment is text-only). Fall back to doc.body children — the
+        // content is still present there, already parsed by DOMParser
+        // without the script-duplication quirk that innerHTML triggers.
+        this.logger.warn("[updateDOM] DOMParser: no wrapper root element; using doc.body children");
+        tempWrapper.replaceChildren(...Array.from(doc.body.childNodes));
+      }
+    } else {
+      tempWrapper.innerHTML = result.html;
+    }
 
     if (this.logger.isDebugEnabled()) {
       this.logger.debug(
@@ -942,6 +1107,92 @@ export class LiveTemplateClient {
         }
       },
       onBeforeElUpdated: (fromEl, toEl) => {
+        // Honour lvt-preserve: the client owns this element's entire
+        // subtree and morphdom should never touch any of it.
+        // Attributes, content, descendants all stay exactly as the DOM
+        // currently has them. Equivalent to Phoenix LiveView's
+        // phx-update="ignore" and Turbo's data-turbo-permanent. Useful
+        // for third-party widgets (maps, date pickers, charts) that
+        // mutate their own DOM, and for scroll containers with
+        // JS-managed scrollTop.
+        //
+        // We check toEl (the incoming server version) rather than fromEl
+        // (the current DOM). This gives the server authority: if a later
+        // render omits lvt-preserve, morphdom resumes updating the element.
+        // Checking fromEl would make the attribute sticky in the DOM
+        // forever once applied, preventing the server from ever removing it.
+        //
+        // For the subtler case of "preserve my *attributes* but still
+        // let children update" (e.g. <details open>, <select> with
+        // user-selected options), use lvt-preserve-attrs below.
+        //
+        // Priority: lvt-preserve is checked first and returns early; if
+        // toEl has lvt-preserve, lvt-preserve-attrs on the same element
+        // is never reached. lvt-preserve wins (full freeze > partial
+        // attribute-only freeze).
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute("lvt-preserve")
+        ) {
+          return false;
+        }
+
+        // Honour lvt-preserve-attrs: the client owns this element's own
+        // attributes (e.g. the <details open> state the user toggled),
+        // but its children should still be diffed against the new tree.
+        // This is the right fit for collapsible pickers where the
+        // *container* state is user-managed but the *items* inside are
+        // server-authored and must reflect the latest data.
+        //
+        // Implementation: copy fromEl's attributes that are missing from
+        // toEl onto toEl before morphdom runs its attribute diff. This
+        // makes morphdom see the user-owned attrs as "already present"
+        // in the new version, so it doesn't remove them. Attributes that
+        // exist in both fromEl and toEl take toEl's value (server wins
+        // over client for attributes the template does control), which
+        // preserves the ability to update className etc. on the same
+        // element from the server.
+        //
+        // Limitation: only *missing* attributes from fromEl are copied.
+        // If the server's toEl already has e.g. class="card", that value
+        // is used — JS-added classes (el.classList.add('open')) are
+        // silently overwritten on the next diff. Use lvt-preserve-attrs
+        // for attributes the server template does NOT set at all.
+        //
+        // We check toEl (the incoming server tree), not fromEl (the live
+        // DOM), so the server has authority: removing lvt-preserve-attrs
+        // from the template takes effect immediately on the next render,
+        // consistent with how lvt-preserve works.
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute("lvt-preserve-attrs") &&
+          fromEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          const fromAttrs = (fromEl as Element).attributes;
+          const toElement = toEl as Element;
+          for (let i = 0; i < fromAttrs.length; i++) {
+            const attr = fromAttrs[i];
+            // Skip the preserve control attributes themselves so the
+            // server can opt elements in/out across renders. If we
+            // copied lvt-preserve-attrs back onto toEl, the server
+            // could never remove the attribute in a future update.
+            if (
+              attr.name === "lvt-preserve" ||
+              attr.name === "lvt-preserve-attrs"
+            ) {
+              continue;
+            }
+            // Use hasAttributeNS / setAttributeNS to preserve namespace
+            // info (e.g. xlink:href on SVG elements). For plain HTML
+            // attributes namespaceURI is null, so this degrades to the
+            // same behaviour as setAttribute.
+            if (!toElement.hasAttributeNS(attr.namespaceURI, attr.localName)) {
+              toElement.setAttributeNS(attr.namespaceURI, attr.name, attr.value);
+            }
+          }
+          // Fall through to normal diff path so children are still updated.
+        }
+
         // Skip update entirely for focused form elements to preserve user
         // input. This also skips attribute updates (class, disabled, aria-*)
         // and the lvt-updated hook — use data-lvt-force-update to override.

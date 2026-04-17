@@ -3,12 +3,30 @@ import type { Logger } from "../utils/logger";
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
   handleNavigationResponse(html: string): void;
+  // Send an in-band navigate message over the existing WebSocket.
+  // Returns true if the message was sent, false if it was dropped
+  // (e.g. WS not open). The caller uses this to decide whether to push
+  // browser history state — only advancing the URL when the server will
+  // actually receive the navigate eliminates the TOCTOU window where
+  // the WS could close between canSendNavigate() and the actual send.
+  sendNavigate(href: string): boolean;
+  // Returns true when an in-band navigate message can be sent (i.e.
+  // WebSocket mode is active and the socket is OPEN). In HTTP mode or
+  // when the WS is not yet open, this is false and the same-pathname
+  // fast path must fall through to a normal fetch.
+  canSendNavigate(): boolean;
 }
 
 /**
  * Intercepts <a> clicks within the LiveTemplate wrapper for SPA navigation.
- * Same-origin links are fetched via fetch() and the wrapper content is replaced.
- * External links, target="_blank", download, and lvt-nav:no-intercept are skipped.
+ *
+ * - Same pathname (query-string change only) -> sends __navigate__ over WS;
+ *   no fetch, no DOM replace, no reconnect.
+ * - Different pathname (cross-handler or just different route) -> fetches
+ *   new HTML and hands it to handleNavigationResponse, which decides
+ *   between same-handler DOM replace and cross-handler reconnect.
+ * - External links, target="_blank", download, and lvt-nav:no-intercept
+ *   are skipped.
  *
  * Uses AbortController to cancel in-flight fetches when a new navigation
  * starts (rapid clicks, back/forward during fetch).
@@ -102,6 +120,63 @@ export class LinkInterceptor {
   }
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
+    const targetURL = new URL(href, window.location.origin);
+    const samePath =
+      targetURL.origin === window.location.origin &&
+      targetURL.pathname === window.location.pathname;
+
+    if (samePath) {
+      const sameSearch = targetURL.search === window.location.search;
+      if (sameSearch) {
+        // Hash-only change or exact same URL — the browser handles scroll
+        // to the anchor; no server round-trip is needed. This guard also
+        // prevents a spurious __navigate__ from the popstate listener when
+        // the user navigates between same-pathname hash anchors (shouldSkip
+        // catches direct <a> clicks, but popstate calls navigate() directly
+        // and bypasses shouldSkip).
+        //
+        // Still abort any in-flight cross-path fetch: if a fetch was in
+        // progress when the user clicked a hash anchor, we don't want it
+        // to resolve and call handleNavigationResponse unexpectedly.
+        this.abortController?.abort();
+        this.abortController = null;
+        return;
+      }
+
+      if (this.context.canSendNavigate()) {
+        // Same-pathname, different search, WebSocket mode: use the in-band
+        // fast path. Before this existed, same-pathname clicks went through
+        // fetch + replaceChildren, which swapped DOM but left server state
+        // pinned to the OLD query params ("clicking any session always shows
+        // the first one" bug in devbox-dash).
+        //
+        // Abort any in-flight fetch even on the fast path: a user could
+        // click a cross-path link (starting a fetch) and quickly click a
+        // same-pathname link. Without aborting, the earlier fetch can
+        // still resolve and call handleNavigationResponse, racing with the
+        // in-band __navigate__ update.
+        this.abortController?.abort();
+        this.abortController = null;
+        // sendNavigate returns true if the WS message was actually sent.
+        // Push history state ONLY on success to keep window.location
+        // consistent with what the server received.
+        // If sent === false (defensive path — normally unreachable since
+        // canSendNavigate() already checked readyState), fall through to
+        // the normal fetch so the navigation isn't silently dropped.
+        const sent = this.context.sendNavigate(href);
+        if (sent) {
+          if (pushState) {
+            window.history.pushState(null, "", href);
+          }
+          return;
+        }
+        // sendNavigate returned false — fall through to fetch as recovery.
+      }
+      // HTTP mode, WS not OPEN, or sendNavigate returned false:
+      // fall through to normal fetch. pushState is handled downstream by
+      // the fetch path (after the response resolves).
+    }
+
     // Cancel any in-flight navigation fetch
     this.abortController?.abort();
     this.abortController = new AbortController();

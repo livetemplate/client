@@ -26,23 +26,52 @@ describe("handleNavigationResponse", () => {
   };
 
   describe("same-handler navigation", () => {
-    it("replaces wrapper children when response has same data-lvt-id", () => {
+    // handleNavigationResponse is only reachable via LinkInterceptor for
+    // cross-pathname fetches. Same-pathname navigations (query-param change
+    // on the same route) are caught by the fast path in link-interceptor.ts
+    // and handled via sendNavigate() directly — no fetch, no call here.
+    //
+    // When handleNavigationResponse receives a same-handler-ID response
+    // from a cross-pathname fetch, it falls through to the reconnect path
+    // (same as a genuine handler switch). The in-band __navigate__ path for
+    // same-pathname navigation is covered in navigate.test.ts.
+
+    it("same-handler ID match from cross-path fetch triggers reconnect (not sendNavigate)", () => {
+      // Regression guard: two different routes sharing the same data-lvt-id
+      // must NOT call sendNavigate (which only ships query params, silently
+      // dropping the path change). The correct behaviour is a full reconnect.
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      const connectSpy = jest
+        .spyOn(client as any, "connect")
+        .mockResolvedValue(undefined);
+      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+
       const html = [
-        "<html><head><title>Same Page</title></head><body>",
+        "<html><body>",
         '<div data-lvt-id="lvt-handler-a">',
-        "<p>Updated content from same handler</p>",
+        "<p>Content from /route-b</p>",
         "</div>",
         "</body></html>",
       ].join("");
 
       callHandleNavigationResponse(html);
 
-      expect(wrapper.textContent).toContain("Updated content from same handler");
-      expect(wrapper.getAttribute("data-lvt-id")).toBe("lvt-handler-a");
+      // sendNavigate must NOT have been called — that would drop the path.
+      expect(sendSpy).not.toHaveBeenCalled();
+      // Reconnect path must have fired instead.
+      expect(disconnectSpy).toHaveBeenCalled();
+
+      disconnectSpy.mockRestore();
+      connectSpy.mockRestore();
+      sendSpy.mockRestore();
     });
 
     it("preserves wrapper element identity", () => {
       const originalWrapper = wrapper;
+      const sendSpy = jest.spyOn(client, "send").mockImplementation(() => {});
+
       const html = [
         "<html><body>",
         '<div data-lvt-id="lvt-handler-a">',
@@ -54,6 +83,7 @@ describe("handleNavigationResponse", () => {
       callHandleNavigationResponse(html);
 
       expect((client as any).wrapperElement).toBe(originalWrapper);
+      sendSpy.mockRestore();
     });
   });
 
