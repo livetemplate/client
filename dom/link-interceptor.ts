@@ -34,6 +34,14 @@ export interface LinkInterceptorContext {
 export class LinkInterceptor {
   private popstateListener: (() => void) | null = null;
   private abortController: AbortController | null = null;
+  // Tracks the URL that was last successfully navigated to (or the initial
+  // page URL). Updated after each in-band __navigate__ push and after each
+  // fetch-based navigation. The popstate handler uses this to compare the
+  // target URL against the URL we were actually at *before* the browser
+  // changed window.location, because by the time popstate fires, the browser
+  // has already moved window.location to the target — making a naive
+  // window.location comparison always look like a same-URL no-op.
+  private currentHref: string = window.location.href;
 
   constructor(
     private readonly context: LinkInterceptorContext,
@@ -69,6 +77,12 @@ export class LinkInterceptor {
   }
 
   setup(wrapper: Element): void {
+    // Refresh currentHref so the popstate handler compares against the URL
+    // that is actually showing when this setup runs, not a stale value from
+    // a previous navigation or from construction time (which may predate the
+    // first history.replaceState in tests and cross-handler nav re-setups).
+    this.currentHref = window.location.href;
+
     const wrapperId = wrapper.getAttribute("data-lvt-id");
     const listenerKey = `__lvt_link_intercept_${wrapperId}`;
     const existing = (document as any)[listenerKey];
@@ -95,7 +109,13 @@ export class LinkInterceptor {
     // Handle back/forward navigation
     if (!this.popstateListener) {
       this.popstateListener = () => {
-        this.navigate(window.location.href, false);
+        // Capture the URL we were at *before* the browser moved to the new
+        // history entry. This lets navigate() compare pathname+search against
+        // the previous URL rather than window.location (which already reflects
+        // the target after popstate fires).
+        const prevHref = this.currentHref;
+        this.currentHref = window.location.href;
+        this.navigate(window.location.href, false, prevHref);
       };
       window.addEventListener("popstate", this.popstateListener);
     }
@@ -119,21 +139,31 @@ export class LinkInterceptor {
     return false;
   }
 
-  private async navigate(href: string, pushState: boolean = true): Promise<void> {
+  // prevHref is the URL the client was at *before* this navigation.
+  // For link clicks (pushState=true) it defaults to window.location.href,
+  // which is correct because pushState hasn't run yet. For popstate
+  // (pushState=false) the popstate listener supplies the saved currentHref
+  // so the same-pathname comparison reflects the real previous entry, not
+  // window.location (which the browser already updated to the target).
+  private async navigate(
+    href: string,
+    pushState: boolean = true,
+    prevHref: string = window.location.href
+  ): Promise<void> {
     const targetURL = new URL(href, window.location.origin);
+    const refURL = new URL(prevHref, window.location.origin);
     const samePath =
-      targetURL.origin === window.location.origin &&
-      targetURL.pathname === window.location.pathname;
+      targetURL.origin === refURL.origin &&
+      targetURL.pathname === refURL.pathname;
 
     if (samePath) {
-      const sameSearch = targetURL.search === window.location.search;
+      const sameSearch = targetURL.search === refURL.search;
       if (sameSearch) {
         // Hash-only change or exact same URL — the browser handles scroll
-        // to the anchor; no server round-trip is needed. This guard also
-        // prevents a spurious __navigate__ from the popstate listener when
-        // the user navigates between same-pathname hash anchors (shouldSkip
-        // catches direct <a> clicks, but popstate calls navigate() directly
-        // and bypasses shouldSkip).
+        // to the anchor; no server round-trip is needed. This also correctly
+        // handles popstate for hash-only back/forward because the popstate
+        // listener passes prevHref (the previous entry), so refURL reflects
+        // where we came from rather than the already-updated window.location.
         //
         // Still abort any in-flight cross-path fetch: if a fetch was in
         // progress when the user clicked a hash anchor, we don't want it
@@ -143,13 +173,13 @@ export class LinkInterceptor {
         return;
       }
 
-      if (this.context.canSendNavigate()) {
-        // Same-pathname, different search, WebSocket mode: use the in-band
-        // fast path. Before this existed, same-pathname clicks went through
-        // fetch + replaceChildren, which swapped DOM but left server state
-        // pinned to the OLD query params ("clicking any session always shows
-        // the first one" bug in devbox-dash).
-        //
+      // __navigate__ fast path: same pathname, different search, WS mode.
+      // Only for explicit forward navigation (pushState=true / link clicks).
+      // For popstate (pushState=false) the search difference is real (it
+      // compares against the previous entry via prevHref), but back/forward
+      // must restore prior page state via a full fetch, not a WS message
+      // that only forwards query data to Mount.
+      if (pushState && this.context.canSendNavigate()) {
         // Abort any in-flight fetch even on the fast path: a user could
         // click a cross-path link (starting a fetch) and quickly click a
         // same-pathname link. Without aborting, the earlier fetch can
@@ -165,16 +195,14 @@ export class LinkInterceptor {
         // the normal fetch so the navigation isn't silently dropped.
         const sent = this.context.sendNavigate(href);
         if (sent) {
-          if (pushState) {
-            window.history.pushState(null, "", href);
-          }
+          window.history.pushState(null, "", href);
+          this.currentHref = href;
           return;
         }
         // sendNavigate returned false — fall through to fetch as recovery.
       }
-      // HTTP mode, WS not OPEN, or sendNavigate returned false:
-      // fall through to normal fetch. pushState is handled downstream by
-      // the fetch path (after the response resolves).
+      // HTTP mode, WS not OPEN, sendNavigate returned false, or popstate:
+      // fall through to normal fetch. pushState is handled downstream.
     }
 
     // Cancel any in-flight navigation fetch
@@ -202,6 +230,7 @@ export class LinkInterceptor {
         window.history.pushState(null, "", href);
       }
 
+      this.currentHref = href;
       this.context.handleNavigationResponse(html);
     } catch (e: unknown) {
       // AbortError means a new navigation superseded this one — ignore
