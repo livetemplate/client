@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.26] - 2026-04-17
+
+### Changes
+
+- feat: lvt-preserve attributes, __navigate__ SPA nav, DOMParser script fix (#72) (966d65d)
+
+
+
 ## [Unreleased]
 
 ### Added
