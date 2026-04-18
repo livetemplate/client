@@ -240,7 +240,6 @@ export class EventDelegator {
                 const checkboxes = Array.from(
                   targetElement.querySelectorAll('input[type="checkbox"][name]')
                 ) as HTMLInputElement[];
-                const checkboxNames = new Set(checkboxes.map((cb) => cb.name));
 
                 const checkboxGroups = new Map<string, HTMLInputElement[]>();
                 checkboxes.forEach((cb) => {
@@ -251,9 +250,9 @@ export class EventDelegator {
 
                 checkboxGroups.forEach((cbs, name) => {
                   if (cbs.length === 1) {
-                    message.data[name] = false;
+                    message.data[name] = cbs[0].checked;
                   } else {
-                    message.data[name] = [] as string[];
+                    message.data[name] = cbs.filter(cb => cb.checked).map(cb => cb.value);
                   }
                 });
 
@@ -277,15 +276,8 @@ export class EventDelegator {
                 formData.forEach((value, key) => {
                   if (value instanceof File) return; // Skip file entries — handled by sendHTTPMultipart
                   if (actionFieldName && key === actionFieldName) return;
-                  if (checkboxNames.has(key)) {
-                    const group = checkboxGroups.get(key)!;
-                    if (group.length === 1) {
-                      message.data[key] = true;
-                    } else {
-                      (message.data[key] as string[]).push(value as string);
-                    }
-                    this.logger.debug("Converted checkbox", key, group.length === 1 ? "to true" : "appended value");
-                  } else if (passwordFields.has(key)) {
+                  if (checkboxGroups.has(key)) return;
+                  if (passwordFields.has(key)) {
                     // Never parse password values - always keep as string
                     message.data[key] = value as string;
                   } else {
