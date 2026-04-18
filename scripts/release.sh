@@ -468,35 +468,53 @@ main() {
         branch="main"
         log_info "Switched to main"
     fi
-    if [ "$dry_run_mode" = true ]; then
-        # Note: fetch updates remote-tracking refs in .git — a minor side effect required to check sync state
-        log_step "Dry run: fetching origin/$branch to check sync state (network call)"
-        if ! git fetch origin "$branch" --quiet; then
-            log_error "Could not fetch origin/$branch — cannot verify branch is up to date."
+    # Fetch origin/$branch so we can compare local vs remote state.
+    # Note: fetch updates remote-tracking refs in .git — a minor side effect required to check sync state.
+    log_step "Fetching origin/$branch to check sync state"
+    if ! git fetch origin "$branch" --quiet; then
+        log_error "Could not fetch origin/$branch. Check your network connection."
+        exit 1
+    fi
+
+    local behind ahead
+    behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
+    ahead=$(git rev-list --count origin/"$branch"..HEAD 2>/dev/null || echo "0")
+
+    if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
+        log_error "Branch has diverged from origin/$branch ($ahead ahead, $behind behind). Resolve manually before releasing."
+        exit 1
+    elif [ "$behind" -gt 0 ]; then
+        if [ "$dry_run_mode" = true ]; then
+            log_error "Local branch is $behind commit(s) behind origin/$branch. Pull and re-run."
             exit 1
-        else
-            local behind ahead
-            behind=$(git rev-list --count HEAD..origin/"$branch" 2>/dev/null || echo "0")
-            ahead=$(git rev-list --count origin/"$branch"..HEAD 2>/dev/null || echo "0")
-            if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
-                log_error "Branch has diverged from origin/$branch ($ahead ahead, $behind behind). Resolve before releasing."
-                exit 1
-            elif [ "$behind" -gt 0 ]; then
-                log_error "Local branch is $behind commit(s) behind origin/$branch. Pull and re-run."
-                exit 1
-            elif [ "$ahead" -gt 0 ]; then
-                log_warn "Local branch is $ahead commit(s) ahead of origin/$branch — push before releasing."
-            else
-                log_info "Branch is up to date with origin/$branch"
-            fi
         fi
-    else
-        log_step "Pulling latest changes from origin/$branch"
-        git pull --ff-only origin "$branch" || {
-            log_error "Failed to fast-forward from origin/$branch. Branch may have diverged or there was a network error. Resolve manually before releasing."
+        log_step "Fast-forwarding from origin/$branch ($behind new commit(s))"
+        git merge --ff-only "origin/$branch" || {
+            log_error "Fast-forward failed. Resolve manually before releasing."
             exit 1
         }
         log_info "Up to date with origin/$branch"
+    elif [ "$ahead" -gt 0 ]; then
+        log_warn "Local branch is $ahead commit(s) ahead of origin/$branch:"
+        git log --oneline "origin/$branch..HEAD"
+        echo ""
+        if [ "$dry_run_mode" = true ]; then
+            log_warn "Dry run: would prompt to push these commits before releasing"
+        else
+            read -rp "Push these commits to origin/$branch and continue with release? [y/N]: " push_confirm
+            if [[ ! $push_confirm =~ ^[Yy]$ ]]; then
+                log_warn "Release cancelled. Consider opening a PR for these commits and re-run when merged."
+                exit 0
+            fi
+            log_step "Pushing local commits to origin/$branch"
+            git push origin "$branch" || {
+                log_error "Failed to push to origin/$branch."
+                exit 1
+            }
+            log_info "Pushed $ahead commit(s) to origin/$branch"
+        fi
+    else
+        log_info "Branch is up to date with origin/$branch"
     fi
 
     # Get current version
