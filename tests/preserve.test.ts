@@ -194,6 +194,78 @@ describe("lvt-preserve attribute", () => {
     expect(detailsAfter.hasAttribute("lvt-preserve-attrs")).toBe(false);
   });
 
+  it("preserves checkbox checked state across morphdom updates", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<label><input type="checkbox" class="cb" data-key="a" value="a"></label>` +
+         `<label><input type="checkbox" class="cb" data-key="b" value="b"></label>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const checkboxes = wrapper.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(checkboxes.length).toBe(2);
+    expect(checkboxes[0].checked).toBe(false);
+    expect(checkboxes[1].checked).toBe(false);
+
+    // User checks the first checkbox.
+    checkboxes[0].checked = true;
+
+    // Server pushes a refresh (same HTML, no checked attribute).
+    client.updateDOM(wrapper, initialTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(afterUpdate[0].checked).toBe(true);
+    expect(afterUpdate[1].checked).toBe(false);
+  });
+
+  it("preserves radio button checked state across morphdom updates", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="choice" data-key="x" value="x">` +
+         `<input type="radio" name="choice" data-key="y" value="y">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    client.updateDOM(wrapper, initialTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(false);
+    expect(afterUpdate[1].checked).toBe(true);
+  });
+
+  it("data-lvt-force-update overrides checkbox preservation", () => {
+    // Parent content must differ between renders so isEqualNode returns
+    // false on the parent, causing morphdom to actually reach the
+    // checkbox element. In real apps, dynamic text like "5m ago" ensures
+    // this — we simulate it with changing span text.
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="w"><span>v1</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true;
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="w"><span>v2</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.checked).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that
