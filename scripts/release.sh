@@ -456,6 +456,18 @@ main() {
         log_error "Detached HEAD state. Run the release from a named branch (e.g., main)."
         exit 1
     fi
+
+    # Releases must come from main — auto-switch if the user is on a feature branch
+    # (e.g. a PR branch that was squash-merged and deleted on origin).
+    if [ "$branch" != "main" ]; then
+        log_step "On branch '$branch' — switching to main (releases must come from main)"
+        git checkout main || {
+            log_error "Failed to check out main. Resolve manually before releasing."
+            exit 1
+        }
+        branch="main"
+        log_info "Switched to main"
+    fi
     if [ "$dry_run_mode" = true ]; then
         # Note: fetch updates remote-tracking refs in .git — a minor side effect required to check sync state
         log_step "Dry run: fetching origin/$branch to check sync state (network call)"
