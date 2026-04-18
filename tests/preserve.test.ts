@@ -336,6 +336,43 @@ describe("lvt-preserve attribute", () => {
     expect(afterUpdate[1].checked).toBe(false);
   });
 
+  it("data-lvt-force-update is one-shot and self-clears after the render", () => {
+    const forceTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v1</span><input type="checkbox" data-lvt-force-update value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, forceTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true;
+
+    // Server sends force-update to reset the checkbox.
+    const resetTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v2</span><input type="checkbox" data-lvt-force-update value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, resetTree);
+
+    const afterReset = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(afterReset.checked).toBe(false);
+    // Attribute should be auto-stripped after processing.
+    expect(afterReset.hasAttribute("data-lvt-force-update")).toBe(false);
+
+    // User checks again.
+    afterReset.checked = true;
+
+    // Server sends a normal update (no data-lvt-force-update) — user
+    // state should now be preserved since the attribute self-cleared.
+    const normalTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v3</span><input type="checkbox" value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, normalTree);
+
+    const afterNormal = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(afterNormal.checked).toBe(true);
+  });
+
   it("data-lvt-force-update on descendant bypasses ancestor isEqualNode short-circuit", () => {
     // When the parent container is structurally equal across renders,
     // isEqualNode would return true and skip the subtree. The subtree

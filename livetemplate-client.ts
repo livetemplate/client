@@ -1261,6 +1261,12 @@ export class LiveTemplateClient {
         if (el instanceof HTMLTextAreaElement) {
           el.value = el.textContent ?? "";
         }
+        // Auto-strip data-lvt-force-update so it acts as a one-shot
+        // directive. The server sets it for one render to override user
+        // state; it self-clears so subsequent renders resume preservation.
+        if (el instanceof HTMLElement && el.hasAttribute("data-lvt-force-update")) {
+          el.removeAttribute("data-lvt-force-update");
+        }
       },
       onNodeAdded: (node) => {
         // Sync textarea value for newly inserted textarea elements
