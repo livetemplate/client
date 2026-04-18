@@ -1201,7 +1201,9 @@ export class LiveTemplateClient {
         //
         // Known limitation: force-update on one radio can uncheck a sibling
         // that was already processed earlier in the same morphdom pass, since
-        // browser mutual exclusion fires synchronously mid-loop.
+        // browser mutual exclusion fires synchronously mid-loop. To safely
+        // reset a radio group, send data-lvt-force-update on ALL radios in
+        // the group, not just the one being checked.
         if (
           fromEl instanceof HTMLInputElement &&
           toEl instanceof HTMLInputElement &&

@@ -398,6 +398,30 @@ describe("lvt-preserve attribute", () => {
     expect(cbAfter.checked).toBe(false);
   });
 
+  it("data-lvt-force-update resets checked state even when checkbox is focused", () => {
+    // The checkbox preservation block runs BEFORE the focus guard, so
+    // force-update resets the checked property even on a focused element.
+    // The focus guard then skips the rest of the update (attributes, etc).
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="fc"><span>v1</span><input type="checkbox" data-lvt-force-update class="fc" value="fc"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input.fc')!;
+    cb.checked = true;
+    cb.focus();
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="fc"><span>v2</span><input type="checkbox" data-lvt-force-update class="fc" value="fc"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input.fc')!;
+    expect(cbAfter.checked).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that
