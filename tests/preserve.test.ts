@@ -194,6 +194,238 @@ describe("lvt-preserve attribute", () => {
     expect(detailsAfter.hasAttribute("lvt-preserve-attrs")).toBe(false);
   });
 
+  it("preserves checkbox checked state across morphdom updates", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<label><input type="checkbox" class="cb" data-key="a" value="a"></label>` +
+         `<label><input type="checkbox" class="cb" data-key="b" value="b"></label>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const checkboxes = wrapper.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(checkboxes.length).toBe(2);
+    expect(checkboxes[0].checked).toBe(false);
+    expect(checkboxes[1].checked).toBe(false);
+
+    // User checks the first checkbox.
+    checkboxes[0].checked = true;
+
+    // Server pushes a refresh (same HTML, no checked attribute).
+    client.updateDOM(wrapper, initialTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(afterUpdate[0].checked).toBe(true);
+    expect(afterUpdate[1].checked).toBe(false);
+  });
+
+  it("preserves radio button checked state across morphdom updates", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="choice" data-key="x" value="x">` +
+         `<input type="radio" name="choice" data-key="y" value="y">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    client.updateDOM(wrapper, initialTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(false);
+    expect(afterUpdate[1].checked).toBe(true);
+  });
+
+  it("preserves radio selection when server sends a different default", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="opt" data-key="a" value="a">` +
+         `<input type="radio" name="opt" data-key="b" value="b">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    // Server sends update with radio A pre-checked via the checked attribute.
+    const updateTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="opt" data-key="a" value="a" checked>` +
+         `<input type="radio" name="opt" data-key="b" value="b">`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(false);
+    expect(afterUpdate[1].checked).toBe(true);
+  });
+
+  it("preserves checkbox indeterminate state across morphdom updates", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="checkbox" class="select-all" value="all">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.indeterminate = true;
+
+    client.updateDOM(wrapper, initialTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.indeterminate).toBe(true);
+  });
+
+  it("data-lvt-force-update overrides checkbox preservation", () => {
+    // Parent content differs between renders (v1 → v2) so morphdom
+    // reaches the checkbox via normal diffing, not via the isEqualNode
+    // subtree bypass (which the next test covers separately).
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="w"><span>v1</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true;
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="w"><span>v2</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.checked).toBe(false);
+  });
+
+  it("data-lvt-force-update overrides radio preservation", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="r"><span>v1</span>` +
+         `<input type="radio" name="fg" data-lvt-force-update value="a">` +
+         `<input type="radio" name="fg" value="b"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="r"><span>v2</span>` +
+         `<input type="radio" name="fg" data-lvt-force-update value="a" checked>` +
+         `<input type="radio" name="fg" value="b"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(true);
+    expect(afterUpdate[1].checked).toBe(false);
+  });
+
+  it("data-lvt-force-update is one-shot and self-clears after the render", () => {
+    const forceTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v1</span><input type="checkbox" data-lvt-force-update value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, forceTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true;
+
+    // Server sends force-update to reset the checkbox.
+    const resetTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v2</span><input type="checkbox" data-lvt-force-update value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, resetTree);
+
+    const afterReset = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(afterReset.checked).toBe(false);
+    // Attribute should be auto-stripped after processing.
+    expect(afterReset.hasAttribute("data-lvt-force-update")).toBe(false);
+
+    // User checks again.
+    afterReset.checked = true;
+
+    // Server sends a normal update (no data-lvt-force-update) — user
+    // state should now be preserved since the attribute self-cleared.
+    const normalTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="lc"><span>v3</span><input type="checkbox" value="lc"></div>`,
+    };
+    client.updateDOM(wrapper, normalTree);
+
+    const afterNormal = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(afterNormal.checked).toBe(true);
+  });
+
+  it("data-lvt-force-update on newly added node is stripped after first render", () => {
+    // When a node with data-lvt-force-update is first inserted via
+    // onNodeAdded, the attribute is stripped from the live DOM. If the
+    // server keeps sending it, each render still force-resets the state.
+    const tree = {
+      s: [`<form>`, `</form>`],
+      0: `<div class="stable"><input type="checkbox" data-lvt-force-update value="x"></div>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    // Attribute should be stripped after the initial render.
+    expect(cb.hasAttribute("data-lvt-force-update")).toBe(false);
+
+    cb.checked = true;
+
+    // Server sends same tree again — since the attr was stripped from
+    // fromEl, morphdom sees a diff and processes normally. The checkbox
+    // block sees data-lvt-force-update on toEl and force-resets.
+    client.updateDOM(wrapper, tree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.checked).toBe(false);
+  });
+
+  it("data-lvt-force-update resets checked state even when checkbox is focused", () => {
+    // The checkbox preservation block runs BEFORE the focus guard, so
+    // force-update resets the checked property even on a focused element.
+    // The focus guard then skips the rest of the update (attributes, etc).
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="fc"><span>v1</span><input type="checkbox" data-lvt-force-update class="fc" value="fc"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input.fc')!;
+    cb.checked = true;
+    cb.focus();
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="fc"><span>v2</span><input type="checkbox" data-lvt-force-update class="fc" value="fc"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input.fc')!;
+    expect(cbAfter.checked).toBe(false);
+    // Attribute must be stripped even though onElUpdated didn't fire
+    // (focus guard returned false). Eager strip in onBeforeElUpdated
+    // prevents the attribute from getting stuck on focused elements.
+    expect(cbAfter.hasAttribute("data-lvt-force-update")).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that

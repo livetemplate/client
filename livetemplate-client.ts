@@ -1193,6 +1193,44 @@ export class LiveTemplateClient {
           // Fall through to normal diff path so children are still updated.
         }
 
+        // Preserve checkbox/radio checked state across morphdom updates.
+        // User selection wins by default — these controls lose focus on
+        // click so the focusManager never protects them, and their checked
+        // state is user input that must survive scan-loop refreshes. Use
+        // data-lvt-force-update to let the server override the user state.
+        //
+        // Known limitation: force-update on one radio can uncheck a sibling
+        // that was already processed earlier in the same morphdom pass, since
+        // browser mutual exclusion fires synchronously mid-loop. To safely
+        // reset a radio group, send data-lvt-force-update on ALL radios in
+        // the group, not just the one being checked.
+        if (
+          fromEl instanceof HTMLInputElement &&
+          toEl instanceof HTMLInputElement &&
+          (fromEl.type === "checkbox" || fromEl.type === "radio")
+        ) {
+          if (toEl.hasAttribute("data-lvt-force-update")) {
+            fromEl.checked = toEl.checked;
+            if (fromEl.type === "checkbox") {
+              fromEl.indeterminate = toEl.indeterminate;
+            }
+            fromEl.removeAttribute("data-lvt-force-update");
+          } else {
+            toEl.checked = fromEl.checked;
+            // Align the checked attribute with the property so morphdom's
+            // attribute diff doesn't add a spurious checked attr to fromEl
+            // (which IS in the DOM and would trigger radio mutual exclusion).
+            if (fromEl.checked) {
+              toEl.setAttribute("checked", "");
+            } else {
+              toEl.removeAttribute("checked");
+            }
+            if (fromEl.type === "checkbox") {
+              toEl.indeterminate = fromEl.indeterminate;
+            }
+          }
+        }
+
         // Skip update entirely for focused form elements to preserve user
         // input. This also skips attribute updates (class, disabled, aria-*)
         // and the lvt-updated hook — use data-lvt-force-update to override.
@@ -1200,9 +1238,26 @@ export class LiveTemplateClient {
           return false;
         }
 
-        // Only update if content actually changed
+        // Only update if content actually changed — but honour
+        // data-lvt-force-update which means the server wants morphdom
+        // to process this element or one of its descendants
+        // unconditionally (e.g. resetting a checkbox whose checked
+        // property differs from the attribute).
+        // Note: querySelector is a defensive fallback — in steady state
+        // the attr is stripped after each render, so isEqualNode returns
+        // false and normal diffing reaches the descendant. The scan only
+        // matters on the first render of a newly inserted subtree.
         if (fromEl.isEqualNode(toEl)) {
-          return false;
+          if (
+            !toEl.hasAttribute("data-lvt-force-update") &&
+            (toEl.children.length === 0 ||
+              toEl.querySelector("[data-lvt-force-update]") === null)
+          ) {
+            return false;
+          }
+          // Ancestor itself didn't change — only traversing for a
+          // descendant's force-update. Skip the lvt-updated hook.
+          return true;
         }
         // Execute lvt-updated lifecycle hook
         this.executeLifecycleHook(fromEl, "lvt-updated");
@@ -1216,11 +1271,20 @@ export class LiveTemplateClient {
         if (el instanceof HTMLTextAreaElement) {
           el.value = el.textContent ?? "";
         }
+        // Strip data-lvt-force-update from the live DOM after each
+        // render. If the server stops sending it, preservation resumes;
+        // if the server keeps including it, each render force-resets.
+        if (el instanceof HTMLElement && el.hasAttribute("data-lvt-force-update")) {
+          el.removeAttribute("data-lvt-force-update");
+        }
       },
       onNodeAdded: (node) => {
         // Sync textarea value for newly inserted textarea elements
         if (node instanceof HTMLTextAreaElement) {
           node.value = node.textContent ?? "";
+        }
+        if (node instanceof HTMLElement && node.hasAttribute("data-lvt-force-update")) {
+          node.removeAttribute("data-lvt-force-update");
         }
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
