@@ -5,6 +5,18 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.29] - 2026-04-18
+
+### Changes
+
+- fix(release): prompt before releasing with un-pushed local commits (54e5b08)
+- fix(release): auto-switch to main before releasing (81d3c75)
+- fix(morphdom): preserve checkbox/radio checked state across updates (#81) (ab879f7)
+- Revert "fix(morphdom): preserve checkbox/radio checked state across updates" (adc9e55)
+- fix(morphdom): preserve checkbox/radio checked state across updates (0d791e0)
+
+
+
 ## [v0.8.28] - 2026-04-18
 
 ### Changes
