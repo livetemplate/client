@@ -1214,6 +1214,7 @@ export class LiveTemplateClient {
             if (fromEl.type === "checkbox") {
               fromEl.indeterminate = toEl.indeterminate;
             }
+            fromEl.removeAttribute("data-lvt-force-update");
           } else {
             toEl.checked = fromEl.checked;
             // Align the checked attribute with the property so morphdom's
@@ -1242,9 +1243,10 @@ export class LiveTemplateClient {
         // to process this element or one of its descendants
         // unconditionally (e.g. resetting a checkbox whose checked
         // property differs from the attribute).
-        // Note: querySelector is O(subtree) per equal node — acceptable
-        // since isEqualNode-true is rare for dynamic content, but worth
-        // revisiting if large static subtrees cause perf issues.
+        // Note: querySelector is a defensive fallback — in steady state
+        // the attr is stripped after each render, so isEqualNode returns
+        // false and normal diffing reaches the descendant. The scan only
+        // matters on the first render of a newly inserted subtree.
         if (fromEl.isEqualNode(toEl)) {
           if (
             !toEl.hasAttribute("data-lvt-force-update") &&

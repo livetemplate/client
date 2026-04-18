@@ -420,6 +420,10 @@ describe("lvt-preserve attribute", () => {
 
     const cbAfter = wrapper.querySelector<HTMLInputElement>('input.fc')!;
     expect(cbAfter.checked).toBe(false);
+    // Attribute must be stripped even though onElUpdated didn't fire
+    // (focus guard returned false). Eager strip in onBeforeElUpdated
+    // prevents the attribute from getting stuck on focused elements.
+    expect(cbAfter.hasAttribute("data-lvt-force-update")).toBe(false);
   });
 
   it("preserves the element's children as well", () => {
