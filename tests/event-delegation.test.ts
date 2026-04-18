@@ -198,6 +198,152 @@ describe("EventDelegator", () => {
     );
   });
 
+  it("sends array of values for multiple same-name checkboxes", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-multi-checkbox");
+    wrapper.innerHTML = `
+      <form id="multi-cb-form" lvt-on:submit="process">
+        <input type="checkbox" name="ids" value="a" checked />
+        <input type="checkbox" name="ids" value="b" />
+        <input type="checkbox" name="ids" value="c" checked />
+        <input type="checkbox" name="solo" checked />
+        <button type="submit" id="multi-cb-submit">Go</button>
+      </form>
+    `;
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("multi-cb-form") as HTMLFormElement;
+    const submitButton = document.getElementById("multi-cb-submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    const sentData = context.send.mock.calls[0][0].data;
+    expect(sentData.ids).toEqual(["a", "c"]);
+    expect(sentData.solo).toBe(true);
+  });
+
+  it("sends empty array when no checkboxes are checked in multi-group", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-multi-cb-none");
+    wrapper.innerHTML = `
+      <form id="multi-cb-none-form" lvt-on:submit="process">
+        <input type="checkbox" name="ids" value="a" />
+        <input type="checkbox" name="ids" value="b" />
+        <button type="submit" id="multi-cb-none-submit">Go</button>
+      </form>
+    `;
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("multi-cb-none-form") as HTMLFormElement;
+    const submitButton = document.getElementById("multi-cb-none-submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    const sentData = context.send.mock.calls[0][0].data;
+    expect(sentData.ids).toEqual([]);
+  });
+
+  it("ignores hidden inputs sharing a checkbox name", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-hidden-cb");
+    const formHtml = [
+      '<form id="hidden-cb-form" lvt-on:submit="save">',
+      '  <input type="hidden" name="agree" value="0" />',
+      '  <input type="checkbox" name="agree" checked />',
+      '  <button type="submit" id="hidden-cb-submit">Go</button>',
+      '</form>',
+    ].join("\n");
+    wrapper.innerHTML = formHtml; // Safe: hardcoded test markup
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("hidden-cb-form") as HTMLFormElement;
+    const submitButton = document.getElementById("hidden-cb-submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    const sentData = context.send.mock.calls[0][0].data;
+    expect(sentData.agree).toBe(true);
+  });
+
+  it("sends singleton array when one checkbox is checked in multi-group", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-lvt-id", "wrapper-singleton-cb");
+    const formHtml = [
+      '<form id="singleton-cb-form" lvt-on:submit="process">',
+      '  <input type="checkbox" name="ids" value="a" checked />',
+      '  <input type="checkbox" name="ids" value="b" />',
+      '  <input type="checkbox" name="ids" value="c" />',
+      '  <button type="submit" id="singleton-cb-submit">Go</button>',
+      '</form>',
+    ].join("\n");
+    wrapper.innerHTML = formHtml; // Safe: hardcoded test markup
+    document.body.appendChild(wrapper);
+
+    const form = document.getElementById("singleton-cb-form") as HTMLFormElement;
+    const submitButton = document.getElementById("singleton-cb-submit") as HTMLButtonElement;
+
+    const context = createContext(wrapper);
+    const delegator = new EventDelegator(
+      context,
+      createLogger({ scope: "EventDelegatorTest", level: "silent" })
+    );
+    delegator.setupEventDelegation();
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    }) as SubmitEvent & { submitter?: HTMLButtonElement };
+    submitEvent.submitter = submitButton;
+
+    form.dispatchEvent(submitEvent);
+
+    expect(context.send).toHaveBeenCalledTimes(1);
+    const sentData = context.send.mock.calls[0][0].data;
+    expect(sentData.ids).toEqual(["a"]);
+  });
+
   it("lvt-form:action attribute takes priority over button name", () => {
     const wrapper = document.createElement("div");
     wrapper.setAttribute("data-lvt-id", "wrapper-form-action");
