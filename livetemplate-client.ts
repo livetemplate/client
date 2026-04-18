@@ -1198,6 +1198,10 @@ export class LiveTemplateClient {
         // click so the focusManager never protects them, and their checked
         // state is user input that must survive scan-loop refreshes. Use
         // data-lvt-force-update to let the server override the user state.
+        //
+        // Known limitation: force-update on one radio can uncheck a sibling
+        // that was already processed earlier in the same morphdom pass, since
+        // browser mutual exclusion fires synchronously mid-loop.
         if (
           fromEl instanceof HTMLInputElement &&
           toEl instanceof HTMLInputElement &&
@@ -1239,7 +1243,8 @@ export class LiveTemplateClient {
         if (fromEl.isEqualNode(toEl)) {
           if (
             !toEl.hasAttribute("data-lvt-force-update") &&
-            toEl.querySelector("[data-lvt-force-update]") === null
+            (toEl.children.length === 0 ||
+              toEl.querySelector("[data-lvt-force-update]") === null)
           ) {
             return false;
           }

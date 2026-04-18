@@ -289,10 +289,9 @@ describe("lvt-preserve attribute", () => {
   });
 
   it("data-lvt-force-update overrides checkbox preservation", () => {
-    // Parent content must differ between renders so isEqualNode returns
-    // false on the parent, causing morphdom to actually reach the
-    // checkbox element. In real apps, dynamic text like "5m ago" ensures
-    // this — we simulate it with changing span text.
+    // Parent content differs between renders (v1 → v2) so morphdom
+    // reaches the checkbox via normal diffing, not via the isEqualNode
+    // subtree bypass (which the next test covers separately).
     const initialTree = {
       s: [`<form>`, `</form>`],
       0: `<div data-key="w"><span>v1</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
@@ -310,6 +309,31 @@ describe("lvt-preserve attribute", () => {
 
     const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(cbAfter.checked).toBe(false);
+  });
+
+  it("data-lvt-force-update overrides radio preservation", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="r"><span>v1</span>` +
+         `<input type="radio" name="fg" data-lvt-force-update value="a">` +
+         `<input type="radio" name="fg" value="b"></div>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<div data-key="r"><span>v2</span>` +
+         `<input type="radio" name="fg" data-lvt-force-update value="a" checked>` +
+         `<input type="radio" name="fg" value="b"></div>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(true);
+    expect(afterUpdate[1].checked).toBe(false);
   });
 
   it("data-lvt-force-update on descendant bypasses ancestor isEqualNode short-circuit", () => {
