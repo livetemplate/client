@@ -1201,7 +1201,7 @@ export class LiveTemplateClient {
         // them as equal and won't reset the property.
         //
         // data-lvt-force-update reverses this: the server explicitly
-        // wants to reset the checkbox, so we sync fromEl to toEl instead.
+        // wants to reset the checkbox, so we sync toEl to fromEl instead.
         if (
           fromEl instanceof HTMLInputElement &&
           toEl instanceof HTMLInputElement &&
@@ -1209,8 +1209,21 @@ export class LiveTemplateClient {
         ) {
           if (toEl.hasAttribute("data-lvt-force-update")) {
             fromEl.checked = toEl.checked;
+            if (fromEl.type === "checkbox") {
+              fromEl.indeterminate = toEl.indeterminate;
+            }
           } else {
             toEl.checked = fromEl.checked;
+            // Sync the checked attribute so morphdom's attribute copy
+            // doesn't trigger radio mutual exclusion side effects.
+            if (fromEl.checked) {
+              toEl.setAttribute("checked", "");
+            } else {
+              toEl.removeAttribute("checked");
+            }
+            if (fromEl.type === "checkbox") {
+              toEl.indeterminate = fromEl.indeterminate;
+            }
           }
         }
 
@@ -1223,15 +1236,14 @@ export class LiveTemplateClient {
 
         // Only update if content actually changed — but honour
         // data-lvt-force-update which means the server wants morphdom
-        // to process this element unconditionally (e.g. resetting a
-        // checkbox whose checked property differs from the attribute).
-        if (
-          fromEl.isEqualNode(toEl) &&
-          !(
-            toEl instanceof Element &&
-            (toEl as Element).hasAttribute("data-lvt-force-update")
-          )
-        ) {
+        // to process this element or one of its descendants
+        // unconditionally (e.g. resetting a checkbox whose checked
+        // property differs from the attribute).
+        const hasForcedUpdateInSubtree =
+          toEl instanceof Element &&
+          (toEl.hasAttribute("data-lvt-force-update") ||
+            toEl.querySelector("[data-lvt-force-update]") !== null);
+        if (fromEl.isEqualNode(toEl) && !hasForcedUpdateInSubtree) {
           return false;
         }
         // Execute lvt-updated lifecycle hook

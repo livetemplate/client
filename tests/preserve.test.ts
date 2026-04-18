@@ -242,6 +242,52 @@ describe("lvt-preserve attribute", () => {
     expect(afterUpdate[1].checked).toBe(true);
   });
 
+  it("preserves radio selection when server sends a different default", () => {
+    const initialTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="opt" data-key="a" value="a">` +
+         `<input type="radio" name="opt" data-key="b" value="b">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    radios[1].checked = true;
+
+    // Server sends update with radio A pre-checked via the checked attribute.
+    const updateTree = {
+      s: [
+        `<form>`,
+        `</form>`,
+      ],
+      0: `<input type="radio" name="opt" data-key="a" value="a" checked>` +
+         `<input type="radio" name="opt" data-key="b" value="b">`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const afterUpdate = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(afterUpdate[0].checked).toBe(false);
+    expect(afterUpdate[1].checked).toBe(true);
+  });
+
+  it("preserves checkbox indeterminate state across morphdom updates", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="checkbox" class="select-all" value="all">`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.indeterminate = true;
+
+    client.updateDOM(wrapper, initialTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.indeterminate).toBe(true);
+  });
+
   it("data-lvt-force-update overrides checkbox preservation", () => {
     // Parent content must differ between renders so isEqualNode returns
     // false on the parent, causing morphdom to actually reach the
@@ -261,6 +307,28 @@ describe("lvt-preserve attribute", () => {
       0: `<div data-key="w"><span>v2</span><input type="checkbox" data-lvt-force-update value="f"></div>`,
     };
     client.updateDOM(wrapper, updateTree);
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.checked).toBe(false);
+  });
+
+  it("data-lvt-force-update on descendant bypasses ancestor isEqualNode short-circuit", () => {
+    // When the parent container is structurally equal across renders,
+    // isEqualNode would return true and skip the subtree. The subtree
+    // check ensures a descendant with data-lvt-force-update still
+    // gets processed.
+    const tree = {
+      s: [`<form>`, `</form>`],
+      0: `<div class="stable"><input type="checkbox" data-lvt-force-update value="x"></div>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true;
+
+    // Same tree — parent div is structurally equal, but descendant
+    // input has data-lvt-force-update so morphdom must still traverse.
+    client.updateDOM(wrapper, tree);
 
     const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(cbAfter.checked).toBe(false);
