@@ -66,19 +66,24 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       sendNavigate: sendNavigateSpy,
       canSendNavigate: () => true,
     };
+    // Pin the current location BEFORE setup() so lastNavigatedPath
+    // is initialized correctly. jsdom defaults to about:blank.
+    history.replaceState(null, "", "/claude?s=initial");
+
     interceptor = new LinkInterceptor(ctx, silentLogger);
     interceptor.setup(wrapper);
-
-    // Pin the current location so test navigations have something to
-    // compare their pathname against. jsdom defaults to about:blank,
-    // which has no useful pathname.
-    history.replaceState(null, "", "/claude?s=initial");
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    // Tear down any listeners the interceptor added to document.
+    // Tear down click listener keyed to the wrapper.
     interceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
+    // Remove the popstate listener (not covered by teardownForWrapper).
+    const popListener = (interceptor as any).popstateListener;
+    if (popListener) {
+      window.removeEventListener("popstate", popListener);
+      (interceptor as any).popstateListener = null;
+    }
   });
 
   it("same-pathname link click sends navigate message, no fetch", async () => {
@@ -223,6 +228,46 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     httpInterceptor.teardownForWrapper(wrapper.getAttribute("data-lvt-id"));
+  });
+
+  it("cross-path popstate (back button) triggers fetch, not early return", async () => {
+    // Simulate having navigated to /other-page. We use pushState + setup()
+    // rather than a link click because jsdom's Response.text() is unreliable
+    // and the try/catch fallback (window.location.href =) throws in jsdom.
+    history.pushState(null, "", "/other-page");
+    interceptor.setup(wrapper); // re-syncs lastNavigatedPath to /other-page
+
+    // Simulate browser back: browser updates URL, then popstate fires.
+    history.replaceState(null, "", "/claude?s=initial");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    await Promise.resolve();
+
+    // Must fetch the old page content, not short-circuit.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("same-path different-search popstate sends navigate message", async () => {
+    // Simulate: user clicked /claude?s=second (same-path, different search),
+    // then presses back to /claude?s=initial.
+    const link = document.createElement("a");
+    link.href = "/claude?s=second";
+    wrapper.appendChild(link);
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).toHaveBeenCalledTimes(1);
+    sendNavigateSpy.mockClear();
+
+    // Browser back: URL reverts to /claude?s=initial, popstate fires.
+    history.replaceState(null, "", "/claude?s=initial");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    await Promise.resolve();
+
+    // Should use sendNavigate for same-path query-string change.
+    expect(sendNavigateSpy).toHaveBeenCalledTimes(1);
+    expect(sendNavigateSpy.mock.calls[0][0]).toContain("s=initial");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("hash-only popstate (same pathname + same search) does not trigger sendNavigate or fetch", async () => {

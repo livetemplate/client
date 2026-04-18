@@ -34,6 +34,8 @@ export interface LinkInterceptorContext {
 export class LinkInterceptor {
   private popstateListener: (() => void) | null = null;
   private abortController: AbortController | null = null;
+  private lastNavigatedPath: string = window.location.pathname;
+  private lastNavigatedSearch: string = window.location.search;
 
   constructor(
     private readonly context: LinkInterceptorContext,
@@ -69,6 +71,9 @@ export class LinkInterceptor {
   }
 
   setup(wrapper: Element): void {
+    this.lastNavigatedPath = window.location.pathname;
+    this.lastNavigatedSearch = window.location.search;
+
     const wrapperId = wrapper.getAttribute("data-lvt-id");
     const listenerKey = `__lvt_link_intercept_${wrapperId}`;
     const existing = (document as any)[listenerKey];
@@ -121,12 +126,20 @@ export class LinkInterceptor {
 
   private async navigate(href: string, pushState: boolean = true): Promise<void> {
     const targetURL = new URL(href, window.location.origin);
+
+    // For click-based nav (pushState=true), window.location still reflects
+    // the OLD page. For popstate (pushState=false), the browser has already
+    // updated window.location to the destination — compare against tracked
+    // values so we can detect that the URL actually changed.
+    const referencePath = pushState ? window.location.pathname : this.lastNavigatedPath;
+    const referenceSearch = pushState ? window.location.search : this.lastNavigatedSearch;
+
     const samePath =
       targetURL.origin === window.location.origin &&
-      targetURL.pathname === window.location.pathname;
+      targetURL.pathname === referencePath;
 
     if (samePath) {
-      const sameSearch = targetURL.search === window.location.search;
+      const sameSearch = targetURL.search === referenceSearch;
       if (sameSearch) {
         // Hash-only change or exact same URL — the browser handles scroll
         // to the anchor; no server round-trip is needed. This guard also
@@ -168,6 +181,8 @@ export class LinkInterceptor {
           if (pushState) {
             window.history.pushState(null, "", href);
           }
+          this.lastNavigatedPath = targetURL.pathname;
+          this.lastNavigatedSearch = targetURL.search;
           return;
         }
         // sendNavigate returned false — fall through to fetch as recovery.
@@ -201,6 +216,9 @@ export class LinkInterceptor {
       if (pushState) {
         window.history.pushState(null, "", href);
       }
+
+      this.lastNavigatedPath = targetURL.pathname;
+      this.lastNavigatedSearch = targetURL.search;
 
       this.context.handleNavigationResponse(html);
     } catch (e: unknown) {
