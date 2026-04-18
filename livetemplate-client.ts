@@ -1193,27 +1193,6 @@ export class LiveTemplateClient {
           // Fall through to normal diff path so children are still updated.
         }
 
-        // Preserve checkbox/radio checked state across morphdom updates.
-        // These controls lose focus immediately after click, so the
-        // focusManager never protects them, but their checked state is
-        // user input that must survive scan-loop refreshes. We copy the
-        // DOM's checked value onto the incoming element so morphdom sees
-        // them as equal and won't reset the property.
-        //
-        // data-lvt-force-update reverses this: the server explicitly
-        // wants to reset the checkbox, so we sync fromEl to toEl instead.
-        if (
-          fromEl instanceof HTMLInputElement &&
-          toEl instanceof HTMLInputElement &&
-          (fromEl.type === "checkbox" || fromEl.type === "radio")
-        ) {
-          if (toEl.hasAttribute("data-lvt-force-update")) {
-            fromEl.checked = toEl.checked;
-          } else {
-            toEl.checked = fromEl.checked;
-          }
-        }
-
         // Skip update entirely for focused form elements to preserve user
         // input. This also skips attribute updates (class, disabled, aria-*)
         // and the lvt-updated hook — use data-lvt-force-update to override.
@@ -1221,17 +1200,8 @@ export class LiveTemplateClient {
           return false;
         }
 
-        // Only update if content actually changed — but honour
-        // data-lvt-force-update which means the server wants morphdom
-        // to process this element unconditionally (e.g. resetting a
-        // checkbox whose checked property differs from the attribute).
-        if (
-          fromEl.isEqualNode(toEl) &&
-          !(
-            toEl instanceof Element &&
-            (toEl as Element).hasAttribute("data-lvt-force-update")
-          )
-        ) {
+        // Only update if content actually changed
+        if (fromEl.isEqualNode(toEl)) {
           return false;
         }
         // Execute lvt-updated lifecycle hook
