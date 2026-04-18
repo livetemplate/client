@@ -373,11 +373,10 @@ describe("lvt-preserve attribute", () => {
     expect(afterNormal.checked).toBe(true);
   });
 
-  it("data-lvt-force-update on descendant bypasses ancestor isEqualNode short-circuit", () => {
-    // When the parent container is structurally equal across renders,
-    // isEqualNode would return true and skip the subtree. The subtree
-    // check ensures a descendant with data-lvt-force-update still
-    // gets processed.
+  it("data-lvt-force-update on newly added node is stripped after first render", () => {
+    // When a node with data-lvt-force-update is first inserted via
+    // onNodeAdded, the attribute is stripped. Subsequent renders treat
+    // the checkbox normally (user selection wins).
     const tree = {
       s: [`<form>`, `</form>`],
       0: `<div class="stable"><input type="checkbox" data-lvt-force-update value="x"></div>`,
@@ -385,10 +384,14 @@ describe("lvt-preserve attribute", () => {
     client.updateDOM(wrapper, tree);
 
     const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    // Attribute should be stripped after the initial render.
+    expect(cb.hasAttribute("data-lvt-force-update")).toBe(false);
+
     cb.checked = true;
 
-    // Same tree — parent div is structurally equal, but descendant
-    // input has data-lvt-force-update so morphdom must still traverse.
+    // Server sends same tree again — since the attr was stripped from
+    // fromEl, morphdom sees a diff and processes normally. The checkbox
+    // block sees data-lvt-force-update on toEl and force-resets.
     client.updateDOM(wrapper, tree);
 
     const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;

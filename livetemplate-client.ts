@@ -1248,6 +1248,9 @@ export class LiveTemplateClient {
           ) {
             return false;
           }
+          // Ancestor itself didn't change — only traversing for a
+          // descendant's force-update. Skip the lvt-updated hook.
+          return true;
         }
         // Execute lvt-updated lifecycle hook
         this.executeLifecycleHook(fromEl, "lvt-updated");
@@ -1272,6 +1275,9 @@ export class LiveTemplateClient {
         // Sync textarea value for newly inserted textarea elements
         if (node instanceof HTMLTextAreaElement) {
           node.value = node.textContent ?? "";
+        }
+        if (node instanceof HTMLElement && node.hasAttribute("data-lvt-force-update")) {
+          node.removeAttribute("data-lvt-force-update");
         }
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
