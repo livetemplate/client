@@ -375,8 +375,8 @@ describe("lvt-preserve attribute", () => {
 
   it("data-lvt-force-update on newly added node is stripped after first render", () => {
     // When a node with data-lvt-force-update is first inserted via
-    // onNodeAdded, the attribute is stripped. Subsequent renders treat
-    // the checkbox normally (user selection wins).
+    // onNodeAdded, the attribute is stripped from the live DOM. If the
+    // server keeps sending it, each render still force-resets the state.
     const tree = {
       s: [`<form>`, `</form>`],
       0: `<div class="stable"><input type="checkbox" data-lvt-force-update value="x"></div>`,

@@ -1240,6 +1240,9 @@ export class LiveTemplateClient {
         // to process this element or one of its descendants
         // unconditionally (e.g. resetting a checkbox whose checked
         // property differs from the attribute).
+        // Note: querySelector is O(subtree) per equal node — acceptable
+        // since isEqualNode-true is rare for dynamic content, but worth
+        // revisiting if large static subtrees cause perf issues.
         if (fromEl.isEqualNode(toEl)) {
           if (
             !toEl.hasAttribute("data-lvt-force-update") &&
@@ -1264,9 +1267,9 @@ export class LiveTemplateClient {
         if (el instanceof HTMLTextAreaElement) {
           el.value = el.textContent ?? "";
         }
-        // Auto-strip data-lvt-force-update so it acts as a one-shot
-        // directive. The server sets it for one render to override user
-        // state; it self-clears so subsequent renders resume preservation.
+        // Strip data-lvt-force-update from the live DOM after each
+        // render. If the server stops sending it, preservation resumes;
+        // if the server keeps including it, each render force-resets.
         if (el instanceof HTMLElement && el.hasAttribute("data-lvt-force-update")) {
           el.removeAttribute("data-lvt-force-update");
         }
