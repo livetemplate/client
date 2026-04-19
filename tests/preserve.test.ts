@@ -455,6 +455,30 @@ describe("lvt-preserve attribute", () => {
     expect(datalistAfter.querySelectorAll('option').length).toBe(3);
   });
 
+  it("data-lvt-force-update overrides datalist preservation while focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="force-opts" data-key="fi">` +
+         `<datalist id="force-opts"><option value="a"><option value="b"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="force-opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="force-opts" data-key="fi">` +
+         `<datalist id="force-opts" data-lvt-force-update><option value="a"><option value="b"><option value="c"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#force-opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(3);
+    expect(datalist.hasAttribute('data-lvt-force-update')).toBe(false);
+  });
+
   it("updates datalist when its connected input is not focused", () => {
     const initialTree = {
       s: [`<form>`, `</form>`],
