@@ -67,8 +67,9 @@ export class WebSocketTransport {
     this.clearReconnectTimer();
     if (this.socket) {
       if (this.socket.readyState <= 2) {  // Not already CLOSED
+        const wasClean = this.socket.readyState !== 0;  // Not clean if never opened
         this.options.onClose?.(
-          new CloseEvent("close", { code: 1000, reason: "", wasClean: true }),
+          new CloseEvent("close", { code: 1000, reason: "", wasClean }),
         );
       }
       this.socket.onopen = null;

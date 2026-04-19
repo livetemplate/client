@@ -251,7 +251,7 @@ describe("WebSocketTransport", () => {
 
       expect(onClose).toHaveBeenCalledTimes(1);
       expect(onClose).toHaveBeenCalledWith(
-        expect.objectContaining({ code: 1000, wasClean: true }),
+        expect.objectContaining({ code: 1000, wasClean: false }),
       );
     });
 
