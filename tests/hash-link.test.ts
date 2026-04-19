@@ -441,24 +441,13 @@ describe("hash-link", () => {
       expect(replaceStateSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("closes open details when hash changes away", () => {
+    it("does not close open details when hash changes away", () => {
       const details = createDetails("faq");
       details.open = true;
       history.replaceState(null, "", "#faq");
 
       setupHashLink();
       history.replaceState(null, "", location.pathname);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-
-      expect(details.open).toBe(false);
-    });
-
-    it("does not close details whose id matches the new hash", () => {
-      const details = createDetails("faq");
-      details.open = true;
-
-      setupHashLink();
-      history.replaceState(null, "", "#faq");
       window.dispatchEvent(new PopStateEvent("popstate"));
 
       expect(details.open).toBe(true);

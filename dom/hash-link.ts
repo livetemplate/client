@@ -10,6 +10,7 @@
  * hashchange events that could cause double-activation errors.
  */
 
+/** @internal */
 export function safeMatchesPopoverOpen(el: HTMLElement): boolean {
   try {
     return el.matches(":popover-open");
@@ -123,7 +124,7 @@ function handleToggle(e: Event): void {
 function handlePopstate(): void {
   const id = location.hash.slice(1);
 
-  document.querySelectorAll("dialog, [popover], details").forEach((el) => {
+  document.querySelectorAll("dialog, [popover]").forEach((el) => {
     const handler = findHandler(el);
     if (handler && handler.isOpen(el) && el.id !== id) handler.close(el);
   });
