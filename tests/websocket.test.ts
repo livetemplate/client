@@ -239,6 +239,20 @@ describe("WebSocketTransport", () => {
       );
     });
 
+    it("does not fire onClose when disconnecting before open", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      // Socket is still CONNECTING — no simulateOpen()
+
+      transport.disconnect();
+
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
     it("prevents auto-reconnect", () => {
       const onReconnectAttempt = jest.fn();
       transport = new WebSocketTransport({
