@@ -426,6 +426,96 @@ describe("lvt-preserve attribute", () => {
     expect(cbAfter.hasAttribute("data-lvt-force-update")).toBe(false);
   });
 
+  it("preserves datalist when its connected input is focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts" data-key="inp">` +
+         `<datalist id="opts"><option value="alpha"><option value="bravo"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts" data-key="inp">` +
+         `<datalist id="opts"><option value="alpha"><option value="bravo"><option value="charlie"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(2);
+
+    input.blur();
+    client.updateDOM(wrapper, updateTree);
+
+    const datalistAfter = wrapper.querySelector('#opts') as HTMLDataListElement;
+    expect(datalistAfter.querySelectorAll('option').length).toBe(3);
+  });
+
+  it("updates datalist when its connected input is not focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts2" data-key="inp2">` +
+         `<datalist id="opts2"><option value="one"><option value="two"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts2" data-key="inp2">` +
+         `<datalist id="opts2"><option value="one"><option value="two"><option value="three"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#opts2') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(3);
+  });
+
+  it("preserves datalist inside dialog without lvt-preserve when input is focused", () => {
+    const initialTree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:00</span>` +
+         `<dialog id="dlg" data-key="dlg">` +
+           `<form data-key="frm">` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="foo"><option value="bar"></datalist>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="dl-opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:02</span>` +
+         `<dialog id="dlg" data-key="dlg">` +
+           `<form data-key="frm">` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="foo"><option value="bar"><option value="baz"></datalist>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(2);
+
+    const ts = wrapper.querySelector('[data-key="ts"]') as HTMLElement;
+    expect(ts.textContent).toBe("12:00:02");
+
+    input.blur();
+    client.updateDOM(wrapper, updateTree);
+
+    const datalistAfter = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
+    expect(datalistAfter.querySelectorAll('option').length).toBe(3);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that
