@@ -10,6 +10,14 @@
  * hashchange events that could cause double-activation errors.
  */
 
+export function safeMatchesPopoverOpen(el: HTMLElement): boolean {
+  try {
+    return el.matches(":popover-open");
+  } catch {
+    return false;
+  }
+}
+
 interface HashLinkHandler {
   matches(el: Element): boolean;
   isOpen(el: Element): boolean;
@@ -27,13 +35,7 @@ const handlers: HashLinkHandler[] = [
   {
     matches: (el) =>
       el instanceof HTMLElement && el.hasAttribute("popover"),
-    isOpen: (el) => {
-      try {
-        return (el as HTMLElement).matches(":popover-open");
-      } catch {
-        return false;
-      }
-    },
+    isOpen: (el) => safeMatchesPopoverOpen(el as HTMLElement),
     open: (el) => {
       if (typeof (el as any).showPopover === "function")
         (el as HTMLElement).showPopover();

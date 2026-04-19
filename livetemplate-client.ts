@@ -25,7 +25,7 @@ import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
-import { setupHashLink, teardownHashLink, openFromHash } from "./dom/hash-link";
+import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
@@ -350,6 +350,8 @@ export class LiveTemplateClient {
         this.wrapperElement.removeAttribute("data-lvt-loading");
       }
       this.isInitialized = true;
+      // Re-run after first render — setupHashLink()'s internal call
+      // fired before server content existed in the DOM.
       openFromHash();
     }
 
@@ -1095,14 +1097,6 @@ export class LiveTemplateClient {
         "[updateDOM] tempWrapper has <tr>:",
         tempWrapper.innerHTML.includes("<tr")
       );
-    }
-
-    function safeMatchesPopoverOpen(el: HTMLElement): boolean {
-      try {
-        return el.matches(":popover-open");
-      } catch {
-        return false;
-      }
     }
 
     // Use morphdom to efficiently update the element
