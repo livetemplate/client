@@ -210,7 +210,7 @@ describe("setupInvokerPolyfill", () => {
     // commandForElement cleanup is handled by afterEach
   });
 
-  it("ignores unknown commands", () => {
+  it("ignores popover commands on dialog targets", () => {
     const dialog = document.createElement("dialog");
     dialog.id = "test-dialog";
     const { showModal, close } = mockDialogMethods(dialog);
@@ -226,5 +226,112 @@ describe("setupInvokerPolyfill", () => {
 
     expect(showModal).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
+  });
+
+  it("ignores dialog commands on popover targets", () => {
+    const div = document.createElement("div");
+    div.id = "test-popover";
+    div.setAttribute("popover", "");
+    const showPopover = jest.fn();
+    (div as any).showPopover = showPopover;
+    document.body.appendChild(div);
+
+    const button = document.createElement("button");
+    button.setAttribute("command", "show-modal");
+    button.setAttribute("commandfor", "test-popover");
+    document.body.appendChild(button);
+
+    setupInvokerPolyfill();
+    button.click();
+
+    expect(showPopover).not.toHaveBeenCalled();
+  });
+
+  describe("popover commands", () => {
+    function mockPopoverMethods(el: HTMLElement): {
+      showPopover: jest.Mock;
+      hidePopover: jest.Mock;
+      togglePopover: jest.Mock;
+    } {
+      const showPopover = jest.fn();
+      const hidePopover = jest.fn();
+      const togglePopover = jest.fn();
+      (el as any).showPopover = showPopover;
+      (el as any).hidePopover = hidePopover;
+      (el as any).togglePopover = togglePopover;
+      return { showPopover, hidePopover, togglePopover };
+    }
+
+    it("show-popover calls showPopover on target", () => {
+      const div = document.createElement("div");
+      div.id = "my-popover";
+      div.setAttribute("popover", "");
+      const { showPopover } = mockPopoverMethods(div);
+      document.body.appendChild(div);
+
+      const button = document.createElement("button");
+      button.setAttribute("command", "show-popover");
+      button.setAttribute("commandfor", "my-popover");
+      document.body.appendChild(button);
+
+      setupInvokerPolyfill();
+      button.click();
+
+      expect(showPopover).toHaveBeenCalled();
+    });
+
+    it("hide-popover calls hidePopover on target", () => {
+      const div = document.createElement("div");
+      div.id = "my-popover";
+      div.setAttribute("popover", "");
+      const { hidePopover } = mockPopoverMethods(div);
+      document.body.appendChild(div);
+
+      const button = document.createElement("button");
+      button.setAttribute("command", "hide-popover");
+      button.setAttribute("commandfor", "my-popover");
+      document.body.appendChild(button);
+
+      setupInvokerPolyfill();
+      button.click();
+
+      expect(hidePopover).toHaveBeenCalled();
+    });
+
+    it("toggle-popover calls togglePopover on target", () => {
+      const div = document.createElement("div");
+      div.id = "my-popover";
+      div.setAttribute("popover", "");
+      const { togglePopover } = mockPopoverMethods(div);
+      document.body.appendChild(div);
+
+      const button = document.createElement("button");
+      button.setAttribute("command", "toggle-popover");
+      button.setAttribute("commandfor", "my-popover");
+      document.body.appendChild(button);
+
+      setupInvokerPolyfill();
+      button.click();
+
+      expect(togglePopover).toHaveBeenCalled();
+    });
+
+    it("ignores popover commands on elements without popover attribute", () => {
+      const div = document.createElement("div");
+      div.id = "not-a-popover";
+      const showPopover = jest.fn();
+      (div as any).showPopover = showPopover;
+      document.body.appendChild(div);
+
+      const button = document.createElement("button");
+      button.setAttribute("command", "show-popover");
+      button.setAttribute("commandfor", "not-a-popover");
+      document.body.appendChild(button);
+
+      setupInvokerPolyfill();
+      button.click();
+
+      expect(showPopover).not.toHaveBeenCalled();
+    });
   });
 });
