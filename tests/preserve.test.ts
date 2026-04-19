@@ -498,11 +498,11 @@ describe("lvt-preserve attribute", () => {
     expect(datalist.querySelectorAll('option').length).toBe(3);
   });
 
-  it("preserves datalist inside dialog without lvt-preserve when input is focused", () => {
+  it("preserves datalist inside closed dialog when input is focused", () => {
     const initialTree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:00</span>` +
-         `<dialog id="dlg" open data-key="dlg">` +
+         `<dialog id="dlg" data-key="dlg">` +
            `<form data-key="frm">` +
              `<input type="text" list="dl-opts" data-key="dl-inp">` +
              `<datalist id="dl-opts"><option value="foo"><option value="bar"></datalist>` +
@@ -518,7 +518,7 @@ describe("lvt-preserve attribute", () => {
     const updateTree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:02</span>` +
-         `<dialog id="dlg" open data-key="dlg">` +
+         `<dialog id="dlg" data-key="dlg">` +
            `<form data-key="frm">` +
              `<input type="text" list="dl-opts" data-key="dl-inp">` +
              `<datalist id="dl-opts"><option value="foo"><option value="bar"><option value="baz"></datalist>` +
@@ -540,7 +540,7 @@ describe("lvt-preserve attribute", () => {
     expect(datalistAfter.querySelectorAll('option').length).toBe(3);
   });
 
-  it("preserves dialog open state across morphdom updates", () => {
+  it("skips entire open dialog subtree across morphdom updates", () => {
     const tree = {
       s: [`<div>`, `</div>`],
       0: `<dialog id="my-dialog" data-key="my-dialog"><p>content</p></dialog>`,
@@ -551,10 +551,19 @@ describe("lvt-preserve attribute", () => {
     dialog.setAttribute('open', '');
     expect(dialog.hasAttribute('open')).toBe(true);
 
-    client.updateDOM(wrapper, tree);
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="my-dialog" data-key="my-dialog"><p>changed</p></dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
 
     const dialogAfter = wrapper.querySelector('#my-dialog') as HTMLDialogElement;
     expect(dialogAfter.hasAttribute('open')).toBe(true);
+    expect(dialogAfter.querySelector('p')!.textContent).toBe("content");
+
+    dialog.removeAttribute('open');
+    client.updateDOM(wrapper, updateTree);
+    expect(wrapper.querySelector('#my-dialog p')!.textContent).toBe("changed");
   });
 
   it("does not add open to dialog that was never opened", () => {

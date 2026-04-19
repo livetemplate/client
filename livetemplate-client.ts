@@ -1210,17 +1210,19 @@ export class LiveTemplateClient {
           }
         }
 
-        // Preserve <dialog> open state. showModal()/close() toggle the
-        // open attribute from client-side JS; the server template never
-        // has it. Copy fromEl's open to toEl so morphdom sees no diff.
+        // Preserve open <dialog> elements entirely. showModal() adds
+        // the dialog to the browser's top layer — a rendering state
+        // with no DOM representation. Morphdom's attribute sync and
+        // child reconciliation can disrupt this state even when the
+        // open attribute itself is preserved. Skip the entire element
+        // and subtree while the dialog is open; the next update after
+        // close() will apply any pending server changes.
         if (
           fromEl instanceof HTMLDialogElement &&
-          toEl instanceof HTMLDialogElement &&
+          fromEl.hasAttribute('open') &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
-          if (fromEl.hasAttribute('open') && !toEl.hasAttribute('open')) {
-            toEl.setAttribute('open', '');
-          }
+          return false;
         }
 
         // Preserve checkbox/radio checked state across morphdom updates.
