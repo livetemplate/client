@@ -1093,6 +1093,26 @@ export class LiveTemplateClient {
       );
     }
 
+    // Defer the entire morphdom pass while a native datalist dropdown
+    // may be showing. Datalist popups are browser-managed overlays with
+    // no DOM representation — ANY mutation on the page (not just to the
+    // datalist itself) triggers a reflow that dismisses the popup.
+    // Since there is no API to query whether the popup is open, we use
+    // document.activeElement being a datalist-connected <input> as the
+    // signal. The deferred state is naturally applied on the next server
+    // push after the user leaves the input (typically within one scan
+    // interval).
+    const activeEl = document.activeElement;
+    if (
+      activeEl instanceof HTMLInputElement &&
+      activeEl.list instanceof HTMLDataListElement &&
+      !tempWrapper.querySelector("[data-lvt-force-update]")
+    ) {
+      this.logger.debug("[updateDOM] deferred: datalist input focused");
+      this.focusManager.restoreFocusedElement();
+      return;
+    }
+
     // Use morphdom to efficiently update the element
     morphdom(element, tempWrapper, {
       childrenOnly: true, // Only update children, preserve the wrapper element itself

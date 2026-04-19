@@ -498,7 +498,7 @@ describe("lvt-preserve attribute", () => {
     expect(datalist.querySelectorAll('option').length).toBe(3);
   });
 
-  it("preserves datalist inside closed dialog when input is focused", () => {
+  it("defers entire morphdom pass when datalist input is focused", () => {
     const initialTree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:00</span>` +
@@ -527,17 +527,23 @@ describe("lvt-preserve attribute", () => {
     };
     client.updateDOM(wrapper, updateTree);
 
+    // Full-pass deferral: NOTHING updates while datalist input is focused —
+    // any DOM mutation (even to siblings) dismisses the native dropdown.
     const datalist = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
     expect(datalist.querySelectorAll('option').length).toBe(2);
 
     const ts = wrapper.querySelector('[data-key="ts"]') as HTMLElement;
-    expect(ts.textContent).toBe("12:00:02");
+    expect(ts.textContent).toBe("12:00:00");
 
+    // After blur, the next update applies all pending changes.
     input.blur();
     client.updateDOM(wrapper, updateTree);
 
     const datalistAfter = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
     expect(datalistAfter.querySelectorAll('option').length).toBe(3);
+
+    const tsAfter = wrapper.querySelector('[data-key="ts"]') as HTMLElement;
+    expect(tsAfter.textContent).toBe("12:00:02");
   });
 
   it("skips entire open dialog subtree when dialog was opened client-side", () => {
