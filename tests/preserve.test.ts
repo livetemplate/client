@@ -540,20 +540,19 @@ describe("lvt-preserve attribute", () => {
     expect(datalistAfter.querySelectorAll('option').length).toBe(3);
   });
 
-  it("skips entire open dialog subtree across morphdom updates", () => {
+  it("skips entire open dialog subtree when server also sends open", () => {
     const tree = {
       s: [`<div>`, `</div>`],
-      0: `<dialog id="my-dialog" data-key="my-dialog"><p>content</p></dialog>`,
+      0: `<dialog id="my-dialog" open data-key="my-dialog"><p>content</p></dialog>`,
     };
     client.updateDOM(wrapper, tree);
 
     const dialog = wrapper.querySelector('#my-dialog') as HTMLDialogElement;
-    dialog.setAttribute('open', '');
     expect(dialog.hasAttribute('open')).toBe(true);
 
     const updateTree = {
       s: [`<div>`, `</div>`],
-      0: `<dialog id="my-dialog" data-key="my-dialog"><p>changed</p></dialog>`,
+      0: `<dialog id="my-dialog" open data-key="my-dialog"><p>changed</p></dialog>`,
     };
     client.updateDOM(wrapper, updateTree);
 
@@ -564,6 +563,27 @@ describe("lvt-preserve attribute", () => {
     dialog.removeAttribute('open');
     client.updateDOM(wrapper, updateTree);
     expect(wrapper.querySelector('#my-dialog p')!.textContent).toBe("changed");
+  });
+
+  it("server closes dialog by omitting open attribute", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="srv-close" open data-key="srv-close"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#srv-close') as HTMLDialogElement;
+    expect(dialog.hasAttribute('open')).toBe(true);
+
+    const closeTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="srv-close" data-key="srv-close"><p>updated</p></dialog>`,
+    };
+    client.updateDOM(wrapper, closeTree);
+
+    const dialogAfter = wrapper.querySelector('#srv-close') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(false);
+    expect(dialogAfter.querySelector('p')!.textContent).toBe("updated");
   });
 
   it("does not add open to dialog that was never opened", () => {
@@ -585,22 +605,22 @@ describe("lvt-preserve attribute", () => {
   it("data-lvt-force-update overrides dialog open preservation", () => {
     const tree = {
       s: [`<div>`, `</div>`],
-      0: `<dialog id="force-dlg" data-key="force-dlg"><p>content</p></dialog>`,
+      0: `<dialog id="force-dlg" open data-key="force-dlg"><p>content</p></dialog>`,
     };
     client.updateDOM(wrapper, tree);
 
     const dialog = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
-    dialog.setAttribute('open', '');
     expect(dialog.hasAttribute('open')).toBe(true);
 
     const updateTree = {
       s: [`<div>`, `</div>`],
-      0: `<dialog id="force-dlg" data-lvt-force-update data-key="force-dlg"><p>content</p></dialog>`,
+      0: `<dialog id="force-dlg" open data-lvt-force-update data-key="force-dlg"><p>updated</p></dialog>`,
     };
     client.updateDOM(wrapper, updateTree);
 
     const dialogAfter = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
-    expect(dialogAfter.hasAttribute('open')).toBe(false);
+    expect(dialogAfter.hasAttribute('open')).toBe(true);
+    expect(dialogAfter.querySelector('p')!.textContent).toBe("updated");
     expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
   });
 

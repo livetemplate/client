@@ -1210,16 +1210,17 @@ export class LiveTemplateClient {
           }
         }
 
-        // Preserve open <dialog> elements entirely. showModal() adds
-        // the dialog to the browser's top layer — a rendering state
-        // with no DOM representation. Morphdom's attribute sync and
-        // child reconciliation can disrupt this state even when the
-        // open attribute itself is preserved. Skip the entire element
-        // and subtree while the dialog is open; the next update after
-        // close() will apply any pending server changes.
+        // Preserve open <dialog> elements when the server also sends
+        // open. showModal() adds the dialog to the browser's top
+        // layer — a rendering state with no DOM representation.
+        // Morphdom's attribute sync and child reconciliation can
+        // disrupt this state. Skip the element while both sides
+        // agree it should be open; if the server omits open, let
+        // morphdom apply the diff so the server can close the dialog.
         if (
           fromEl instanceof HTMLDialogElement &&
           fromEl.hasAttribute('open') &&
+          (toEl as Element).hasAttribute('open') &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
           return false;
