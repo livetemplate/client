@@ -255,6 +255,22 @@ describe("WebSocketTransport", () => {
       );
     });
 
+    it("fires onClose when disconnecting during CLOSING state", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+      mockSocket!.readyState = MockWebSocket.CLOSING;
+      onClose.mockClear();
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it("does not fire onClose when socket is already CLOSED", () => {
       const onClose = jest.fn();
       transport = new WebSocketTransport({
