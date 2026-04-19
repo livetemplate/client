@@ -66,7 +66,7 @@ export class WebSocketTransport {
     this.manuallyClosed = true;
     this.clearReconnectTimer();
     if (this.socket) {
-      if (this.socket.readyState === 1) {  // WebSocket.OPEN = 1
+      if (this.socket.readyState <= 1) {  // WebSocket.CONNECTING or OPEN
         this.options.onClose?.(
           new CloseEvent("close", { code: 1000, reason: "", wasClean: true }),
         );

@@ -239,14 +239,32 @@ describe("WebSocketTransport", () => {
       );
     });
 
-    it("does not fire onClose when disconnecting before open", () => {
+    it("fires onClose when disconnecting during CONNECTING state", () => {
       const onClose = jest.fn();
       transport = new WebSocketTransport({
         url: "ws://localhost:8080",
         onClose,
       });
       transport.connect();
-      // Socket is still CONNECTING — no simulateOpen()
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1000, wasClean: true }),
+      );
+    });
+
+    it("does not fire onClose when socket is already CLOSED", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+      mockSocket!.simulateClose();
+      onClose.mockClear();
 
       transport.disconnect();
 
