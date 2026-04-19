@@ -186,6 +186,23 @@ describe("WebSocketTransport", () => {
       expect(mockSocket!.readyState).toBe(MockWebSocket.CLOSED);
     });
 
+    it("detaches event handlers before closing", () => {
+      transport = new WebSocketTransport({ url: "ws://localhost:8080" });
+      transport.connect();
+      mockSocket!.simulateOpen();
+
+      const socketRef = mockSocket!;
+      expect(socketRef.onopen).not.toBeNull();
+      expect(socketRef.onclose).not.toBeNull();
+
+      transport.disconnect();
+
+      expect(socketRef.onopen).toBeNull();
+      expect(socketRef.onmessage).toBeNull();
+      expect(socketRef.onclose).toBeNull();
+      expect(socketRef.onerror).toBeNull();
+    });
+
     it("prevents auto-reconnect", () => {
       const onReconnectAttempt = jest.fn();
       transport = new WebSocketTransport({
