@@ -1210,17 +1210,15 @@ export class LiveTemplateClient {
           }
         }
 
-        // Preserve open <dialog> elements when the server also sends
-        // open. showModal() adds the dialog to the browser's top
-        // layer — a rendering state with no DOM representation.
-        // Morphdom's attribute sync and child reconciliation can
-        // disrupt this state. Skip the element while both sides
-        // agree it should be open; if the server omits open, let
-        // morphdom apply the diff so the server can close the dialog.
+        // Preserve open <dialog> elements entirely. showModal() adds
+        // the dialog to the browser's top layer and sets the open
+        // attribute — both are client-side state with no server
+        // representation. Skip the entire subtree while the live
+        // element has open, because DOM mutations to ANY child
+        // dismiss native datalist autocomplete dropdowns.
         if (
           fromEl instanceof HTMLDialogElement &&
           fromEl.hasAttribute('open') &&
-          (toEl as Element).hasAttribute('open') &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
           return false;
