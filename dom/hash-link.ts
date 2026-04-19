@@ -124,6 +124,8 @@ function handleToggle(e: Event): void {
 function handlePopstate(): void {
   const id = location.hash.slice(1);
 
+  // Only close dialogs/popovers — details elements are independent
+  // (multiple can be open at once) and should not be swept closed.
   document.querySelectorAll("dialog, [popover]").forEach((el) => {
     const handler = findHandler(el);
     if (handler && handler.isOpen(el) && el.id !== id) handler.close(el);
