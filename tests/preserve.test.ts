@@ -478,7 +478,7 @@ describe("lvt-preserve attribute", () => {
     const initialTree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:00</span>` +
-         `<dialog id="dlg" data-key="dlg">` +
+         `<dialog id="dlg" open data-key="dlg">` +
            `<form data-key="frm">` +
              `<input type="text" list="dl-opts" data-key="dl-inp">` +
              `<datalist id="dl-opts"><option value="foo"><option value="bar"></datalist>` +
@@ -494,7 +494,7 @@ describe("lvt-preserve attribute", () => {
     const updateTree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:02</span>` +
-         `<dialog id="dlg" data-key="dlg">` +
+         `<dialog id="dlg" open data-key="dlg">` +
            `<form data-key="frm">` +
              `<input type="text" list="dl-opts" data-key="dl-inp">` +
              `<datalist id="dl-opts"><option value="foo"><option value="bar"><option value="baz"></datalist>` +
@@ -547,6 +547,28 @@ describe("lvt-preserve attribute", () => {
 
     const dialogAfter = wrapper.querySelector('#closed-dialog') as HTMLDialogElement;
     expect(dialogAfter.hasAttribute('open')).toBe(false);
+  });
+
+  it("data-lvt-force-update overrides dialog open preservation", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="force-dlg" data-key="force-dlg"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+    expect(dialog.hasAttribute('open')).toBe(true);
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="force-dlg" data-lvt-force-update data-key="force-dlg"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const dialogAfter = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(false);
+    expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
   });
 
   it("preserves the element's children as well", () => {

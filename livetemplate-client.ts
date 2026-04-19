@@ -1198,16 +1198,15 @@ export class LiveTemplateClient {
         // is touched — unlike checkbox state, dropdown-open state has no
         // DOM representation and cannot be copied to the new element.
         if (
-          toEl.nodeType === Node.ELEMENT_NODE &&
-          (toEl as Element).tagName === 'DATALIST' &&
+          fromEl instanceof HTMLDataListElement &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
-          const id = (toEl as Element).getAttribute('id');
-          if (id) {
-            const active = document.activeElement;
-            if (active instanceof HTMLInputElement && active.getAttribute('list') === id) {
-              return false;
-            }
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLInputElement &&
+            active.list === fromEl
+          ) {
+            return false;
           }
         }
 
