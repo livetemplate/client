@@ -1212,9 +1212,9 @@ export class LiveTemplateClient {
         // disrupt this top-layer state. Skip the entire subtree while
         // the live element is open; use data-lvt-force-update to bypass.
         if (
-          !(toEl as Element).hasAttribute('data-lvt-force-update') && (
-            (fromEl instanceof HTMLDialogElement && fromEl.hasAttribute('open')) ||
-            (fromEl instanceof HTMLElement && fromEl.hasAttribute('popover') && safeMatchesPopoverOpen(fromEl))
+          !(toEl as Element).hasAttribute("data-lvt-force-update") && (
+            (fromEl instanceof HTMLDialogElement && fromEl.hasAttribute("open")) ||
+            (fromEl instanceof HTMLElement && fromEl.hasAttribute("popover") && safeMatchesPopoverOpen(fromEl))
           )
         ) {
           return false;

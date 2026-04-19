@@ -34,8 +34,14 @@ const handlers: HashLinkHandler[] = [
         return false;
       }
     },
-    open: (el) => (el as HTMLElement).showPopover(),
-    close: (el) => (el as HTMLElement).hidePopover(),
+    open: (el) => {
+      if (typeof (el as any).showPopover === "function")
+        (el as HTMLElement).showPopover();
+    },
+    close: (el) => {
+      if (typeof (el as any).hidePopover === "function")
+        (el as HTMLElement).hidePopover();
+    },
   },
   {
     matches: (el) => el instanceof HTMLDetailsElement,
@@ -115,20 +121,10 @@ function handleToggle(e: Event): void {
 function handlePopstate(): void {
   const id = location.hash.slice(1);
 
-  document.querySelectorAll("dialog[open]").forEach((el) => {
-    if (el.id !== id) (el as HTMLDialogElement).close();
+  document.querySelectorAll("dialog, [popover], details").forEach((el) => {
+    const handler = findHandler(el);
+    if (handler && handler.isOpen(el) && el.id !== id) handler.close(el);
   });
-  document
-    .querySelectorAll("[popover]")
-    .forEach((el) => {
-      if (
-        el instanceof HTMLElement &&
-        el.matches(":popover-open") &&
-        el.id !== id
-      ) {
-        el.hidePopover();
-      }
-    });
 
   if (id) {
     const el = document.getElementById(id);
@@ -184,7 +180,7 @@ export function setupHashLink(): void {
   openFromHash();
 }
 
-/** @internal Test-only — do not call from production code. */
+/** @internal Remove all hash-link event listeners. */
 export function teardownHashLink(): void {
   if (!installed) return;
   installed = false;

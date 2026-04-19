@@ -100,7 +100,7 @@ export class LinkInterceptor {
 
       if (this.shouldSkip(target)) return;
 
-      if (target.pathname === window.location.pathname && target.hash) {
+      if (target.pathname === window.location.pathname && target.search === window.location.search && target.hash) {
         const hashId = target.hash.slice(1);
         if (hashId && isHashLinkTarget(hashId)) {
           e.preventDefault();

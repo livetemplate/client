@@ -367,6 +367,41 @@ describe("hash-link", () => {
 
       expect(pushStateSpy).not.toHaveBeenCalled();
     });
+
+    it("pushes hash when popover opens via toggle event", () => {
+      const div = document.createElement("div");
+      div.id = "pop";
+      div.setAttribute("popover", "");
+      (div as any).matches = (sel: string) => {
+        if (sel === ":popover-open") return true;
+        return Element.prototype.matches.call(div, sel);
+      };
+      document.body.appendChild(div);
+
+      setupHashLink();
+      div.dispatchEvent(new Event("toggle"));
+
+      expect(pushStateSpy).toHaveBeenCalledWith(null, "", "#pop");
+    });
+
+    it("clears hash when popover closes via toggle event", () => {
+      const div = document.createElement("div");
+      div.id = "pop";
+      div.setAttribute("popover", "");
+      document.body.appendChild(div);
+      history.replaceState(null, "", "#pop");
+
+      setupHashLink();
+      replaceStateSpy.mockClear();
+
+      div.dispatchEvent(new Event("toggle"));
+
+      expect(replaceStateSpy).toHaveBeenCalledWith(
+        null,
+        "",
+        location.pathname + location.search
+      );
+    });
   });
 
   describe("popstate reconciliation", () => {
@@ -404,6 +439,29 @@ describe("hash-link", () => {
 
       expect(close).toHaveBeenCalled();
       expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes open details when hash changes away", () => {
+      const details = createDetails("faq");
+      details.open = true;
+      history.replaceState(null, "", "#faq");
+
+      setupHashLink();
+      history.replaceState(null, "", location.pathname);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+
+      expect(details.open).toBe(false);
+    });
+
+    it("does not close details whose id matches the new hash", () => {
+      const details = createDetails("faq");
+      details.open = true;
+
+      setupHashLink();
+      history.replaceState(null, "", "#faq");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+
+      expect(details.open).toBe(true);
     });
   });
 

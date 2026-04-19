@@ -30,11 +30,11 @@ function handleClick(e: Event): void {
       target.close();
     }
   } else if (target instanceof HTMLElement && target.hasAttribute("popover")) {
-    if (command === "show-popover") {
+    if (command === "show-popover" && typeof target.showPopover === "function") {
       target.showPopover();
-    } else if (command === "hide-popover") {
+    } else if (command === "hide-popover" && typeof target.hidePopover === "function") {
       target.hidePopover();
-    } else if (command === "toggle-popover") {
+    } else if (command === "toggle-popover" && typeof target.togglePopover === "function") {
       target.togglePopover();
     }
   }
