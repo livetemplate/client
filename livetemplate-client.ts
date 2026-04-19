@@ -25,6 +25,7 @@ import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
+import { setupHashLink, teardownHashLink, openFromHash } from "./dom/hash-link";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
@@ -349,6 +350,7 @@ export class LiveTemplateClient {
         this.wrapperElement.removeAttribute("data-lvt-loading");
       }
       this.isInitialized = true;
+      openFromHash();
     }
 
     if (this.wrapperElement) {
@@ -429,6 +431,7 @@ export class LiveTemplateClient {
     setupReactiveAttributeListeners();
 
     setupInvokerPolyfill();
+    setupHashLink();
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
@@ -449,6 +452,7 @@ export class LiveTemplateClient {
     this.ws = null;
     this.useHTTP = false;
     this.eventDelegator.teardownDOMEventTriggerDelegation();
+    teardownHashLink();
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
@@ -1093,6 +1097,14 @@ export class LiveTemplateClient {
       );
     }
 
+    function safeMatchesPopoverOpen(el: HTMLElement): boolean {
+      try {
+        return el.matches(":popover-open");
+      } catch {
+        return false;
+      }
+    }
+
     // Use morphdom to efficiently update the element
     morphdom(element, tempWrapper, {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
@@ -1191,6 +1203,21 @@ export class LiveTemplateClient {
             }
           }
           // Fall through to normal diff path so children are still updated.
+        }
+
+        // Preserve open <dialog> and open [popover] elements entirely.
+        // showModal()/showPopover() add the element to the browser's
+        // top layer — a rendering state with no DOM representation.
+        // Morphdom's attribute sync and child reconciliation can
+        // disrupt this top-layer state. Skip the entire subtree while
+        // the live element is open; use data-lvt-force-update to bypass.
+        if (
+          !(toEl as Element).hasAttribute('data-lvt-force-update') && (
+            (fromEl instanceof HTMLDialogElement && fromEl.hasAttribute('open')) ||
+            (fromEl instanceof HTMLElement && fromEl.hasAttribute('popover') && safeMatchesPopoverOpen(fromEl))
+          )
+        ) {
+          return false;
         }
 
         // Preserve checkbox/radio checked state across morphdom updates.

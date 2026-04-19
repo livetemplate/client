@@ -1,7 +1,7 @@
 /**
  * Polyfill for the HTML Invoker Commands API (command/commandfor).
- * Enables <button command="show-modal" commandfor="dialog-id"> to work
- * cross-browser by calling .showModal()/.close() on the target <dialog>.
+ * Enables <button command="show-modal" commandfor="dialog-id"> and
+ * popover commands to work cross-browser.
  *
  * No-op when native support is detected.
  * Spec: https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/command
@@ -21,12 +21,22 @@ function handleClick(e: Event): void {
 
   const command = button.getAttribute("command");
   const target = document.getElementById(targetId);
-  if (!target || !(target instanceof HTMLDialogElement)) return;
+  if (!target) return;
 
-  if (command === "show-modal" && !target.open) {
-    target.showModal();
-  } else if (command === "close" && target.open) {
-    target.close();
+  if (target instanceof HTMLDialogElement) {
+    if (command === "show-modal" && !target.open) {
+      target.showModal();
+    } else if (command === "close" && target.open) {
+      target.close();
+    }
+  } else if (target instanceof HTMLElement && target.hasAttribute("popover")) {
+    if (command === "show-popover") {
+      target.showPopover();
+    } else if (command === "hide-popover") {
+      target.hidePopover();
+    } else if (command === "toggle-popover") {
+      target.togglePopover();
+    }
   }
 }
 

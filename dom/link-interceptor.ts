@@ -1,4 +1,5 @@
 import type { Logger } from "../utils/logger";
+import { isHashLinkTarget, activateHashTarget } from "./hash-link";
 
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
@@ -99,6 +100,15 @@ export class LinkInterceptor {
 
       if (this.shouldSkip(target)) return;
 
+      if (target.pathname === window.location.pathname && target.hash) {
+        const hashId = target.hash.slice(1);
+        if (hashId && isHashLinkTarget(hashId)) {
+          e.preventDefault();
+          activateHashTarget(hashId);
+        }
+        return;
+      }
+
       e.preventDefault();
       this.navigate(target.href);
     };
@@ -130,8 +140,6 @@ export class LinkInterceptor {
     if (link.hasAttribute("download")) return true;
     // Opt-out attribute for link interception
     if (link.hasAttribute("lvt-nav:no-intercept")) return true;
-    // Hash-only links (scroll anchors)
-    if (link.pathname === window.location.pathname && link.hash) return true;
     // mailto/tel/javascript
     const protocol = link.protocol;
     if (protocol !== "http:" && protocol !== "https:") return true;
