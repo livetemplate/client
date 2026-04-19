@@ -516,6 +516,39 @@ describe("lvt-preserve attribute", () => {
     expect(datalistAfter.querySelectorAll('option').length).toBe(3);
   });
 
+  it("preserves dialog open state across morphdom updates", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="my-dialog" data-key="my-dialog"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#my-dialog') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+    expect(dialog.hasAttribute('open')).toBe(true);
+
+    client.updateDOM(wrapper, tree);
+
+    const dialogAfter = wrapper.querySelector('#my-dialog') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(true);
+  });
+
+  it("does not add open to dialog that was never opened", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="closed-dialog" data-key="closed-dialog"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#closed-dialog') as HTMLDialogElement;
+    expect(dialog.hasAttribute('open')).toBe(false);
+
+    client.updateDOM(wrapper, tree);
+
+    const dialogAfter = wrapper.querySelector('#closed-dialog') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-preserve is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that

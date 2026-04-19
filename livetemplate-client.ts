@@ -1211,6 +1211,19 @@ export class LiveTemplateClient {
           }
         }
 
+        // Preserve <dialog> open state. showModal()/close() toggle the
+        // open attribute from client-side JS; the server template never
+        // has it. Copy fromEl's open to toEl so morphdom sees no diff.
+        if (
+          fromEl instanceof HTMLDialogElement &&
+          toEl instanceof HTMLDialogElement &&
+          !(toEl as Element).hasAttribute('data-lvt-force-update')
+        ) {
+          if (fromEl.hasAttribute('open') && !toEl.hasAttribute('open')) {
+            toEl.setAttribute('open', '');
+          }
+        }
+
         // Preserve checkbox/radio checked state across morphdom updates.
         // User selection wins by default — these controls lose focus on
         // click so the focusManager never protects them, and their checked
