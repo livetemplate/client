@@ -30,7 +30,20 @@ class MockWebSocket {
     this.sentMessages.push(data);
   }
 
+  handlersAtClose: {
+    onopen: ((event: Event) => void) | null;
+    onmessage: ((event: MessageEvent) => void) | null;
+    onclose: ((event: CloseEvent) => void) | null;
+    onerror: ((event: Event) => void) | null;
+  } | null = null;
+
   close() {
+    this.handlersAtClose = {
+      onopen: this.onopen,
+      onmessage: this.onmessage,
+      onclose: this.onclose,
+      onerror: this.onerror,
+    };
     this.readyState = MockWebSocket.CLOSED;
     if (this.onclose) {
       this.onclose({ code: 1000, reason: "Normal closure" } as CloseEvent);
@@ -201,6 +214,29 @@ describe("WebSocketTransport", () => {
       expect(socketRef.onmessage).toBeNull();
       expect(socketRef.onclose).toBeNull();
       expect(socketRef.onerror).toBeNull();
+
+      expect(socketRef.handlersAtClose).not.toBeNull();
+      expect(socketRef.handlersAtClose!.onopen).toBeNull();
+      expect(socketRef.handlersAtClose!.onmessage).toBeNull();
+      expect(socketRef.handlersAtClose!.onclose).toBeNull();
+      expect(socketRef.handlersAtClose!.onerror).toBeNull();
+    });
+
+    it("fires onClose synchronously before detaching handlers", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1000, wasClean: true }),
+      );
     });
 
     it("prevents auto-reconnect", () => {
