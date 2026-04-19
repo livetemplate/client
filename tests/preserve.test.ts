@@ -618,7 +618,9 @@ describe("lvt-preserve attribute", () => {
     };
     client.updateDOM(wrapper, updateTree);
 
+    // Siblings OUTSIDE the dialog are updated normally.
     expect(wrapper.querySelector('[data-key="ts"]')!.textContent).toBe("12:00:02");
+    // Dialog children are frozen while open.
     expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Folder");
     expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Submit");
     expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(2);
@@ -626,6 +628,7 @@ describe("lvt-preserve attribute", () => {
     dialog.removeAttribute('open');
     client.updateDOM(wrapper, updateTree);
 
+    // After close, dialog children sync.
     expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Directory");
     expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Save");
     expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(3);
