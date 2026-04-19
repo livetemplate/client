@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.30] - 2026-04-19
+
+### Changes
+
+- feat: hash-driven element activation for deep-linking (#86) (c85d36c)
+
+
+
 ## [v0.8.29] - 2026-04-18
 
 ### Changes
