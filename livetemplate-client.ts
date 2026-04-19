@@ -1099,6 +1099,26 @@ export class LiveTemplateClient {
       );
     }
 
+    // Defer the entire morphdom pass while a native datalist dropdown
+    // may be showing. Datalist popups are browser-managed overlays with
+    // no DOM representation — ANY mutation on the page (not just to the
+    // datalist itself) triggers a reflow that dismisses the popup.
+    // Since there is no API to query whether the popup is open, we use
+    // document.activeElement being a datalist-connected <input> as the
+    // signal. The deferred state is naturally applied on the next server
+    // push after the user leaves the input (typically within one scan
+    // interval).
+    const activeEl = document.activeElement;
+    if (
+      activeEl instanceof HTMLInputElement &&
+      activeEl.list instanceof HTMLDataListElement &&
+      !tempWrapper.querySelector("[data-lvt-force-update]")
+    ) {
+      this.logger.debug("[updateDOM] deferred: datalist input focused");
+      this.focusManager.restoreFocusedElement();
+      return;
+    }
+
     // Use morphdom to efficiently update the element
     morphdom(element, tempWrapper, {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
@@ -1113,90 +1133,70 @@ export class LiveTemplateClient {
         }
       },
       onBeforeElUpdated: (fromEl, toEl) => {
-        // Honour lvt-preserve: the client owns this element's entire
-        // subtree and morphdom should never touch any of it.
-        // Attributes, content, descendants all stay exactly as the DOM
-        // currently has them. Equivalent to Phoenix LiveView's
-        // phx-update="ignore" and Turbo's data-turbo-permanent. Useful
-        // for third-party widgets (maps, date pickers, charts) that
-        // mutate their own DOM, and for scroll containers with
-        // JS-managed scrollTop.
-        //
-        // We check toEl (the incoming server version) rather than fromEl
-        // (the current DOM). This gives the server authority: if a later
-        // render omits lvt-preserve, morphdom resumes updating the element.
-        // Checking fromEl would make the attribute sticky in the DOM
-        // forever once applied, preventing the server from ever removing it.
-        //
-        // For the subtler case of "preserve my *attributes* but still
-        // let children update" (e.g. <details open>, <select> with
-        // user-selected options), use lvt-preserve-attrs below.
-        //
-        // Priority: lvt-preserve is checked first and returns early; if
-        // toEl has lvt-preserve, lvt-preserve-attrs on the same element
-        // is never reached. lvt-preserve wins (full freeze > partial
-        // attribute-only freeze).
+        // lvt-ignore: morphdom skips this element and its entire subtree.
+        // Equivalent to Phoenix LiveView's phx-update="ignore".
+        // Checked on fromEl (live DOM) so both server templates and
+        // client JS can add/remove it. Use data-lvt-force-update on
+        // the server's version to bypass and resume diffing.
         if (
-          toEl.nodeType === Node.ELEMENT_NODE &&
-          (toEl as Element).hasAttribute("lvt-preserve")
+          fromEl.nodeType === Node.ELEMENT_NODE &&
+          (fromEl as Element).hasAttribute("lvt-ignore") &&
+          !(toEl as Element).hasAttribute("data-lvt-force-update")
         ) {
           return false;
         }
 
-        // Honour lvt-preserve-attrs: the client owns this element's own
-        // attributes (e.g. the <details open> state the user toggled),
-        // but its children should still be diffed against the new tree.
-        // This is the right fit for collapsible pickers where the
-        // *container* state is user-managed but the *items* inside are
-        // server-authored and must reflect the latest data.
-        //
-        // Implementation: copy fromEl's attributes that are missing from
-        // toEl onto toEl before morphdom runs its attribute diff. This
-        // makes morphdom see the user-owned attrs as "already present"
-        // in the new version, so it doesn't remove them. Attributes that
-        // exist in both fromEl and toEl take toEl's value (server wins
-        // over client for attributes the template does control), which
-        // preserves the ability to update className etc. on the same
-        // element from the server.
-        //
-        // Limitation: only *missing* attributes from fromEl are copied.
-        // If the server's toEl already has e.g. class="card", that value
-        // is used — JS-added classes (el.classList.add('open')) are
-        // silently overwritten on the next diff. Use lvt-preserve-attrs
-        // for attributes the server template does NOT set at all.
-        //
-        // We check toEl (the incoming server tree), not fromEl (the live
-        // DOM), so the server has authority: removing lvt-preserve-attrs
-        // from the template takes effect immediately on the next render,
-        // consistent with how lvt-preserve works.
+        // lvt-ignore-attrs: skip attribute diffing but still diff children.
+        // Copies fromEl's missing attributes onto toEl so morphdom keeps
+        // them. Server-set attributes still win (toEl value used when
+        // both sides have the same attr). Checked on fromEl for
+        // consistency with lvt-ignore; use data-lvt-force-update to
+        // bypass.
         if (
-          toEl.nodeType === Node.ELEMENT_NODE &&
-          (toEl as Element).hasAttribute("lvt-preserve-attrs") &&
-          fromEl.nodeType === Node.ELEMENT_NODE
+          fromEl.nodeType === Node.ELEMENT_NODE &&
+          (fromEl as Element).hasAttribute("lvt-ignore-attrs") &&
+          !(toEl as Element).hasAttribute("data-lvt-force-update") &&
+          toEl.nodeType === Node.ELEMENT_NODE
         ) {
           const fromAttrs = (fromEl as Element).attributes;
           const toElement = toEl as Element;
           for (let i = 0; i < fromAttrs.length; i++) {
             const attr = fromAttrs[i];
-            // Skip the preserve control attributes themselves so the
-            // server can opt elements in/out across renders. If we
-            // copied lvt-preserve-attrs back onto toEl, the server
-            // could never remove the attribute in a future update.
-            if (
-              attr.name === "lvt-preserve" ||
-              attr.name === "lvt-preserve-attrs"
-            ) {
-              continue;
-            }
-            // Use hasAttributeNS / setAttributeNS to preserve namespace
-            // info (e.g. xlink:href on SVG elements). For plain HTML
-            // attributes namespaceURI is null, so this degrades to the
-            // same behaviour as setAttribute.
             if (!toElement.hasAttributeNS(attr.namespaceURI, attr.localName)) {
               toElement.setAttributeNS(attr.namespaceURI, attr.name, attr.value);
             }
           }
-          // Fall through to normal diff path so children are still updated.
+        }
+
+        // Preserve <datalist> elements while their connected input is
+        // focused. Native datalist dropdowns are dismissed if the element
+        // is touched — unlike checkbox state, dropdown-open state has no
+        // DOM representation and cannot be copied to the new element.
+        if (
+          fromEl instanceof HTMLDataListElement &&
+          !(toEl as Element).hasAttribute('data-lvt-force-update')
+        ) {
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLInputElement &&
+            active.list === fromEl
+          ) {
+            return false;
+          }
+        }
+
+        // Preserve open <dialog> elements entirely. showModal() adds
+        // the dialog to the browser's top layer — a rendering state
+        // with no DOM representation. Morphdom's attribute sync and
+        // child reconciliation can disrupt this top-layer state.
+        // Skip the entire subtree while the live element has open;
+        // use data-lvt-force-update to bypass.
+        if (
+          fromEl instanceof HTMLDialogElement &&
+          fromEl.hasAttribute('open') &&
+          !(toEl as Element).hasAttribute('data-lvt-force-update')
+        ) {
+          return false;
         }
 
         // Preserve open <dialog> and open [popover] elements entirely.

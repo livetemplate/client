@@ -1,22 +1,20 @@
 /**
- * lvt-preserve attribute tests.
+ * lvt-ignore / lvt-ignore-attrs attribute tests.
  *
- * lvt-preserve tells the morphdom diff engine "don't touch this element".
- * It's the generic escape hatch for interactive elements whose state
- * lives on the client side — <details open>, <dialog open>, checkbox
- * state, scroll positions, third-party widgets, etc. Without it, any
- * server-driven update that doesn't include the client-managed state
- * clobbers it on the next diff cycle.
+ * lvt-ignore tells the morphdom diff engine "skip this element entirely".
+ * lvt-ignore-attrs skips attribute diffing but still diffs children.
+ *
+ * Both are checked on fromEl (the live DOM), so they're usable by both
+ * server templates and client JS. Use data-lvt-force-update to bypass.
  *
  * Equivalent attributes in other frameworks:
  *   - Phoenix LiveView: phx-update="ignore"
  *   - Hotwire Turbo:    data-turbo-permanent
- *   - HTMX:             hx-preserve="true"
  */
 
 import { LiveTemplateClient } from "../livetemplate-client";
 
-describe("lvt-preserve attribute", () => {
+describe("lvt-ignore and lvt-ignore-attrs", () => {
   let client: LiveTemplateClient;
   let wrapper: HTMLElement;
 
@@ -34,7 +32,7 @@ describe("lvt-preserve attribute", () => {
   it("preserves an element's open attribute across updates", () => {
     const initialTree = {
       s: [
-        `<details lvt-preserve class="picker"><summary>Sessions</summary><div class="list">`,
+        `<details lvt-ignore class="picker"><summary>Sessions</summary><div class="list">`,
         `</div></details>`,
       ],
       0: "one two",
@@ -50,7 +48,7 @@ describe("lvt-preserve attribute", () => {
     expect(details.open).toBe(true);
 
     // Apply an update that does NOT contain the open attribute. Without
-    // lvt-preserve, morphdom would diff the incoming <details> against
+    // lvt-ignore, morphdom would diff the incoming <details> against
     // the DOM and remove the open attribute to match the server.
     const updateTree = { 0: "one two three" };
     client.updateDOM(wrapper, updateTree);
@@ -62,8 +60,8 @@ describe("lvt-preserve attribute", () => {
     expect(detailsAfter.open).toBe(true);
   });
 
-  it("does not preserve elements without lvt-preserve (control)", () => {
-    // Same shape, no lvt-preserve. Verify the open state IS clobbered
+  it("does not preserve elements without lvt-ignore (control)", () => {
+    // Same shape, no lvt-ignore. Verify the open state IS clobbered
     // here — confirming the preservation guarantee in the test above
     // is actually doing work and not just always passing.
     const initialTree = {
@@ -85,11 +83,11 @@ describe("lvt-preserve attribute", () => {
     const detailsAfter = wrapper.querySelector(
       "details"
     ) as HTMLDetailsElement;
-    // Without lvt-preserve, morphdom diff removes the user's open attr.
+    // Without lvt-ignore, morphdom diff removes the user's open attr.
     expect(detailsAfter.open).toBe(false);
   });
 
-  it("lvt-preserve-attrs keeps own attributes but still diffs children", () => {
+  it("lvt-ignore-attrs keeps own attributes but still diffs children", () => {
     // This is the subtler "collapsible picker" case: the <details>
     // element's `open` attribute is user-toggled and must survive
     // server updates, but the <a> cards inside ARE server-authored
@@ -97,7 +95,7 @@ describe("lvt-preserve attribute", () => {
     // selected item) must reflect the latest tree.
     const initialTree = {
       s: [
-        `<details lvt-preserve-attrs class="picker"><summary>Pick</summary>`,
+        `<details lvt-ignore-attrs class="picker"><summary>Pick</summary>`,
         `</details>`,
       ],
       0: `<a class="card">one</a><a class="card">two</a>`,
@@ -130,44 +128,43 @@ describe("lvt-preserve attribute", () => {
     expect((cards[1] as HTMLElement).classList.contains("current")).toBe(true);
   });
 
-  it("server can remove lvt-preserve by omitting it in the next full template", () => {
-    // lvt-preserve is checked on toEl (the incoming server version), not
-    // fromEl (the current DOM). This means the server retains authority:
-    // a later render that omits lvt-preserve lets morphdom resume updating
-    // the element. Checking fromEl would make the attribute sticky forever.
+  it("lvt-ignore is sticky on fromEl — server omitting it alone does not resume diffing", () => {
     const initialTree = {
-      s: [`<div lvt-preserve class="widget">`, `</div>`],
+      s: [`<div lvt-ignore class="widget">`, `</div>`],
       0: "server-initial",
     };
     client.updateDOM(wrapper, initialTree);
 
     const widget = wrapper.querySelector(".widget") as HTMLElement;
-    // Simulate the widget mutating its own DOM.
     widget.textContent = "client-modified";
 
-    // Server sends a NEW template that removes lvt-preserve.
+    // Server omits lvt-ignore, but fromEl still has it — element stays frozen.
     const removedTree = {
       s: [`<div class="widget">`, `</div>`],
       0: "server-updated",
     };
     client.updateDOM(wrapper, removedTree);
 
-    // Now that lvt-preserve is gone from the template, morphdom should
-    // have applied the server's update, overwriting the client state.
+    const widgetStill = wrapper.querySelector(".widget") as HTMLElement;
+    expect(widgetStill.textContent).toBe("client-modified");
+    expect(widgetStill.hasAttribute("lvt-ignore")).toBe(true);
+
+    // data-lvt-force-update bypasses the guard and lets morphdom diff.
+    const forceTree = {
+      s: [`<div data-lvt-force-update class="widget">`, `</div>`],
+      0: "server-updated",
+    };
+    client.updateDOM(wrapper, forceTree);
+
     const widgetAfter = wrapper.querySelector(".widget") as HTMLElement;
-    expect(widgetAfter).not.toBeNull();
     expect(widgetAfter.textContent).toBe("server-updated");
-    expect(widgetAfter.hasAttribute("lvt-preserve")).toBe(false);
+    expect(widgetAfter.hasAttribute("lvt-ignore")).toBe(false);
   });
 
-  it("server can remove lvt-preserve-attrs by omitting it in a later update", () => {
-    // The attribute-copy loop must NOT copy the lvt-preserve-attrs control
-    // attribute itself back onto toEl. If it did, the server could never
-    // remove the attribute in a future render (it would always be re-added
-    // by the copy loop before morphdom sees the diff).
+  it("lvt-ignore-attrs is sticky — data-lvt-force-update needed to remove it", () => {
     const initialTree = {
       s: [
-        `<details lvt-preserve-attrs class="picker"><summary>Pick</summary>`,
+        `<details lvt-ignore-attrs class="picker"><summary>Pick</summary>`,
         `</details>`,
       ],
       0: `<a class="card">item</a>`,
@@ -175,10 +172,10 @@ describe("lvt-preserve attribute", () => {
     client.updateDOM(wrapper, initialTree);
 
     const details = wrapper.querySelector("details") as HTMLDetailsElement;
-    expect(details.hasAttribute("lvt-preserve-attrs")).toBe(true);
+    expect(details.hasAttribute("lvt-ignore-attrs")).toBe(true);
+    details.setAttribute("open", "");
 
-    // Server pushes an update WITHOUT lvt-preserve-attrs — it is opting
-    // the element back out of attribute preservation.
+    // Server omits lvt-ignore-attrs, but fromEl still has it — attrs preserved.
     const updateTree = {
       s: [
         `<details class="picker"><summary>Pick</summary>`,
@@ -188,10 +185,23 @@ describe("lvt-preserve attribute", () => {
     };
     client.updateDOM(wrapper, updateTree);
 
+    const detailsStill = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(detailsStill.hasAttribute("lvt-ignore-attrs")).toBe(true);
+    expect(detailsStill.open).toBe(true);
+
+    // data-lvt-force-update bypasses the guard.
+    const forceTree = {
+      s: [
+        `<details data-lvt-force-update class="picker"><summary>Pick</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="card">item</a>`,
+    };
+    client.updateDOM(wrapper, forceTree);
+
     const detailsAfter = wrapper.querySelector("details") as HTMLDetailsElement;
-    expect(detailsAfter).not.toBeNull();
-    // The control attribute must be gone — the server has opted out.
-    expect(detailsAfter.hasAttribute("lvt-preserve-attrs")).toBe(false);
+    expect(detailsAfter.hasAttribute("lvt-ignore-attrs")).toBe(false);
+    expect(detailsAfter.open).toBe(false);
   });
 
   it("preserves checkbox checked state across morphdom updates", () => {
@@ -426,12 +436,264 @@ describe("lvt-preserve attribute", () => {
     expect(cbAfter.hasAttribute("data-lvt-force-update")).toBe(false);
   });
 
+  it("preserves datalist when its connected input is focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts" data-key="inp">` +
+         `<datalist id="opts"><option value="alpha"><option value="bravo"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts" data-key="inp">` +
+         `<datalist id="opts"><option value="alpha"><option value="bravo"><option value="charlie"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(2);
+
+    input.blur();
+    client.updateDOM(wrapper, updateTree);
+
+    const datalistAfter = wrapper.querySelector('#opts') as HTMLDataListElement;
+    expect(datalistAfter.querySelectorAll('option').length).toBe(3);
+  });
+
+  it("data-lvt-force-update overrides datalist preservation while focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="force-opts" data-key="fi">` +
+         `<datalist id="force-opts"><option value="a"><option value="b"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="force-opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="force-opts" data-key="fi">` +
+         `<datalist id="force-opts" data-lvt-force-update><option value="a"><option value="b"><option value="c"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#force-opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(3);
+    expect(datalist.hasAttribute('data-lvt-force-update')).toBe(false);
+  });
+
+  it("updates datalist when its connected input is not focused", () => {
+    const initialTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts2" data-key="inp2">` +
+         `<datalist id="opts2"><option value="one"><option value="two"></datalist>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const updateTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="text" list="opts2" data-key="inp2">` +
+         `<datalist id="opts2"><option value="one"><option value="two"><option value="three"></datalist>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const datalist = wrapper.querySelector('#opts2') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(3);
+  });
+
+  it("defers entire morphdom pass when datalist input is focused", () => {
+    const initialTree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:00</span>` +
+         `<dialog id="dlg" data-key="dlg">` +
+           `<form data-key="frm">` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="foo"><option value="bar"></datalist>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const input = wrapper.querySelector('input[list="dl-opts"]') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:02</span>` +
+         `<dialog id="dlg" data-key="dlg">` +
+           `<form data-key="frm">` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="foo"><option value="bar"><option value="baz"></datalist>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    // Full-pass deferral: NOTHING updates while datalist input is focused —
+    // any DOM mutation (even to siblings) dismisses the native dropdown.
+    const datalist = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
+    expect(datalist.querySelectorAll('option').length).toBe(2);
+
+    const ts = wrapper.querySelector('[data-key="ts"]') as HTMLElement;
+    expect(ts.textContent).toBe("12:00:00");
+
+    // After blur, the next update applies all pending changes.
+    input.blur();
+    client.updateDOM(wrapper, updateTree);
+
+    const datalistAfter = wrapper.querySelector('#dl-opts') as HTMLDataListElement;
+    expect(datalistAfter.querySelectorAll('option').length).toBe(3);
+
+    const tsAfter = wrapper.querySelector('[data-key="ts"]') as HTMLElement;
+    expect(tsAfter.textContent).toBe("12:00:02");
+  });
+
+  it("skips entire open dialog subtree when dialog was opened client-side", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="my-dialog" data-key="my-dialog"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#my-dialog') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="my-dialog" data-key="my-dialog"><p>changed</p></dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    expect(dialog.hasAttribute('open')).toBe(true);
+    expect(dialog.querySelector('p')!.textContent).toBe("content");
+
+    dialog.removeAttribute('open');
+    client.updateDOM(wrapper, updateTree);
+    expect(wrapper.querySelector('#my-dialog p')!.textContent).toBe("changed");
+  });
+
+  it("server closes dialog via data-lvt-force-update", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="srv-close" data-key="srv-close"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#srv-close') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+
+    const closeTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="srv-close" data-lvt-force-update data-key="srv-close"><p>updated</p></dialog>`,
+    };
+    client.updateDOM(wrapper, closeTree);
+
+    const dialogAfter = wrapper.querySelector('#srv-close') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(false);
+    expect(dialogAfter.querySelector('p')!.textContent).toBe("updated");
+    expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
+  });
+
+  it("preserves entire dialog subtree including non-datalist children when open", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:00</span>` +
+         `<dialog id="full-dlg" data-key="full-dlg">` +
+           `<form data-key="frm">` +
+             `<label data-key="lbl">Folder</label>` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="alpha"><option value="bravo"></datalist>` +
+             `<button data-key="btn">Submit</button>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#full-dlg') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<span data-key="ts">12:00:02</span>` +
+         `<dialog id="full-dlg" data-key="full-dlg">` +
+           `<form data-key="frm">` +
+             `<label data-key="lbl">Directory</label>` +
+             `<input type="text" list="dl-opts" data-key="dl-inp">` +
+             `<datalist id="dl-opts"><option value="alpha"><option value="bravo"><option value="charlie"></datalist>` +
+             `<button data-key="btn">Save</button>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    // Siblings OUTSIDE the dialog are updated normally.
+    expect(wrapper.querySelector('[data-key="ts"]')!.textContent).toBe("12:00:02");
+    // Dialog children are frozen while open.
+    expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Folder");
+    expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Submit");
+    expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(2);
+
+    dialog.removeAttribute('open');
+    client.updateDOM(wrapper, updateTree);
+
+    // After close, dialog children sync.
+    expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Directory");
+    expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Save");
+    expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(3);
+  });
+
+  it("does not add open to dialog that was never opened", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="closed-dialog" data-key="closed-dialog"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#closed-dialog') as HTMLDialogElement;
+    expect(dialog.hasAttribute('open')).toBe(false);
+
+    client.updateDOM(wrapper, tree);
+
+    const dialogAfter = wrapper.querySelector('#closed-dialog') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(false);
+  });
+
+  it("data-lvt-force-update overrides dialog open preservation", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="force-dlg" open data-key="force-dlg"><p>content</p></dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
+    expect(dialog.hasAttribute('open')).toBe(true);
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="force-dlg" open data-lvt-force-update data-key="force-dlg"><p>updated</p></dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    const dialogAfter = wrapper.querySelector('#force-dlg') as HTMLDialogElement;
+    expect(dialogAfter.hasAttribute('open')).toBe(true);
+    expect(dialogAfter.querySelector('p')!.textContent).toBe("updated");
+    expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
+  });
+
   it("preserves the element's children as well", () => {
-    // lvt-preserve is a full-element bail-out: attributes, children,
+    // lvt-ignore is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that
     // mutate their own DOM.
     const initialTree = {
-      s: [`<div lvt-preserve class="widget">`, `</div>`],
+      s: [`<div lvt-ignore class="widget">`, `</div>`],
       0: "initial content",
     };
     client.updateDOM(wrapper, initialTree);

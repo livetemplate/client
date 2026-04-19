@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changes
 
-- feat: lvt-preserve attributes, __navigate__ SPA nav, DOMParser script fix (#72) (966d65d)
+- feat: lvt-ignore attributes, __navigate__ SPA nav, DOMParser script fix (#72) (966d65d)
 
 
 
@@ -55,8 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `lvt-preserve` attribute: morphdom escape hatch that skips an element and its subtree entirely during diff (equivalent to Phoenix LiveView's `phx-update="ignore"`). Checked on `toEl` so the server retains authority to remove it.
-- `lvt-preserve-attrs` attribute: morphdom escape hatch that preserves user-managed attributes (e.g. `open` on `<details>`) while still diffing children. Protects attributes the server template does **not** set. Checked on `toEl` for consistent server authority.
+- `lvt-ignore` attribute: morphdom escape hatch that skips an element and its entire subtree during diff (equivalent to Phoenix LiveView's `phx-update="ignore"`). Checked on `fromEl` (live DOM) so both server templates and client JS can use it. Use `data-lvt-force-update` on the server's version to bypass and resume diffing.
+- `lvt-ignore-attrs` attribute: morphdom escape hatch that preserves user-managed attributes (e.g. `open` on `<details>`) while still diffing children. Checked on `fromEl` for consistency with `lvt-ignore`. Use `data-lvt-force-update` to bypass.
 - In-band `__navigate__` SPA navigation: same-pathname link clicks send `{action:"__navigate__", data:<params>}` over the existing WebSocket instead of fetching new HTML. Requires server-side support (livetemplate/livetemplate#344).
 - DOMParser fallback in `updateDOM`: HTML containing `<script>` tags is now parsed via `DOMParser` to avoid a Chrome `innerHTML` bug that creates phantom duplicate DOM nodes after script tags.
 
