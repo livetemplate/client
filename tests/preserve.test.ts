@@ -556,7 +556,7 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(tsAfter.textContent).toBe("12:00:02");
   });
 
-  it("skips entire open dialog subtree when dialog was opened client-side", () => {
+  it("updates children of open dialog while preserving open state", () => {
     const tree = {
       s: [`<div>`, `</div>`],
       0: `<dialog id="my-dialog" data-key="my-dialog"><p>content</p></dialog>`,
@@ -573,11 +573,7 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     client.updateDOM(wrapper, updateTree);
 
     expect(dialog.hasAttribute('open')).toBe(true);
-    expect(dialog.querySelector('p')!.textContent).toBe("content");
-
-    dialog.removeAttribute('open');
-    client.updateDOM(wrapper, updateTree);
-    expect(wrapper.querySelector('#my-dialog p')!.textContent).toBe("changed");
+    expect(dialog.querySelector('p')!.textContent).toBe("changed");
   });
 
   it("server closes dialog via data-lvt-force-update", () => {
@@ -602,7 +598,7 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
   });
 
-  it("preserves entire dialog subtree including non-datalist children when open", () => {
+  it("updates dialog children while preserving open state", () => {
     const tree = {
       s: [`<div>`, `</div>`],
       0: `<span data-key="ts">12:00:00</span>` +
@@ -634,17 +630,11 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     };
     client.updateDOM(wrapper, updateTree);
 
-    // Siblings OUTSIDE the dialog are updated normally.
+    // Siblings outside the dialog update normally.
     expect(wrapper.querySelector('[data-key="ts"]')!.textContent).toBe("12:00:02");
-    // Dialog children are frozen while open.
-    expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Folder");
-    expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Submit");
-    expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(2);
-
-    dialog.removeAttribute('open');
-    client.updateDOM(wrapper, updateTree);
-
-    // After close, dialog children sync.
+    // Dialog stays open.
+    expect(dialog.hasAttribute('open')).toBe(true);
+    // Dialog children update while open.
     expect(wrapper.querySelector('[data-key="lbl"]')!.textContent).toBe("Directory");
     expect(wrapper.querySelector('[data-key="btn"]')!.textContent).toBe("Save");
     expect(wrapper.querySelectorAll('#dl-opts option').length).toBe(3);
@@ -686,6 +676,42 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(dialogAfter.hasAttribute('open')).toBe(true);
     expect(dialogAfter.querySelector('p')!.textContent).toBe("updated");
     expect(dialogAfter.hasAttribute('data-lvt-force-update')).toBe(false);
+  });
+
+  it("applies server-sent validation errors inside open dialog", () => {
+    const tree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="val-dlg" data-key="val-dlg">` +
+           `<form data-key="val-frm">` +
+             `<input name="title" data-key="val-inp">` +
+             `<button data-key="val-btn">Add</button>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const dialog = wrapper.querySelector('#val-dlg') as HTMLDialogElement;
+    dialog.setAttribute('open', '');
+    expect(wrapper.querySelectorAll('small').length).toBe(0);
+
+    const updateTree = {
+      s: [`<div>`, `</div>`],
+      0: `<dialog id="val-dlg" data-key="val-dlg">` +
+           `<form data-key="val-frm">` +
+             `<input name="title" aria-invalid="true" data-key="val-inp">` +
+             `<small>Title is required</small>` +
+             `<button data-key="val-btn">Add</button>` +
+           `</form>` +
+         `</dialog>`,
+    };
+    client.updateDOM(wrapper, updateTree);
+
+    expect(dialog.hasAttribute('open')).toBe(true);
+    const smalls = wrapper.querySelectorAll('small');
+    expect(smalls.length).toBe(1);
+    expect(smalls[0].textContent).toBe("Title is required");
+    const input = wrapper.querySelector('input[name="title"]') as HTMLInputElement;
+    expect(input.getAttribute('aria-invalid')).toBe("true");
   });
 
   it("preserves the element's children as well", () => {

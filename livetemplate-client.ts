@@ -1185,31 +1185,28 @@ export class LiveTemplateClient {
           }
         }
 
-        // Preserve open <dialog> elements entirely. showModal() adds
-        // the dialog to the browser's top layer — a rendering state
-        // with no DOM representation. Morphdom's attribute sync and
-        // child reconciliation can disrupt this top-layer state.
-        // Skip the entire subtree while the live element has open;
-        // use data-lvt-force-update to bypass.
+        // Preserve open <dialog> top-layer state while allowing child
+        // updates. showModal() puts the dialog in the browser's top
+        // layer. Copying `open` onto toEl ensures morphdom's attribute
+        // sync won't remove it. Children reconcile normally so
+        // server-sent changes (e.g. validation errors) reach the DOM.
         if (
           fromEl instanceof HTMLDialogElement &&
           fromEl.hasAttribute('open') &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
-          return false;
+          (toEl as Element).setAttribute('open', '');
         }
 
-        // Preserve open <dialog> and open [popover] elements entirely.
-        // showModal()/showPopover() add the element to the browser's
-        // top layer — a rendering state with no DOM representation.
-        // Morphdom's attribute sync and child reconciliation can
-        // disrupt this top-layer state. Skip the entire subtree while
-        // the live element is open; use data-lvt-force-update to bypass.
+        // Preserve open [popover] elements entirely. showPopover()
+        // adds the element to the browser's top layer — skip the
+        // entire subtree while open; use data-lvt-force-update to
+        // bypass.
         if (
-          !(toEl as Element).hasAttribute("data-lvt-force-update") && (
-            (fromEl instanceof HTMLDialogElement && fromEl.hasAttribute("open")) ||
-            (fromEl instanceof HTMLElement && fromEl.hasAttribute("popover") && safeMatchesPopoverOpen(fromEl))
-          )
+          !(toEl as Element).hasAttribute("data-lvt-force-update") &&
+          fromEl instanceof HTMLElement &&
+          fromEl.hasAttribute("popover") &&
+          safeMatchesPopoverOpen(fromEl)
         ) {
           return false;
         }
