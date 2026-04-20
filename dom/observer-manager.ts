@@ -49,7 +49,7 @@ export class ObserverManager {
     // that the throttle can be lifted.
     this.ensureUpdatedListener(wrapperElement);
 
-    const sentinel = document.getElementById("scroll-sentinel");
+    const sentinel = wrapperElement.querySelector("[lvt-scroll-sentinel]");
     if (!sentinel) {
       // Sentinel removed (HasMore flipped false): release the old observer
       // AND clear any in-flight load_more throttle. Without releaseLoadMore
