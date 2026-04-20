@@ -100,7 +100,7 @@ describe("ObserverManager", () => {
       expect(mockSend).not.toHaveBeenCalled();
     });
 
-    it("does nothing if scroll-sentinel element is not found", () => {
+    it("does nothing if lvt-scroll-sentinel element is not found", () => {
       document.body.innerHTML = "<div id='wrapper'></div>";
       mockContext = {
         getWrapperElement: () => document.getElementById("wrapper"),
@@ -116,7 +116,7 @@ describe("ObserverManager", () => {
     it("sets up IntersectionObserver when sentinel exists", () => {
       document.body.innerHTML = `
         <div id="wrapper">
-          <div id="scroll-sentinel"></div>
+          <div lvt-scroll-sentinel></div>
         </div>
       `;
       mockContext = {
@@ -136,7 +136,7 @@ describe("ObserverManager", () => {
     it("reuses the existing observer when the sentinel is unchanged", () => {
       document.body.innerHTML = `
         <div id="wrapper">
-          <div id="scroll-sentinel"></div>
+          <div lvt-scroll-sentinel></div>
         </div>
       `;
       mockContext = {
@@ -162,7 +162,7 @@ describe("ObserverManager", () => {
       const wrapper = document.createElement("div");
       wrapper.id = "wrapper";
       const sentinel = document.createElement("div");
-      sentinel.id = "scroll-sentinel";
+      sentinel.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel);
       document.body.appendChild(wrapper);
 
@@ -211,7 +211,7 @@ describe("ObserverManager", () => {
       const wrapper = document.createElement("div");
       wrapper.id = "wrapper";
       const sentinel1 = document.createElement("div");
-      sentinel1.id = "scroll-sentinel";
+      sentinel1.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel1);
       document.body.appendChild(wrapper);
 
@@ -234,7 +234,7 @@ describe("ObserverManager", () => {
 
       // Step 3: sentinel reappears.
       const sentinel2 = document.createElement("div");
-      sentinel2.id = "scroll-sentinel";
+      sentinel2.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel2);
       manager.setupInfiniteScrollObserver();
 
@@ -250,7 +250,7 @@ describe("ObserverManager", () => {
       const wrapper = document.createElement("div");
       wrapper.id = "wrapper";
       const sentinel = document.createElement("div");
-      sentinel.id = "scroll-sentinel";
+      sentinel.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel);
       document.body.appendChild(wrapper);
 
@@ -286,7 +286,7 @@ describe("ObserverManager", () => {
       const wrapper = document.createElement("div");
       wrapper.id = "wrapper";
       const sentinel1 = document.createElement("div");
-      sentinel1.id = "scroll-sentinel";
+      sentinel1.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel1);
       document.body.appendChild(wrapper);
 
@@ -302,7 +302,7 @@ describe("ObserverManager", () => {
       // the element on a structural transition).
       sentinel1.remove();
       const sentinel2 = document.createElement("div");
-      sentinel2.id = "scroll-sentinel";
+      sentinel2.setAttribute("lvt-scroll-sentinel", "");
       wrapper.appendChild(sentinel2);
 
       manager.setupInfiniteScrollObserver();
@@ -376,7 +376,7 @@ describe("ObserverManager", () => {
     it("disconnects all observers", () => {
       document.body.innerHTML = `
         <div id="wrapper">
-          <div id="scroll-sentinel"></div>
+          <div lvt-scroll-sentinel></div>
         </div>
       `;
       mockContext = {
@@ -410,7 +410,7 @@ describe("ObserverManager", () => {
     it("is safe to call multiple times", () => {
       document.body.innerHTML = `
         <div id="wrapper">
-          <div id="scroll-sentinel"></div>
+          <div lvt-scroll-sentinel></div>
         </div>
       `;
       mockContext = {
