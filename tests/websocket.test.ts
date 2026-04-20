@@ -30,7 +30,20 @@ class MockWebSocket {
     this.sentMessages.push(data);
   }
 
+  handlersAtClose: {
+    onopen: ((event: Event) => void) | null;
+    onmessage: ((event: MessageEvent) => void) | null;
+    onclose: ((event: CloseEvent) => void) | null;
+    onerror: ((event: Event) => void) | null;
+  } | null = null;
+
   close() {
+    this.handlersAtClose = {
+      onopen: this.onopen,
+      onmessage: this.onmessage,
+      onclose: this.onclose,
+      onerror: this.onerror,
+    };
     this.readyState = MockWebSocket.CLOSED;
     if (this.onclose) {
       this.onclose({ code: 1000, reason: "Normal closure" } as CloseEvent);
@@ -75,10 +88,15 @@ describe("WebSocketTransport", () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
-    (global as any).WebSocket = jest.fn().mockImplementation((url: string) => {
+    const WS = jest.fn().mockImplementation((url: string) => {
       mockSocket = new MockWebSocket(url);
       return mockSocket;
-    });
+    }) as any;
+    WS.CONNECTING = 0;
+    WS.OPEN = 1;
+    WS.CLOSING = 2;
+    WS.CLOSED = 3;
+    (global as any).WebSocket = WS;
   });
 
   afterEach(() => {
@@ -184,6 +202,97 @@ describe("WebSocketTransport", () => {
       transport.disconnect();
 
       expect(mockSocket!.readyState).toBe(MockWebSocket.CLOSED);
+    });
+
+    it("detaches event handlers before closing", () => {
+      transport = new WebSocketTransport({ url: "ws://localhost:8080" });
+      transport.connect();
+      mockSocket!.simulateOpen();
+
+      const socketRef = mockSocket!;
+      expect(socketRef.onopen).not.toBeNull();
+      expect(socketRef.onclose).not.toBeNull();
+
+      transport.disconnect();
+
+      expect(socketRef.onopen).toBeNull();
+      expect(socketRef.onmessage).toBeNull();
+      expect(socketRef.onclose).toBeNull();
+      expect(socketRef.onerror).toBeNull();
+
+      expect(socketRef.handlersAtClose).not.toBeNull();
+      expect(socketRef.handlersAtClose!.onopen).toBeNull();
+      expect(socketRef.handlersAtClose!.onmessage).toBeNull();
+      expect(socketRef.handlersAtClose!.onclose).toBeNull();
+      expect(socketRef.handlersAtClose!.onerror).toBeNull();
+    });
+
+    it("fires onClose synchronously before detaching handlers", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1000, wasClean: true }),
+      );
+    });
+
+    it("fires onClose when disconnecting during CONNECTING state", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1000, wasClean: false }),
+      );
+    });
+
+    it("fires onClose with wasClean: false when disconnecting during CLOSING state", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+      mockSocket!.readyState = MockWebSocket.CLOSING;
+      onClose.mockClear();
+
+      transport.disconnect();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1000, wasClean: false }),
+      );
+    });
+
+    it("does not fire onClose when socket is already CLOSED", () => {
+      const onClose = jest.fn();
+      transport = new WebSocketTransport({
+        url: "ws://localhost:8080",
+        onClose,
+      });
+      transport.connect();
+      mockSocket!.simulateOpen();
+      mockSocket!.simulateClose();
+      onClose.mockClear();
+
+      transport.disconnect();
+
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it("prevents auto-reconnect", () => {
@@ -449,10 +558,15 @@ describe("WebSocketManager connect", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockSocket = null;
-    (global as any).WebSocket = jest.fn().mockImplementation((url: string) => {
+    const WS = jest.fn().mockImplementation((url: string) => {
       mockSocket = new MockWebSocket(url);
       return mockSocket;
-    });
+    }) as any;
+    WS.CONNECTING = 0;
+    WS.OPEN = 1;
+    WS.CLOSING = 2;
+    WS.CLOSED = 3;
+    (global as any).WebSocket = WS;
     // checkWebSocketAvailability HEAD request succeeds with WS enabled.
     mockFetch = jest.fn().mockResolvedValue({
       headers: {

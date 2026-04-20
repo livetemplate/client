@@ -57,7 +57,7 @@ export class WebSocketTransport {
   }
 
   send(data: string): void {
-    if (this.socket && this.socket.readyState === 1) {  // WebSocket.OPEN = 1
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(data);
     }
   }
@@ -66,6 +66,19 @@ export class WebSocketTransport {
     this.manuallyClosed = true;
     this.clearReconnectTimer();
     if (this.socket) {
+      if (this.socket.readyState !== WebSocket.CLOSED) {
+        this.options.onClose?.(
+          new CloseEvent("close", {
+            code: 1000,
+            reason: "",
+            wasClean: this.socket.readyState === WebSocket.OPEN,
+          }),
+        );
+      }
+      this.socket.onopen = null;
+      this.socket.onmessage = null;
+      this.socket.onclose = null;
+      this.socket.onerror = null;
       this.socket.close();
       this.socket = null;
     }
