@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.33] - 2026-04-20
+
+### Changes
+
+- fix(morphdom): allow child updates inside open dialogs (#93) (ae78517)
+- refactor(observer): replace scroll-sentinel id with lvt-scroll-sentinel attribute (#92) (e8666db)
+
+
+
 ## [v0.8.32] - 2026-04-20
 
 ### Changes
