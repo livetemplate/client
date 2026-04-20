@@ -1185,11 +1185,7 @@ export class LiveTemplateClient {
           }
         }
 
-        // Preserve open <dialog> top-layer state while allowing child
-        // updates. showModal() puts the dialog in the browser's top
-        // layer. Copying `open` onto toEl ensures morphdom's attribute
-        // sync won't remove it. Children reconcile normally so
-        // server-sent changes (e.g. validation errors) reach the DOM.
+        // Copy `open` onto toEl so morphdom's attr sync won't strip it (preserves top-layer state).
         if (
           fromEl instanceof HTMLDialogElement &&
           fromEl.hasAttribute('open') &&
@@ -1198,10 +1194,7 @@ export class LiveTemplateClient {
           (toEl as Element).setAttribute('open', '');
         }
 
-        // Preserve open [popover] elements entirely. showPopover()
-        // adds the element to the browser's top layer — skip the
-        // entire subtree while open; use data-lvt-force-update to
-        // bypass.
+        // Skip open popovers entirely (top-layer state has no DOM representation).
         if (
           !(toEl as Element).hasAttribute("data-lvt-force-update") &&
           fromEl instanceof HTMLElement &&
