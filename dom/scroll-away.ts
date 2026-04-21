@@ -92,6 +92,7 @@ export function teardownScrollAway(wrapper?: Element): void {
     const binding = activeBindings[i];
     if (wrapper && binding.trigger.isConnected && !wrapper.contains(binding.trigger)) continue;
     binding.target.removeEventListener("scroll", binding.handler);
+    binding.trigger.classList.remove("visible");
     delete (binding.trigger as any)[GUARD_KEY];
     activeBindings.splice(i, 1);
   }
