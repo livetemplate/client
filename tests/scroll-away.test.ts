@@ -121,7 +121,7 @@ describe("setupScrollAway", () => {
     expect(button.classList.contains("visible")).toBe(false);
   });
 
-  it("does not attach listener when no target resolves (self-target)", () => {
+  it("warns and skips when no target resolves (self-target)", () => {
     const button = document.createElement("button");
     button.setAttribute("lvt-scroll-away", "bottom");
     document.body.appendChild(button);
@@ -129,6 +129,9 @@ describe("setupScrollAway", () => {
     setupScrollAway(document.body);
 
     expect((button as any).__lvt_scroll_away).toBeUndefined();
+    expect(console.warn).toHaveBeenCalledWith(
+      "lvt-scroll-away requires data-lvt-target pointing to a scrollable container"
+    );
   });
 
   it("warns on unknown edge value", () => {

@@ -20,7 +20,10 @@ export function setupScrollAway(scanRoot: Element): void {
     }
 
     const target = resolveTarget(el) as HTMLElement;
-    if (!target || target === el) return;
+    if (!target || target === el) {
+      console.warn("lvt-scroll-away requires data-lvt-target pointing to a scrollable container");
+      return;
+    }
 
     const existing = (el as any)[GUARD_KEY] as ScrollAwayBinding | undefined;
     if (existing) {
