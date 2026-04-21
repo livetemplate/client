@@ -50,10 +50,10 @@ export function setupScrollAway(scanRoot: Element): void {
       removeBinding(existing);
     }
 
-    const threshold = parseInt(
-      getComputedStyle(el).getPropertyValue("--lvt-scroll-threshold").trim() || "200",
-      10
+    const raw = parseInt(
+      getComputedStyle(el).getPropertyValue("--lvt-scroll-threshold").trim(), 10
     );
+    const threshold = isNaN(raw) ? 200 : raw;
 
     let ticking = false;
     const handler = () => {
