@@ -468,10 +468,12 @@ main() {
         branch="main"
         log_info "Switched to main"
     fi
-    # Fetch origin/$branch so we can compare local vs remote state.
-    # Note: fetch updates remote-tracking refs in .git — a minor side effect required to check sync state.
+    # Fetch origin/$branch and force-update the tracking ref so the
+    # rev-list ahead/behind comparison below uses current remote state.
+    # Plain `git fetch origin $branch` only updates FETCH_HEAD in some
+    # git versions/configs, leaving refs/remotes/origin/$branch stale.
     log_step "Fetching origin/$branch to check sync state"
-    if ! git fetch origin "$branch" --quiet; then
+    if ! git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" --quiet; then
         log_error "Could not fetch origin/$branch. Check your network connection."
         exit 1
     fi
