@@ -10,7 +10,19 @@ const GUARD_KEY = "__lvt_scroll_away";
 
 const activeBindings: ScrollAwayBinding[] = [];
 
+function pruneDisconnectedBindings(): void {
+  for (let i = activeBindings.length - 1; i >= 0; i--) {
+    const binding = activeBindings[i];
+    if (binding.trigger.isConnected) continue;
+    binding.target.removeEventListener("scroll", binding.handler);
+    delete (binding.trigger as any)[GUARD_KEY];
+    activeBindings.splice(i, 1);
+  }
+}
+
 export function setupScrollAway(scanRoot: Element): void {
+  pruneDisconnectedBindings();
+
   const processEl = (el: Element) => {
     const edge = el.getAttribute("lvt-scroll-away");
     if (!edge) return;
@@ -21,6 +33,12 @@ export function setupScrollAway(scanRoot: Element): void {
 
     const target = resolveTarget(el) as HTMLElement;
     if (!target || target === el) {
+      const existing = (el as any)[GUARD_KEY] as ScrollAwayBinding | undefined;
+      if (existing) {
+        existing.target.removeEventListener("scroll", existing.handler);
+        removeBinding(existing);
+        delete (el as any)[GUARD_KEY];
+      }
       console.warn("lvt-scroll-away requires data-lvt-target pointing to a scrollable container");
       return;
     }
@@ -72,7 +90,7 @@ function removeBinding(binding: ScrollAwayBinding): void {
 export function teardownScrollAway(wrapper?: Element): void {
   for (let i = activeBindings.length - 1; i >= 0; i--) {
     const binding = activeBindings[i];
-    if (wrapper && !wrapper.contains(binding.trigger)) continue;
+    if (wrapper && binding.trigger.isConnected && !wrapper.contains(binding.trigger)) continue;
     binding.target.removeEventListener("scroll", binding.handler);
     delete (binding.trigger as any)[GUARD_KEY];
     activeBindings.splice(i, 1);

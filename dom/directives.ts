@@ -92,7 +92,7 @@ export function setupFxDOMEventTriggers(scanRoot: Element, registryRoot?: Elemen
       const listener = () => {
         if (!el.hasAttribute(attrNameCapture)) return; // attr removed by morphdom
         const currentValue = el.getAttribute(attrNameCapture) || "";
-        const targetEl = resolveTarget(el) as HTMLElement;
+        const targetEl = (resolveTarget(el) || el) as HTMLElement;
         applyFxEffect(targetEl, effect, currentValue);
       };
       el.addEventListener(parsed.trigger, listener);
