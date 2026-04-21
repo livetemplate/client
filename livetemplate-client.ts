@@ -26,6 +26,7 @@ import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
+import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
 import { TreeRenderer } from "./state/tree-renderer";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
@@ -458,6 +459,7 @@ export class LiveTemplateClient {
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
+      teardownScrollAway(this.wrapperElement);
     }
     this.resetSessionState();
   }
@@ -1329,6 +1331,9 @@ export class LiveTemplateClient {
 
     // Re-scan updated subtree for lvt-el:*:on:{event} DOM triggers
     this.eventDelegator.setupDOMEventTriggerDelegation(element);
+
+    // Set up scroll-away visibility toggles
+    setupScrollAway(element);
 
     // Handle toast trigger directives (ephemeral client-side toasts)
     handleToastDirectives(element);

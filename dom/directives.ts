@@ -1,4 +1,4 @@
-import { isDOMEventTrigger, SYNTHETIC_TRIGGERS } from "./reactive-attributes";
+import { isDOMEventTrigger, SYNTHETIC_TRIGGERS, resolveTarget } from "./reactive-attributes";
 
 // ─── Trigger parsing for lvt-fx: attributes ─────────────────────────────────
 
@@ -92,7 +92,8 @@ export function setupFxDOMEventTriggers(scanRoot: Element, registryRoot?: Elemen
       const listener = () => {
         if (!el.hasAttribute(attrNameCapture)) return; // attr removed by morphdom
         const currentValue = el.getAttribute(attrNameCapture) || "";
-        applyFxEffect(el as HTMLElement, effect, currentValue);
+        const targetEl = resolveTarget(el) as HTMLElement;
+        applyFxEffect(targetEl, effect, currentValue);
       };
       el.addEventListener(parsed.trigger, listener);
       (el as any)[listenerKey] = listener;
@@ -246,8 +247,14 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
           htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
           break;
         case "bottom-sticky": {
-          const isNearBottom = htmlElement.scrollHeight - htmlElement.scrollTop - htmlElement.clientHeight <= threshold;
-          if (isNearBottom) htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
+          const initialized = htmlElement.dataset.lvtScrollSticky === "1";
+          if (!initialized) {
+            htmlElement.dataset.lvtScrollSticky = "1";
+            htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior: "instant" });
+          } else {
+            const isNearBottom = htmlElement.scrollHeight - htmlElement.scrollTop - htmlElement.clientHeight <= threshold;
+            if (isNearBottom) htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
+          }
           break;
         }
         case "top":

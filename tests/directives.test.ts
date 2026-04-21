@@ -63,25 +63,13 @@ describe("handleScrollDirectives", () => {
     });
   });
 
-  it("sticky bottom only scrolls when near bottom", () => {
-    document.body.innerHTML = `<div id="container" lvt-fx:scroll="bottom-sticky" style="--lvt-scroll-threshold: 50;"></div>`;
-    const container = document.getElementById("container")!;
-    Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
-    Object.defineProperty(container, "scrollTop", { value: 400, configurable: true });
-    Object.defineProperty(container, "clientHeight", { value: 100, configurable: true });
-
-    const scrollToSpy = jest.fn();
-    container.scrollTo = scrollToSpy;
-
-    handleScrollDirectives(document.body);
-
-    // scrollHeight (500) - scrollTop (400) - clientHeight (100) = 0, which is <= threshold (50)
-    expect(scrollToSpy).toHaveBeenCalled();
-  });
-
-  it("sticky bottom does not scroll when far from bottom", () => {
-    document.body.innerHTML = `<div id="container" lvt-fx:scroll="bottom-sticky" style="--lvt-scroll-threshold: 50;"></div>`;
-    const container = document.getElementById("container")!;
+  it("bottom-sticky scrolls unconditionally on first encounter", () => {
+    document.body.replaceChildren();
+    const container = document.createElement("div");
+    container.id = "container";
+    container.setAttribute("lvt-fx:scroll", "bottom-sticky");
+    container.style.setProperty("--lvt-scroll-threshold", "50");
+    document.body.appendChild(container);
     Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
     Object.defineProperty(container, "scrollTop", { value: 0, configurable: true });
     Object.defineProperty(container, "clientHeight", { value: 100, configurable: true });
@@ -91,7 +79,47 @@ describe("handleScrollDirectives", () => {
 
     handleScrollDirectives(document.body);
 
-    // scrollHeight (500) - scrollTop (0) - clientHeight (100) = 400, which is > threshold (50)
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 500, behavior: "instant" });
+    expect(container.dataset.lvtScrollSticky).toBe("1");
+  });
+
+  it("bottom-sticky scrolls when near bottom after initialization", () => {
+    document.body.replaceChildren();
+    const container = document.createElement("div");
+    container.id = "container";
+    container.setAttribute("lvt-fx:scroll", "bottom-sticky");
+    container.style.setProperty("--lvt-scroll-threshold", "50");
+    container.dataset.lvtScrollSticky = "1";
+    document.body.appendChild(container);
+    Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
+    Object.defineProperty(container, "scrollTop", { value: 400, configurable: true });
+    Object.defineProperty(container, "clientHeight", { value: 100, configurable: true });
+
+    const scrollToSpy = jest.fn();
+    container.scrollTo = scrollToSpy;
+
+    handleScrollDirectives(document.body);
+
+    expect(scrollToSpy).toHaveBeenCalled();
+  });
+
+  it("bottom-sticky does not scroll when far from bottom after initialization", () => {
+    document.body.replaceChildren();
+    const container = document.createElement("div");
+    container.id = "container";
+    container.setAttribute("lvt-fx:scroll", "bottom-sticky");
+    container.style.setProperty("--lvt-scroll-threshold", "50");
+    container.dataset.lvtScrollSticky = "1";
+    document.body.appendChild(container);
+    Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
+    Object.defineProperty(container, "scrollTop", { value: 0, configurable: true });
+    Object.defineProperty(container, "clientHeight", { value: 100, configurable: true });
+
+    const scrollToSpy = jest.fn();
+    container.scrollTo = scrollToSpy;
+
+    handleScrollDirectives(document.body);
+
     expect(scrollToSpy).not.toHaveBeenCalled();
   });
 
@@ -356,5 +384,44 @@ describe("setupFxDOMEventTriggers", () => {
     target.dispatchEvent(new MouseEvent("mouseenter"));
 
     expect(target.style.backgroundColor).not.toBe("");
+  });
+
+  it("resolves data-lvt-target for scroll effect on click", () => {
+    const container = document.createElement("div");
+    container.id = "chat-log";
+    Object.defineProperty(container, "scrollHeight", { value: 500, configurable: true });
+    const scrollToSpy = jest.fn();
+    container.scrollTo = scrollToSpy;
+    document.body.appendChild(container);
+
+    const button = document.createElement("button");
+    button.setAttribute("lvt-fx:scroll:on:click", "bottom");
+    button.setAttribute("data-lvt-target", "#chat-log");
+    document.body.appendChild(button);
+
+    setupFxDOMEventTriggers(document.body);
+    button.click();
+
+    expect(scrollToSpy).toHaveBeenCalledWith({
+      top: 500,
+      behavior: "auto",
+    });
+  });
+
+  it("resolves data-lvt-target for highlight effect on click", () => {
+    const target = document.createElement("div");
+    target.id = "my-target";
+    document.body.appendChild(target);
+
+    const trigger = document.createElement("button");
+    trigger.setAttribute("lvt-fx:highlight:on:click", "flash");
+    trigger.setAttribute("data-lvt-target", "#my-target");
+    document.body.appendChild(trigger);
+
+    setupFxDOMEventTriggers(document.body);
+    trigger.click();
+
+    expect(target.style.backgroundColor).not.toBe("");
+    expect(trigger.style.backgroundColor).toBe("");
   });
 });
