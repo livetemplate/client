@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.34] - 2026-04-22
+
+### Changes
+
+- fix(release): use explicit refspec to update tracking ref before sync check (#98) (51b5510)
+- feat: data-lvt-target for scroll effects + lvt-scroll-away visibility toggle (#94) (860861b)
+
+
+
 ## [v0.8.33] - 2026-04-20
 
 ### Changes
