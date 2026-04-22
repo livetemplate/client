@@ -93,6 +93,15 @@ export class LiveTemplateClient {
   // observe side-effects.
   private liveUrlOverride: string | null = null;
 
+  // Visibility-based reconnection: when the browser tab returns from
+  // background (iOS app switch, Android task switch), the WebSocket is
+  // often silently dead. These fields drive a one-shot reconnect on
+  // the visibilitychange event, independent of autoReconnect (which
+  // guards against retry loops on persistent network failures).
+  private visibilityHandlerAttached: boolean = false;
+  private hiddenAt: number = 0;
+  private reconnecting: boolean = false;
+
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
     const resolvedLevel = logLevel ?? (debug ? "debug" : "info");
@@ -445,6 +454,8 @@ export class LiveTemplateClient {
     // Set up infinite scroll observers
     this.observerManager.setupInfiniteScrollObserver();
     this.observerManager.setupInfiniteScrollMutationObserver();
+
+    this.setupVisibilityReconnect();
   }
 
   /**
@@ -454,6 +465,7 @@ export class LiveTemplateClient {
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
+    this.hiddenAt = 0;
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
     if (this.wrapperElement) {
@@ -487,6 +499,85 @@ export class LiveTemplateClient {
     this.formDisabler.enable(this.wrapperElement);
     this.lvtId = null;
     this.isInitialized = false;
+  }
+
+  private setupVisibilityReconnect(): void {
+    if (this.visibilityHandlerAttached || typeof document === "undefined") return;
+    this.visibilityHandlerAttached = true;
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        // Only track hidden time if WebSocket is currently open.
+        // Prevents stale handlers from triggering reconnection on
+        // already-disconnected clients (e.g. after cross-handler
+        // navigation or explicit disconnect).
+        if (!this.useHTTP && this.webSocketManager.getReadyState() === 1) {
+          this.hiddenAt = Date.now();
+        }
+        return;
+      }
+      if (this.hiddenAt === 0) return;
+      const elapsed = Date.now() - this.hiddenAt;
+      this.hiddenAt = 0;
+      if (elapsed < 3000) return;
+      this.scheduleVisibilityReconnect();
+    });
+
+    window.addEventListener("pageshow", (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        this.scheduleVisibilityReconnect();
+      }
+    });
+  }
+
+  private scheduleVisibilityReconnect(): void {
+    setTimeout(() => {
+      // Guard: only reconnect if a WebSocket transport exists. After
+      // disconnect(), transport is null (readyState undefined) so we
+      // correctly skip intentionally disconnected clients.
+      // Note: we intentionally do NOT check readyState !== 1 (OPEN)
+      // because iOS 15+ can leave zombie sockets that report OPEN while
+      // the underlying TCP connection is dead. Always reconnecting after
+      // a long background is cheap (morphdom diffs produce no DOM changes
+      // on a healthy connection) and handles the zombie case.
+      if (
+        this.wrapperElement &&
+        !this.useHTTP &&
+        !this.reconnecting &&
+        this.webSocketManager.getReadyState() !== undefined
+      ) {
+        this.performVisibilityReconnect();
+      }
+    }, 500);
+  }
+
+  private async performVisibilityReconnect(): Promise<void> {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+
+    try {
+      this.logger.info("Reconnecting after visibility change");
+
+      this.webSocketManager.disconnect();
+      this.ws = null;
+      this.resetSessionState();
+
+      const result = await this.webSocketManager.connect();
+      this.useHTTP = !result.usingWebSocket;
+
+      if (this.useHTTP) {
+        this.ws = null;
+        if (result.initialState && this.wrapperElement) {
+          this.handleWebSocketPayload(result.initialState);
+        }
+      }
+
+      this.wrapperElement?.dispatchEvent(new Event("lvt:reconnected"));
+    } catch (err) {
+      this.logger.error("Visibility reconnect failed:", err);
+    } finally {
+      this.reconnecting = false;
+    }
   }
 
   /**
