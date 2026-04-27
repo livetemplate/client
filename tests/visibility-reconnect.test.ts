@@ -353,4 +353,35 @@ describe("Visibility-based reconnection", () => {
     await jest.advanceTimersByTimeAsync(100);
     expect(mockSockets.length).toBe(socketsAfterDisconnect);
   });
+
+  it("cancels a pending reconnect timer when disconnect runs mid-window", async () => {
+    await connectClient();
+    const initialSocketCount = mockSockets.length;
+
+    // Background long enough to queue a reconnect
+    fireVisibilityChange(true);
+    jest.advanceTimersByTime(4000);
+    fireVisibilityChange(false);
+    // 500ms timer is now queued but has not fired yet.
+
+    // disconnect → connect within the timer window. Without timer
+    // cancellation, the queued timer fires after the new connect()
+    // and triggers an unwanted performVisibilityReconnect() on the
+    // freshly connected client.
+    client.disconnect();
+    createWrapper();
+    const connectPromise = client.connect();
+    await jest.advanceTimersByTimeAsync(0);
+    mockSockets[mockSockets.length - 1]?.simulateOpen();
+    await connectPromise;
+    const socketsAfterConnect = mockSockets.length;
+
+    // Drain the previously queued 500ms timer — should be a no-op now.
+    await jest.advanceTimersByTimeAsync(600);
+
+    // No spurious second WebSocket opened by the cancelled timer.
+    expect(mockSockets.length).toBe(socketsAfterConnect);
+    // Sanity: the connect itself did open one socket past the initial.
+    expect(socketsAfterConnect).toBe(initialSocketCount + 1);
+  });
 });

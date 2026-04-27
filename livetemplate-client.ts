@@ -106,6 +106,7 @@ export class LiveTemplateClient {
   private reconnecting: boolean = false;
   private visibilityHandler: (() => void) | null = null;
   private pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
+  private visibilityReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
@@ -544,6 +545,10 @@ export class LiveTemplateClient {
   }
 
   private teardownVisibilityReconnect(): void {
+    if (this.visibilityReconnectTimer !== null) {
+      clearTimeout(this.visibilityReconnectTimer);
+      this.visibilityReconnectTimer = null;
+    }
     if (!this.visibilityHandlerAttached || typeof document === "undefined") return;
     if (this.visibilityHandler) {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
@@ -557,7 +562,14 @@ export class LiveTemplateClient {
   }
 
   private scheduleVisibilityReconnect(): void {
-    setTimeout(() => {
+    // 500ms delay lets onclose deliver before we ask for a new socket.
+    // Tracked on the instance so teardownVisibilityReconnect() can
+    // cancel a pending timer when disconnect() runs mid-window —
+    // otherwise a timer queued before disconnect can fire after a
+    // subsequent connect on the same instance and trigger an
+    // unwanted reconnect.
+    this.visibilityReconnectTimer = setTimeout(() => {
+      this.visibilityReconnectTimer = null;
       // Guard: only reconnect if a WebSocket transport exists. After
       // disconnect(), transport is null (readyState undefined) so we
       // correctly skip intentionally disconnected clients.
