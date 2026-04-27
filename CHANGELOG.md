@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.35] - 2026-04-27
+
+### Changes
+
+- feat: reconnect WebSocket on visibility change (iOS background fix) (#99) (ef57b41)
+
+
+
 ## [v0.8.34] - 2026-04-22
 
 ### Changes
