@@ -273,25 +273,35 @@ describe("Visibility-based reconnection", () => {
     expect(mockSockets.length).toBe(initialSocketCount);
   });
 
-  it("registers visibility handler only once across multiple connect calls", async () => {
+  it("removes the old visibility handler on disconnect and re-registers on reconnect", async () => {
     await connectClient();
 
     const addEventSpy = jest.spyOn(document, "addEventListener");
+    const removeEventSpy = jest.spyOn(document, "removeEventListener");
 
-    // Reconnect — setupVisibilityReconnect should be a no-op
+    // disconnect must remove the previously registered handler so that
+    // SPAs that build a new client per route don't accumulate listeners
+    // holding closures over destroyed instances.
     client.disconnect();
+    const removed = removeEventSpy.mock.calls.filter(
+      ([event]) => event === "visibilitychange"
+    );
+    expect(removed.length).toBe(1);
+
+    // The next connect re-attaches a fresh handler — exactly one.
     createWrapper();
     const connectPromise = client.connect();
     await jest.advanceTimersByTimeAsync(0);
     mockSockets[mockSockets.length - 1]?.simulateOpen();
     await connectPromise;
 
-    const visibilityCalls = addEventSpy.mock.calls.filter(
+    const added = addEventSpy.mock.calls.filter(
       ([event]) => event === "visibilitychange"
     );
-    expect(visibilityCalls.length).toBe(0);
+    expect(added.length).toBe(1);
 
     addEventSpy.mockRestore();
+    removeEventSpy.mockRestore();
   });
 
   it("dispatches lvt:reconnected event on successful reconnect", async () => {

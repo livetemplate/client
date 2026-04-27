@@ -98,9 +98,14 @@ export class LiveTemplateClient {
   // often silently dead. These fields drive a one-shot reconnect on
   // the visibilitychange event, independent of autoReconnect (which
   // guards against retry loops on persistent network failures).
+  // Handlers are stored as instance properties so disconnect() can
+  // remove them — without that, SPAs that build a new client per route
+  // accumulate listeners that hold closures over destroyed instances.
   private visibilityHandlerAttached: boolean = false;
   private hiddenAt: number = 0;
   private reconnecting: boolean = false;
+  private visibilityHandler: (() => void) | null = null;
+  private pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
 
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
@@ -466,6 +471,8 @@ export class LiveTemplateClient {
     this.ws = null;
     this.useHTTP = false;
     this.hiddenAt = 0;
+    this.reconnecting = false;
+    this.teardownVisibilityReconnect();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
     if (this.wrapperElement) {
@@ -505,7 +512,7 @@ export class LiveTemplateClient {
     if (this.visibilityHandlerAttached || typeof document === "undefined") return;
     this.visibilityHandlerAttached = true;
 
-    document.addEventListener("visibilitychange", () => {
+    this.visibilityHandler = () => {
       if (document.hidden) {
         // Only track hidden time if WebSocket is currently open.
         // Prevents stale handlers from triggering reconnection on
@@ -521,13 +528,32 @@ export class LiveTemplateClient {
       this.hiddenAt = 0;
       if (elapsed < 3000) return;
       this.scheduleVisibilityReconnect();
-    });
+    };
 
-    window.addEventListener("pageshow", (event: PageTransitionEvent) => {
+    // pageshow's persisted=true means the page came back from bfcache —
+    // its in-memory connection state is unknown, so reconnect unconditionally
+    // (no 3s threshold). visibilitychange handles ordinary tab-switch cases.
+    this.pageshowHandler = (event: PageTransitionEvent) => {
       if (event.persisted) {
         this.scheduleVisibilityReconnect();
       }
-    });
+    };
+
+    document.addEventListener("visibilitychange", this.visibilityHandler);
+    window.addEventListener("pageshow", this.pageshowHandler);
+  }
+
+  private teardownVisibilityReconnect(): void {
+    if (!this.visibilityHandlerAttached || typeof document === "undefined") return;
+    if (this.visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+    if (this.pageshowHandler) {
+      window.removeEventListener("pageshow", this.pageshowHandler);
+      this.pageshowHandler = null;
+    }
+    this.visibilityHandlerAttached = false;
   }
 
   private scheduleVisibilityReconnect(): void {
