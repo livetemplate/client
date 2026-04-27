@@ -354,6 +354,56 @@ describe("Visibility-based reconnection", () => {
     expect(mockSockets.length).toBe(socketsAfterDisconnect);
   });
 
+  it("a second schedule call cancels the first timer (rapid visibility+pageshow)", async () => {
+    await connectClient();
+    const initialSocketCount = mockSockets.length;
+
+    // Long background — first schedule queues a 500ms timer
+    fireVisibilityChange(true);
+    jest.advanceTimersByTime(4000);
+    fireVisibilityChange(false);
+    // bfcache restore fires almost immediately after — second schedule
+    firePageShow(true);
+
+    // Disconnect within the 500ms window. Without rescheduling cancelling
+    // the previous timer, the first timer would not be tracked by
+    // visibilityReconnectTimer (overwritten by the second), so
+    // teardownVisibilityReconnect() would only cancel the second.
+    // The first would fire after disconnect and trigger a reconnect.
+    client.disconnect();
+    await jest.advanceTimersByTimeAsync(600);
+
+    // No reconnect attempted after disconnect.
+    expect(mockSockets.length).toBe(initialSocketCount);
+  });
+
+  it("aborts the post-await continuation if disconnect ran mid-flight", async () => {
+    await connectClient();
+    const initialSocketCount = mockSockets.length;
+
+    // Trigger reconnect — performVisibilityReconnect awaits webSocketManager.connect()
+    fireVisibilityChange(true);
+    jest.advanceTimersByTime(4000);
+    fireVisibilityChange(false);
+    await jest.advanceTimersByTimeAsync(500);
+    // Now mid-flight: a second WebSocket has been allocated, but
+    // performVisibilityReconnect is awaiting its connect() resolution.
+
+    // disconnect() resets reconnecting=false. The pending await
+    // completion must observe that and bail without mutating state.
+    client.disconnect();
+
+    // Resolve the pending WebSocket connection.
+    mockSockets[mockSockets.length - 1]?.simulateOpen();
+    await jest.advanceTimersByTimeAsync(0);
+
+    // useHTTP should remain false (reset by disconnect), not be flipped
+    // by the bailed-out continuation.
+    expect((client as any).useHTTP).toBe(false);
+    // No new connection should be opened past the in-flight one.
+    expect(mockSockets.length).toBe(initialSocketCount + 1);
+  });
+
   it("cancels a pending reconnect timer when disconnect runs mid-window", async () => {
     await connectClient();
     const initialSocketCount = mockSockets.length;

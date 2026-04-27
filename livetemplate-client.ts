@@ -568,6 +568,14 @@ export class LiveTemplateClient {
     // otherwise a timer queued before disconnect can fire after a
     // subsequent connect on the same instance and trigger an
     // unwanted reconnect.
+    //
+    // Cancel any in-flight timer first so a rapid
+    // visibilitychange+pageshow sequence doesn't leak the earlier
+    // setTimeout (the tracked ref would only point at the last one,
+    // leaving the first orphaned).
+    if (this.visibilityReconnectTimer !== null) {
+      clearTimeout(this.visibilityReconnectTimer);
+    }
     this.visibilityReconnectTimer = setTimeout(() => {
       this.visibilityReconnectTimer = null;
       // Guard: only reconnect if a WebSocket transport exists. After
@@ -601,6 +609,15 @@ export class LiveTemplateClient {
       this.resetSessionState();
 
       const result = await this.webSocketManager.connect();
+
+      // disconnect() may have run during the await above. It clears the
+      // reconnecting flag, so the absence of that flag here is our
+      // "torn down while suspended" signal — abort without mutating
+      // state. Without this, useHTTP / payload application would land
+      // on a client the consumer expects to be inert (or, worse, on a
+      // freshly-reconnected client created by a subsequent connect()).
+      if (!this.reconnecting) return;
+
       this.useHTTP = !result.usingWebSocket;
 
       if (this.useHTTP) {
