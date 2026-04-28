@@ -17,14 +17,9 @@ const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 // Non-bubbling events need direct attachment rather than wrapper delegation
 const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
 
-// MIME type used to transport the dragged element's data-key across HTML5
-// drag events. Set on dragstart, read on drop. text/plain is set in parallel
-// for older Firefox where custom MIME types historically didn't survive.
+// Wire MIME for the dragged element's data-key. Set on dragstart, read on drop.
 const LVT_DRAG_MIME = "application/x-lvt-key";
 
-// HTML5 drag events that need synchronous side-effects (preventDefault on
-// dragover and drop, data-key stash on dragstart). All bubble — no entry
-// in NON_BUBBLING needed.
 const DRAG_EVENTS = new Set([
   "dragstart",
   "dragover",
@@ -233,22 +228,19 @@ export class EventDelegator {
               e.preventDefault();
             }
 
-            // HTML5 drag side-effects. Run synchronously on every native
-            // event BEFORE any throttle/debounce gate, because:
-            //   - dataTransfer.setData is only writable during the native
-            //     event tick.
-            //   - dragover.preventDefault MUST fire on every event, or the
-            //     browser will refuse to fire drop on this target.
-            //   - drop.preventDefault stops the browser's default behavior
-            //     (e.g., navigating to a dropped URL).
-            // The action send (handleAction) may still be throttled below;
-            // these side-effects are independent of that.
+            // Drag side-effects run BEFORE the throttle gate below: the
+            // browser only honors preventDefault and dataTransfer.setData
+            // during the native event tick, so they cannot wait on a
+            // throttled handleAction. dragover.preventDefault is what
+            // licenses drop to fire; without it the browser silently
+            // ignores drops on this target.
             if (DRAG_EVENTS.has(eventType)) {
               const dragEvent = e as DragEvent;
               if (eventType === "dragstart" && dragEvent.dataTransfer) {
                 const keyEl = actionElement.closest("[data-key]");
                 const key = keyEl?.getAttribute("data-key") ?? "";
                 dragEvent.dataTransfer.setData(LVT_DRAG_MIME, key);
+                // Firefox historically needed text/plain set for the drag to start.
                 dragEvent.dataTransfer.setData("text/plain", key);
                 dragEvent.dataTransfer.effectAllowed = "move";
               } else if (eventType === "dragover") {
@@ -260,12 +252,9 @@ export class EventDelegator {
                 dragEvent.preventDefault();
               }
 
-              // Empty-action drag binding (e.g. lvt-on:dragover="") is a
-              // marker pattern: it opts an element into the spec-mandated
-              // side-effects above without paying for a WS round-trip.
-              // Useful for dragstart (just stash the key) and dragover
-              // (just preventDefault so drop fires) — the only meaningful
-              // server message is usually the drop itself.
+              // Marker pattern: lvt-on:dragover="" opts in to the side-effects
+              // above without a WS round-trip — drop is usually the only event
+              // worth sending.
               if (action === "") {
                 return;
               }
@@ -393,13 +382,9 @@ export class EventDelegator {
                 });
               }
 
-              // HTML5 drop event: lift the dragged item's key out of
-              // DataTransfer (set by us on dragstart) and the drop target's
-              // key from its nearest [data-key] ancestor. This is the
-              // payload a sortable controller needs ("move srcKey to where
-              // tgtKey currently sits"). The standard data-* extraction
-              // above intentionally skips data-key, so injecting these
-              // distinct field names avoids any collision.
+              // Drop carries the source key (stashed in DataTransfer on
+              // dragstart) and the target key (the drop target's nearest
+              // [data-key]) — the pair a sortable controller needs.
               if (eventType === "drop") {
                 const dropDt = (e as DragEvent).dataTransfer;
                 if (dropDt) {
