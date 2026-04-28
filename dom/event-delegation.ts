@@ -17,6 +17,23 @@ const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 // Non-bubbling events need direct attachment rather than wrapper delegation
 const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
 
+// MIME type used to transport the dragged element's data-key across HTML5
+// drag events. Set on dragstart, read on drop. text/plain is set in parallel
+// for older Firefox where custom MIME types historically didn't survive.
+const LVT_DRAG_MIME = "application/x-lvt-key";
+
+// HTML5 drag events that need synchronous side-effects (preventDefault on
+// dragover and drop, data-key stash on dragstart). All bubble — no entry
+// in NON_BUBBLING needed.
+const DRAG_EVENTS = new Set([
+  "dragstart",
+  "dragover",
+  "drop",
+  "dragend",
+  "dragenter",
+  "dragleave",
+]);
+
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
@@ -49,6 +66,12 @@ export const DELEGATED_EVENT_TYPES = [
   "blur",
   "mouseenter",
   "mouseleave",
+  "dragstart",
+  "dragover",
+  "drop",
+  "dragend",
+  "dragenter",
+  "dragleave",
 ] as const;
 
 export class EventDelegator {
@@ -210,6 +233,34 @@ export class EventDelegator {
               e.preventDefault();
             }
 
+            // HTML5 drag side-effects. Run synchronously on every native
+            // event BEFORE any throttle/debounce gate, because:
+            //   - dataTransfer.setData is only writable during the native
+            //     event tick.
+            //   - dragover.preventDefault MUST fire on every event, or the
+            //     browser will refuse to fire drop on this target.
+            //   - drop.preventDefault stops the browser's default behavior
+            //     (e.g., navigating to a dropped URL).
+            // The action send (handleAction) may still be throttled below;
+            // these side-effects are independent of that.
+            if (DRAG_EVENTS.has(eventType)) {
+              const dragEvent = e as DragEvent;
+              if (eventType === "dragstart" && dragEvent.dataTransfer) {
+                const keyEl = actionElement.closest("[data-key]");
+                const key = keyEl?.getAttribute("data-key") ?? "";
+                dragEvent.dataTransfer.setData(LVT_DRAG_MIME, key);
+                dragEvent.dataTransfer.setData("text/plain", key);
+                dragEvent.dataTransfer.effectAllowed = "move";
+              } else if (eventType === "dragover") {
+                dragEvent.preventDefault();
+                if (dragEvent.dataTransfer) {
+                  dragEvent.dataTransfer.dropEffect = "move";
+                }
+              } else if (eventType === "drop") {
+                dragEvent.preventDefault();
+              }
+            }
+
             if (
               (eventType === "keydown" || eventType === "keyup") &&
               actionElement.hasAttribute("lvt-key")
@@ -330,6 +381,27 @@ export class EventDelegator {
                     message.data[key] = this.context.parseValue(attr.value);
                   }
                 });
+              }
+
+              // HTML5 drop event: lift the dragged item's key out of
+              // DataTransfer (set by us on dragstart) and the drop target's
+              // key from its nearest [data-key] ancestor. This is the
+              // payload a sortable controller needs ("move srcKey to where
+              // tgtKey currently sits"). The standard data-* extraction
+              // above intentionally skips data-key, so injecting these
+              // distinct field names avoids any collision.
+              if (eventType === "drop") {
+                const dropDt = (e as DragEvent).dataTransfer;
+                if (dropDt) {
+                  const src = dropDt.getData(LVT_DRAG_MIME) || dropDt.getData("text/plain");
+                  if (src) {
+                    message.data.dragSourceKey = src;
+                  }
+                  const tgtEl = actionElement.closest("[data-key]");
+                  if (tgtEl) {
+                    message.data.dragTargetKey = tgtEl.getAttribute("data-key");
+                  }
+                }
               }
 
               // Tier 1 file upload detection — must happen BEFORE setActiveSubmission

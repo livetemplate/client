@@ -14,7 +14,7 @@ The LiveTemplate client enables reactive web applications by efficiently applyin
 - **WebSocket Transport**: Real-time bidirectional communication
 - **Focus Management**: Preserves focus during updates
 - **Form Lifecycle**: Automatic form state management
-- **Event Delegation**: Efficient event handling
+- **Event Delegation**: Efficient event handling, including HTML5 drag-and-drop (`lvt-on:dragstart`/`dragover`/`drop`/`dragend`/`dragenter`/`dragleave`) with auto-serialized source/target keys
 - **Modal Management**: Built-in modal support
 - **TypeScript**: Full type safety and IDE support
 

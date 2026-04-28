@@ -928,4 +928,370 @@ describe("EventDelegator", () => {
       });
     });
   });
+
+  describe("drag events", () => {
+    // JSDOM's DragEvent and DataTransfer are not faithful to the spec
+    // (DataTransfer constructor missing in many versions, dataTransfer
+    // field on DragEvent often null). We build a Map-backed DataTransfer
+    // mock and attach it via defineProperty so the production code's
+    // `(e as DragEvent).dataTransfer` reads our mock.
+    const buildDataTransferMock = () => {
+      const store = new Map<string, string>();
+      const mock = {
+        setData: jest.fn((type: string, value: string) => {
+          store.set(type, value);
+        }),
+        getData: jest.fn((type: string) => store.get(type) ?? ""),
+        effectAllowed: "uninitialized" as DataTransfer["effectAllowed"],
+        dropEffect: "none" as DataTransfer["dropEffect"],
+      };
+      return { store, mock };
+    };
+
+    const dispatchDrag = (
+      target: Element,
+      type: string,
+      dt?: ReturnType<typeof buildDataTransferMock>["mock"]
+    ) => {
+      const evt = new Event(type, { bubbles: true, cancelable: true });
+      if (dt) {
+        Object.defineProperty(evt, "dataTransfer", {
+          value: dt,
+          writable: false,
+          configurable: true,
+        });
+      }
+      target.dispatchEvent(evt);
+      return evt;
+    };
+
+    it("dragstart stashes data-key into both LVT MIME and text/plain", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-1");
+      wrapper.innerHTML = `
+        <li id="src" data-key="task-3" lvt-on:dragstart="startDrag"></li>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { store, mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("src")!, "dragstart", mock);
+
+      expect(mock.setData).toHaveBeenCalledWith("application/x-lvt-key", "task-3");
+      expect(mock.setData).toHaveBeenCalledWith("text/plain", "task-3");
+      expect(store.get("application/x-lvt-key")).toBe("task-3");
+      expect(store.get("text/plain")).toBe("task-3");
+      expect(context.send).toHaveBeenCalledWith({ action: "startDrag", data: {} });
+    });
+
+    it("dragstart sets effectAllowed to 'move'", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-2");
+      wrapper.innerHTML = `<li id="src" data-key="x" lvt-on:dragstart="d"></li>`;
+      document.body.appendChild(wrapper);
+
+      const delegator = new EventDelegator(
+        createContext(wrapper),
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("src")!, "dragstart", mock);
+
+      expect(mock.effectAllowed).toBe("move");
+    });
+
+    it("dragstart with no enclosing data-key sends empty key without throwing", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-3");
+      wrapper.innerHTML = `<div id="src" lvt-on:dragstart="d"></div>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      expect(() =>
+        dispatchDrag(document.getElementById("src")!, "dragstart", mock)
+      ).not.toThrow();
+
+      expect(mock.setData).toHaveBeenCalledWith("application/x-lvt-key", "");
+      expect(context.send).toHaveBeenCalledWith({ action: "d", data: {} });
+    });
+
+    it("dragover preventDefaults on every event even when send is throttled", () => {
+      jest.useFakeTimers();
+
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-4");
+      wrapper.innerHTML = `
+        <li id="tgt" data-key="t" lvt-on:dragover="over" lvt-mod:throttle="200"></li>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const target = document.getElementById("tgt")!;
+      const { mock } = buildDataTransferMock();
+
+      const e1 = dispatchDrag(target, "dragover", mock);
+      const e2 = dispatchDrag(target, "dragover", mock);
+      const e3 = dispatchDrag(target, "dragover", mock);
+
+      // preventDefault is called on every event (not throttled)
+      expect(e1.defaultPrevented).toBe(true);
+      expect(e2.defaultPrevented).toBe(true);
+      expect(e3.defaultPrevented).toBe(true);
+
+      // send is throttled — only fired once
+      expect(context.send).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(200);
+      dispatchDrag(target, "dragover", mock);
+      expect(context.send).toHaveBeenCalledTimes(2);
+    });
+
+    it("dragover sets dropEffect to 'move'", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-5");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:dragover="o"></li>`;
+      document.body.appendChild(wrapper);
+
+      const delegator = new EventDelegator(
+        createContext(wrapper),
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("tgt")!, "dragover", mock);
+
+      expect(mock.dropEffect).toBe("move");
+    });
+
+    it("drop injects dragSourceKey from DataTransfer and dragTargetKey from DOM", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-6");
+      wrapper.innerHTML = `
+        <ul>
+          <li id="tgt" data-key="task-1" lvt-on:drop="reorder"></li>
+        </ul>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { store, mock } = buildDataTransferMock();
+      store.set("application/x-lvt-key", "task-3");
+      dispatchDrag(document.getElementById("tgt")!, "drop", mock);
+
+      expect(context.send).toHaveBeenCalledWith({
+        action: "reorder",
+        data: { dragSourceKey: "task-3", dragTargetKey: "task-1" },
+      });
+    });
+
+    it("drop calls preventDefault to suppress browser navigation", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-7");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:drop="d"></li>`;
+      document.body.appendChild(wrapper);
+
+      const delegator = new EventDelegator(
+        createContext(wrapper),
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      const evt = dispatchDrag(document.getElementById("tgt")!, "drop", mock);
+      expect(evt.defaultPrevented).toBe(true);
+    });
+
+    it("drop falls back to text/plain when LVT MIME is absent", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-8");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:drop="d"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { store, mock } = buildDataTransferMock();
+      store.set("text/plain", "task-9");
+      dispatchDrag(document.getElementById("tgt")!, "drop", mock);
+
+      expect(context.send).toHaveBeenCalledWith({
+        action: "d",
+        data: { dragSourceKey: "task-9", dragTargetKey: "t" },
+      });
+    });
+
+    it("drop with no MIME data injects only dragTargetKey", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-9");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:drop="d"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("tgt")!, "drop", mock);
+
+      const call = context.send.mock.calls[0][0];
+      expect(call.action).toBe("d");
+      expect(call.data.dragTargetKey).toBe("t");
+      expect(call.data).not.toHaveProperty("dragSourceKey");
+    });
+
+    it("drop on nested element resolves dragTargetKey via closest data-key", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-10");
+      wrapper.innerHTML = `
+        <ul>
+          <li data-key="task-5">
+            <span id="inner" lvt-on:drop="reorder"></span>
+          </li>
+        </ul>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { store, mock } = buildDataTransferMock();
+      store.set("application/x-lvt-key", "task-2");
+      dispatchDrag(document.getElementById("inner")!, "drop", mock);
+
+      expect(context.send).toHaveBeenCalledWith({
+        action: "reorder",
+        data: { dragSourceKey: "task-2", dragTargetKey: "task-5" },
+      });
+    });
+
+    it("dragend forwards as a plain action (no drag-specific data injection)", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-11");
+      wrapper.innerHTML = `<li id="src" data-key="x" lvt-on:dragend="cleanup"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("src")!, "dragend", mock);
+
+      expect(context.send).toHaveBeenCalledWith({ action: "cleanup", data: {} });
+      // No drag-specific keys leaked into payload
+      expect(mock.setData).not.toHaveBeenCalled();
+    });
+
+    it("dragenter forwards as a plain action", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-12");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:dragenter="enter"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      dispatchDrag(document.getElementById("tgt")!, "dragenter");
+
+      expect(context.send).toHaveBeenCalledWith({ action: "enter", data: {} });
+    });
+
+    it("dragleave forwards as a plain action", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-13");
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:dragleave="leave"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      dispatchDrag(document.getElementById("tgt")!, "dragleave");
+
+      expect(context.send).toHaveBeenCalledWith({ action: "leave", data: {} });
+    });
+
+    it("end-to-end reorder flow: dragstart then drop produces expected payload", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-14");
+      wrapper.innerHTML = `
+        <ul>
+          <li id="i1" data-key="task-1" draggable="true" lvt-on:dragstart="dnd" lvt-on:drop="dnd"></li>
+          <li id="i2" data-key="task-2" draggable="true" lvt-on:dragstart="dnd" lvt-on:drop="dnd"></li>
+          <li id="i3" data-key="task-3" draggable="true" lvt-on:dragstart="dnd" lvt-on:drop="dnd"></li>
+        </ul>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      // Simulate a real drag: shared DataTransfer across the gesture.
+      const { mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("i1")!, "dragstart", mock);
+      dispatchDrag(document.getElementById("i3")!, "drop", mock);
+
+      // First call: dragstart on i1
+      expect(context.send.mock.calls[0][0]).toEqual({ action: "dnd", data: {} });
+      // Second call: drop on i3 — payload carries source (from dataTransfer)
+      // and target (from i3's data-key)
+      expect(context.send.mock.calls[1][0]).toEqual({
+        action: "dnd",
+        data: { dragSourceKey: "task-1", dragTargetKey: "task-3" },
+      });
+    });
+  });
 });
