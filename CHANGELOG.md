@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.36] - 2026-04-28
+
+### Changes
+
+- feat: lvt-scroll-away top edge for scroll-to-top buttons (#103) (661b8c2)
+
+
+
 ## [v0.8.35] - 2026-04-27
 
 ### Changes
