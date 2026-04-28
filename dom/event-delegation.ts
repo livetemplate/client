@@ -17,6 +17,18 @@ const CLICK_AWAY_METHODS = Object.keys(CLICK_AWAY_METHOD_MAP);
 // Non-bubbling events need direct attachment rather than wrapper delegation
 const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
 
+// Wire MIME for the dragged element's data-key. Set on dragstart, read on drop.
+const LVT_DRAG_MIME = "application/x-lvt-key";
+
+const DRAG_EVENTS = new Set([
+  "dragstart",
+  "dragover",
+  "drop",
+  "dragend",
+  "dragenter",
+  "dragleave",
+]);
+
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
@@ -49,6 +61,12 @@ export const DELEGATED_EVENT_TYPES = [
   "blur",
   "mouseenter",
   "mouseleave",
+  "dragstart",
+  "dragover",
+  "drop",
+  "dragend",
+  "dragenter",
+  "dragleave",
 ] as const;
 
 export class EventDelegator {
@@ -210,6 +228,49 @@ export class EventDelegator {
               e.preventDefault();
             }
 
+            // Drag side-effects run BEFORE the throttle gate below: the
+            // browser only honors preventDefault and dataTransfer.setData
+            // during the native event tick, so they cannot wait on a
+            // throttled handleAction. dragover.preventDefault is what
+            // licenses drop to fire; without it the browser silently
+            // ignores drops on this target.
+            if (DRAG_EVENTS.has(eventType)) {
+              const dragEvent = e as DragEvent;
+              if (eventType === "dragstart" && dragEvent.dataTransfer) {
+                const keyEl = actionElement.closest("[data-key]");
+                const key = keyEl?.getAttribute("data-key") ?? "";
+                // Custom MIME only — never text/plain. Putting the key in
+                // text/plain would leak it to any external drop target
+                // (URL bar, text editor, another app).
+                dragEvent.dataTransfer.setData(LVT_DRAG_MIME, key);
+                dragEvent.dataTransfer.effectAllowed = "move";
+              } else if (eventType === "dragover") {
+                dragEvent.preventDefault();
+                if (dragEvent.dataTransfer) {
+                  dragEvent.dataTransfer.dropEffect = "move";
+                }
+              } else if (eventType === "drop") {
+                dragEvent.preventDefault();
+              } else if (eventType === "dragenter" || eventType === "dragleave") {
+                // Skip when the pointer is just crossing into / out of a
+                // descendant of the same actionElement — those are noise
+                // from the spec's bubble model. Only fire for boundary
+                // crossings between distinct elements.
+                const related = dragEvent.relatedTarget as Node | null;
+                if (related && actionElement.contains(related)) {
+                  return;
+                }
+              }
+
+              // Marker pattern: empty action (e.g. lvt-on:dragover="" or
+              // lvt-on:dragstart="") opts in to the side-effects above
+              // without a WS round-trip. Useful for any drag event when
+              // only drop needs server-side handling.
+              if (action === "") {
+                return;
+              }
+            }
+
             if (
               (eventType === "keydown" || eventType === "keyup") &&
               actionElement.hasAttribute("lvt-key")
@@ -330,6 +391,26 @@ export class EventDelegator {
                     message.data[key] = this.context.parseValue(attr.value);
                   }
                 });
+              }
+
+              // Drop carries the source key (stashed in DataTransfer on
+              // dragstart) and the target key (the drop target's nearest
+              // [data-key]) — the pair a sortable controller needs.
+              if (eventType === "drop") {
+                // Source key only when our LVT MIME is set — guarantees
+                // it came from a same-app dragstart. Cross-app drags
+                // (text/plain only) deliberately produce no dragSourceKey
+                // so controllers don't have to parse untrusted input.
+                const src = (e as DragEvent).dataTransfer?.getData(LVT_DRAG_MIME);
+                if (src) {
+                  message.data.dragSourceKey = src;
+                }
+                // Target key from the DOM works even when dataTransfer
+                // is missing (some embedded environments).
+                const tgtKey = actionElement.closest("[data-key]")?.getAttribute("data-key");
+                if (tgtKey) {
+                  message.data.dragTargetKey = tgtKey;
+                }
               }
 
               // Tier 1 file upload detection — must happen BEFORE setActiveSubmission
