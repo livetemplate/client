@@ -951,7 +951,8 @@ describe("EventDelegator", () => {
     const dispatchDrag = (
       target: Element,
       type: string,
-      dt?: ReturnType<typeof buildDataTransferMock>["mock"]
+      dt?: ReturnType<typeof buildDataTransferMock>["mock"],
+      relatedTarget?: Element | null
     ) => {
       const evt = new Event(type, { bubbles: true, cancelable: true });
       if (dt) {
@@ -961,11 +962,18 @@ describe("EventDelegator", () => {
           configurable: true,
         });
       }
+      if (relatedTarget !== undefined) {
+        Object.defineProperty(evt, "relatedTarget", {
+          value: relatedTarget,
+          writable: false,
+          configurable: true,
+        });
+      }
       target.dispatchEvent(evt);
       return evt;
     };
 
-    it("dragstart stashes data-key into both LVT MIME and text/plain", () => {
+    it("dragstart stashes data-key into the LVT MIME only (never text/plain)", () => {
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-lvt-id", "wrapper-drag-1");
       wrapper.innerHTML = `
@@ -984,9 +992,10 @@ describe("EventDelegator", () => {
       dispatchDrag(document.getElementById("src")!, "dragstart", mock);
 
       expect(mock.setData).toHaveBeenCalledWith("application/x-lvt-key", "task-3");
-      expect(mock.setData).toHaveBeenCalledWith("text/plain", "task-3");
       expect(store.get("application/x-lvt-key")).toBe("task-3");
-      expect(store.get("text/plain")).toBe("task-3");
+      // Critical: text/plain is NOT set, so the key cannot leak to
+      // external drop targets (URL bar, text editor, another app).
+      expect(store.has("text/plain")).toBe(false);
       expect(context.send).toHaveBeenCalledWith({ action: "startDrag", data: {} });
     });
 
@@ -1251,6 +1260,60 @@ describe("EventDelegator", () => {
       expect(context.send).toHaveBeenCalledWith({ action: "cleanup", data: {} });
       // No drag-specific keys leaked into payload
       expect(mock.setData).not.toHaveBeenCalled();
+    });
+
+    it("dragenter is suppressed when relatedTarget is a child of the action element", () => {
+      // The spec fires dragenter as the pointer crosses into a child
+      // of an existing drop target — that's noise. Our handler should
+      // suppress it and only fire on real boundary crossings.
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-enter-noise");
+      wrapper.innerHTML = `
+        <li id="zone" data-key="t" lvt-on:dragenter="enter">
+          <span id="child"></span>
+        </li>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      // Fire dragenter on the zone with the child as relatedTarget —
+      // simulates pointer crossing from the zone proper into the child.
+      const child = document.getElementById("child")!;
+      dispatchDrag(document.getElementById("zone")!, "dragenter", undefined, child);
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("dragleave fires for boundary crossings between distinct elements", () => {
+      // Real boundary crossing: pointer leaves the zone for an element
+      // outside it. relatedTarget is NOT a child, so the action fires.
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-leave-real");
+      wrapper.innerHTML = `
+        <ul>
+          <li id="zone-a" data-key="a" lvt-on:dragleave="leave"></li>
+          <li id="zone-b" data-key="b"></li>
+        </ul>
+      `;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const zoneB = document.getElementById("zone-b")!;
+      dispatchDrag(document.getElementById("zone-a")!, "dragleave", undefined, zoneB);
+
+      expect(context.send).toHaveBeenCalledWith({ action: "leave", data: {} });
     });
 
     it("dragenter forwards as a plain action", () => {

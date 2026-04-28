@@ -239,9 +239,10 @@ export class EventDelegator {
               if (eventType === "dragstart" && dragEvent.dataTransfer) {
                 const keyEl = actionElement.closest("[data-key]");
                 const key = keyEl?.getAttribute("data-key") ?? "";
+                // Custom MIME only — never text/plain. Putting the key in
+                // text/plain would leak it to any external drop target
+                // (URL bar, text editor, another app).
                 dragEvent.dataTransfer.setData(LVT_DRAG_MIME, key);
-                // Firefox historically needed text/plain set for the drag to start.
-                dragEvent.dataTransfer.setData("text/plain", key);
                 dragEvent.dataTransfer.effectAllowed = "move";
               } else if (eventType === "dragover") {
                 dragEvent.preventDefault();
@@ -250,6 +251,15 @@ export class EventDelegator {
                 }
               } else if (eventType === "drop") {
                 dragEvent.preventDefault();
+              } else if (eventType === "dragenter" || eventType === "dragleave") {
+                // Skip when the pointer is just crossing into / out of a
+                // descendant of the same actionElement — those are noise
+                // from the spec's bubble model. Only fire for boundary
+                // crossings between distinct elements.
+                const related = dragEvent.relatedTarget as Node | null;
+                if (related && actionElement.contains(related)) {
+                  return;
+                }
               }
 
               // Marker pattern: empty action (e.g. lvt-on:dragover="" or
