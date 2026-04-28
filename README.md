@@ -14,7 +14,7 @@ The LiveTemplate client enables reactive web applications by efficiently applyin
 - **WebSocket Transport**: Real-time bidirectional communication
 - **Focus Management**: Preserves focus during updates
 - **Form Lifecycle**: Automatic form state management
-- **Event Delegation**: Efficient event handling, including HTML5 drag-and-drop (`lvt-on:dragstart`/`dragover`/`drop`/`dragend`/`dragenter`/`dragleave`) with auto-serialized source/target keys. Notes: (1) `dragSourceKey` is only injected when the drag originated in this app (carried via the custom `application/x-lvt-key` MIME); cross-app drags produce no `dragSourceKey`, and the dragged element's key is never written to `text/plain` so it can't leak to external drop targets. (2) `dragenter`/`dragleave` are filtered using `relatedTarget` to skip child-element traversal noise — handlers fire only on real boundary crossings between distinct action elements. (3) Any drag binding with an empty action (`lvt-on:drop=""`, etc.) runs the spec side-effects without a WS send. (4) `dragover` fires at ~60 Hz during a drag — recommend `lvt-mod:throttle="100"` on any `dragover` handler bound to a real action. (5) `effectAllowed` and `dropEffect` are hardcoded to `"move"` in v1; copy/link drag semantics are not yet configurable.
+- **Event Delegation**: Efficient event handling, including HTML5 drag-and-drop with auto-serialized source/target keys (see [Drag-and-drop notes](#drag-and-drop-notes)).
 - **Modal Management**: Built-in modal support
 - **TypeScript**: Full type safety and IDE support
 
@@ -125,6 +125,16 @@ window.addEventListener("livetemplate:update", (e) => {
     console.log("Received update:", e.detail);
 });
 ```
+
+### Drag-and-drop notes
+
+The client supports six native HTML5 drag events as `lvt-on:*` bindings: `dragstart`, `dragover`, `drop`, `dragend`, `dragenter`, `dragleave`. On `drop`, the action message includes `dragSourceKey` (the dragged item's `data-key`) and `dragTargetKey` (the drop target's `data-key`).
+
+- **Trust boundary**: `dragSourceKey` is only emitted when the drag originated in this app (carried via the custom `application/x-lvt-key` MIME). Cross-app drags produce no `dragSourceKey`, and the key is never written to `text/plain` so it cannot leak to external drop targets (URL bar, text editors, other apps).
+- **Bubble noise**: `dragenter`/`dragleave` use `relatedTarget` to suppress events when the pointer is just crossing into or out of a descendant of the same element. Handlers fire only on real boundary crossings.
+- **Marker pattern**: any drag binding with an empty action (`lvt-on:drop=""`, `lvt-on:dragover=""`, etc.) runs the spec-mandated side-effects without sending a WS message — useful when only `drop` needs server handling.
+- **Throttle dragover**: `dragover` fires at ~60 Hz. Add `lvt-mod:throttle="100"` (or higher) to any `dragover` handler bound to a real action, or use the marker pattern.
+- **v1 limitation**: `effectAllowed` and `dropEffect` are hardcoded to `"move"`. Copy/link drag semantics are not yet configurable.
 
 ## How It Works
 
