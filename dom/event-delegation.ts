@@ -259,6 +259,16 @@ export class EventDelegator {
               } else if (eventType === "drop") {
                 dragEvent.preventDefault();
               }
+
+              // Empty-action drag binding (e.g. lvt-on:dragover="") is a
+              // marker pattern: it opts an element into the spec-mandated
+              // side-effects above without paying for a WS round-trip.
+              // Useful for dragstart (just stash the key) and dragover
+              // (just preventDefault so drop fires) — the only meaningful
+              // server message is usually the drop itself.
+              if (action === "") {
+                return;
+              }
             }
 
             if (

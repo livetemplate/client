@@ -1260,6 +1260,47 @@ describe("EventDelegator", () => {
       expect(context.send).toHaveBeenCalledWith({ action: "leave", data: {} });
     });
 
+    it("dragover with empty action calls preventDefault but skips send", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-empty-over");
+      // Empty action — marker pattern: opt into preventDefault without WS send
+      wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:dragover=""></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { mock } = buildDataTransferMock();
+      const evt = dispatchDrag(document.getElementById("tgt")!, "dragover", mock);
+
+      expect(evt.defaultPrevented).toBe(true);
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("dragstart with empty action stashes key but skips send", () => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-empty-start");
+      wrapper.innerHTML = `<li id="src" data-key="task-7" lvt-on:dragstart=""></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      const { store, mock } = buildDataTransferMock();
+      dispatchDrag(document.getElementById("src")!, "dragstart", mock);
+
+      expect(store.get("application/x-lvt-key")).toBe("task-7");
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
     it("end-to-end reorder flow: dragstart then drop produces expected payload", () => {
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-lvt-id", "wrapper-drag-14");
