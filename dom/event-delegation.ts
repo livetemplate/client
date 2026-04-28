@@ -387,19 +387,19 @@ export class EventDelegator {
               // dragstart) and the target key (the drop target's nearest
               // [data-key]) — the pair a sortable controller needs.
               if (eventType === "drop") {
-                const dropDt = (e as DragEvent).dataTransfer;
-                if (dropDt) {
-                  // text/plain fallback can carry arbitrary text from
-                  // cross-app drags. Server-side controllers MUST treat
-                  // dragSourceKey as untrusted input and validate it.
-                  const src = dropDt.getData(LVT_DRAG_MIME) || dropDt.getData("text/plain");
-                  if (src) {
-                    message.data.dragSourceKey = src;
-                  }
-                  const tgtKey = actionElement.closest("[data-key]")?.getAttribute("data-key");
-                  if (tgtKey) {
-                    message.data.dragTargetKey = tgtKey;
-                  }
+                // Source key only when our LVT MIME is set — guarantees
+                // it came from a same-app dragstart. Cross-app drags
+                // (text/plain only) deliberately produce no dragSourceKey
+                // so controllers don't have to parse untrusted input.
+                const src = (e as DragEvent).dataTransfer?.getData(LVT_DRAG_MIME);
+                if (src) {
+                  message.data.dragSourceKey = src;
+                }
+                // Target key from the DOM works even when dataTransfer
+                // is missing (some embedded environments).
+                const tgtKey = actionElement.closest("[data-key]")?.getAttribute("data-key");
+                if (tgtKey) {
+                  message.data.dragTargetKey = tgtKey;
                 }
               }
 

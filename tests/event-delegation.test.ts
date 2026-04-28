@@ -1129,7 +1129,7 @@ describe("EventDelegator", () => {
       expect(evt.defaultPrevented).toBe(true);
     });
 
-    it("drop falls back to text/plain when LVT MIME is absent", () => {
+    it("drop ignores text/plain-only DataTransfer (cross-app drag is untrusted)", () => {
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-lvt-id", "wrapper-drag-8");
       wrapper.innerHTML = `<li id="tgt" data-key="t" lvt-on:drop="d"></li>`;
@@ -1143,13 +1143,16 @@ describe("EventDelegator", () => {
       delegator.setupEventDelegation();
 
       const { store, mock } = buildDataTransferMock();
-      store.set("text/plain", "task-9");
+      // Simulates a drag from outside the app — only text/plain is set,
+      // LVT MIME is absent. The drop must NOT promote arbitrary text
+      // to dragSourceKey.
+      store.set("text/plain", "arbitrary external text");
       dispatchDrag(document.getElementById("tgt")!, "drop", mock);
 
-      expect(context.send).toHaveBeenCalledWith({
-        action: "d",
-        data: { dragSourceKey: "task-9", dragTargetKey: "t" },
-      });
+      const call = context.send.mock.calls[0][0];
+      expect(call.action).toBe("d");
+      expect(call.data.dragTargetKey).toBe("t");
+      expect(call.data).not.toHaveProperty("dragSourceKey");
     });
 
     it("drop with no MIME data injects only dragTargetKey", () => {
@@ -1171,6 +1174,32 @@ describe("EventDelegator", () => {
       const call = context.send.mock.calls[0][0];
       expect(call.action).toBe("d");
       expect(call.data.dragTargetKey).toBe("t");
+      expect(call.data).not.toHaveProperty("dragSourceKey");
+    });
+
+    it("drop without dataTransfer still injects dragTargetKey from the DOM", () => {
+      // Some embedded / synthetic-event environments produce DragEvents
+      // with no DataTransfer. dragSourceKey is unavailable in that case
+      // (it's stashed via DataTransfer), but dragTargetKey is derived
+      // from the DOM and must still be sent.
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-drag-no-dt");
+      wrapper.innerHTML = `<li id="tgt" data-key="task-X" lvt-on:drop="d"></li>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      // dispatchDrag without a mock DataTransfer
+      dispatchDrag(document.getElementById("tgt")!, "drop");
+
+      const call = context.send.mock.calls[0][0];
+      expect(call.action).toBe("d");
+      expect(call.data.dragTargetKey).toBe("task-X");
       expect(call.data).not.toHaveProperty("dragSourceKey");
     });
 
