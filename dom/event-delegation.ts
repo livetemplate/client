@@ -252,9 +252,10 @@ export class EventDelegator {
                 dragEvent.preventDefault();
               }
 
-              // Marker pattern: lvt-on:dragover="" opts in to the side-effects
-              // above without a WS round-trip — drop is usually the only event
-              // worth sending.
+              // Marker pattern: empty action (e.g. lvt-on:dragover="" or
+              // lvt-on:dragstart="") opts in to the side-effects above
+              // without a WS round-trip. Useful for any drag event when
+              // only drop needs server-side handling.
               if (action === "") {
                 return;
               }
@@ -388,13 +389,16 @@ export class EventDelegator {
               if (eventType === "drop") {
                 const dropDt = (e as DragEvent).dataTransfer;
                 if (dropDt) {
+                  // text/plain fallback can carry arbitrary text from
+                  // cross-app drags. Server-side controllers MUST treat
+                  // dragSourceKey as untrusted input and validate it.
                   const src = dropDt.getData(LVT_DRAG_MIME) || dropDt.getData("text/plain");
                   if (src) {
                     message.data.dragSourceKey = src;
                   }
-                  const tgtEl = actionElement.closest("[data-key]");
-                  if (tgtEl) {
-                    message.data.dragTargetKey = tgtEl.getAttribute("data-key");
+                  const tgtKey = actionElement.closest("[data-key]")?.getAttribute("data-key");
+                  if (tgtKey) {
+                    message.data.dragTargetKey = tgtKey;
                   }
                 }
               }
