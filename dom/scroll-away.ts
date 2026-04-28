@@ -26,7 +26,7 @@ export function setupScrollAway(scanRoot: Element): void {
   const processEl = (el: Element) => {
     const edge = el.getAttribute("lvt-scroll-away");
     if (!edge) return;
-    if (edge !== "bottom") {
+    if (edge !== "bottom" && edge !== "top") {
       console.warn(`Unknown lvt-scroll-away edge: ${edge}`);
       return;
     }
@@ -61,7 +61,9 @@ export function setupScrollAway(scanRoot: Element): void {
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        const distance = target.scrollHeight - target.scrollTop - target.clientHeight;
+        const distance = edge === "top"
+          ? target.scrollTop
+          : target.scrollHeight - target.scrollTop - target.clientHeight;
         if (distance > threshold) {
           el.classList.add("visible");
         } else {
