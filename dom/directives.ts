@@ -179,12 +179,20 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         if (!htmlElement.isConnected) {
           htmlElement.style.backgroundColor = originalBackground;
           htmlElement.style.transition = originalTransition;
+          if (htmlElement.style.length === 0) {
+            htmlElement.removeAttribute("style");
+          }
           (htmlElement as any).__lvtHighlighting = false;
           return;
         }
         htmlElement.style.backgroundColor = originalBackground;
         setTimeout(() => {
-          if (htmlElement.isConnected) htmlElement.style.transition = originalTransition;
+          if (htmlElement.isConnected) {
+            htmlElement.style.transition = originalTransition;
+            if (htmlElement.style.length === 0) {
+              htmlElement.removeAttribute("style");
+            }
+          }
           (htmlElement as any).__lvtHighlighting = false;
         }, duration);
       }, 50);

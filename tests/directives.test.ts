@@ -216,6 +216,54 @@ describe("handleHighlightDirectives", () => {
 
     expect(target.style.backgroundColor).toBe(originalBg);
   });
+
+  it("removes empty style attribute after cleanup", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash"></div>`;
+    const target = document.getElementById("target")!;
+
+    handleHighlightDirectives(document.body);
+
+    // While the highlight is in flight, the directive's transition + bg are
+    // present, so style attribute exists.
+    expect(target.hasAttribute("style")).toBe(true);
+
+    // Advance past the inner setTimeout (50ms initial + 500ms duration default)
+    jest.advanceTimersByTime(50);
+    jest.advanceTimersByTime(500);
+
+    // After full cycle: directive's bg + transition removed; nothing user-set
+    // remains on this element, so style attribute is gone.
+    expect(target.hasAttribute("style")).toBe(false);
+  });
+
+  it("preserves style attribute when user-set CSS vars remain after cleanup", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash" style="--lvt-highlight-color: #ff0000;"></div>`;
+    const target = document.getElementById("target")!;
+
+    handleHighlightDirectives(document.body);
+
+    jest.advanceTimersByTime(50);
+    jest.advanceTimersByTime(500);
+
+    // Directive's own properties cleared, but the user's --lvt-highlight-color
+    // CSS var must survive — style.length>0 keeps the attribute.
+    expect(target.hasAttribute("style")).toBe(true);
+    expect(target.style.getPropertyValue("--lvt-highlight-color")).toBe("#ff0000");
+  });
+
+  it("removes empty style attribute when element disconnects mid-cycle", () => {
+    document.body.innerHTML = `<div id="target" lvt-fx:highlight="flash"></div>`;
+    const target = document.getElementById("target")!;
+
+    handleHighlightDirectives(document.body);
+
+    // Disconnect before the inner setTimeout fires (between 0 and 50ms)
+    target.remove();
+    jest.advanceTimersByTime(50);
+
+    // Even on the disconnected path, cleanup should leave no empty style attr
+    expect(target.hasAttribute("style")).toBe(false);
+  });
 });
 
 describe("handleAnimateDirectives", () => {
