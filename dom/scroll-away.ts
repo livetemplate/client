@@ -61,9 +61,9 @@ export function setupScrollAway(scanRoot: Element): void {
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        const distance = edge === "bottom"
-          ? target.scrollHeight - target.scrollTop - target.clientHeight
-          : target.scrollTop;
+        const distance = edge === "top"
+          ? target.scrollTop
+          : target.scrollHeight - target.scrollTop - target.clientHeight;
         if (distance > threshold) {
           el.classList.add("visible");
         } else {

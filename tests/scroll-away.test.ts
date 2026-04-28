@@ -238,6 +238,26 @@ describe("setupScrollAway", () => {
       // scrollTop = 200 is NOT > 200 default threshold
       expect(button.classList.contains("visible")).toBe(false);
     });
+
+    it("becomes visible at threshold + 1 for top edge", () => {
+      const container = mockScrollableElement("article-body", {
+        scrollHeight: 1000,
+        scrollTop: 201,
+        clientHeight: 400,
+      });
+      document.body.appendChild(container);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-scroll-away", "top");
+      button.setAttribute("data-lvt-target", "#article-body");
+      document.body.appendChild(button);
+
+      setupScrollAway(document.body);
+      flushRAF();
+
+      // scrollTop = 201 IS > 200 default threshold
+      expect(button.classList.contains("visible")).toBe(true);
+    });
   });
 
   it("does not duplicate listeners on re-scan with same target", () => {
