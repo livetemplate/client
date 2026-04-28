@@ -143,13 +143,101 @@ describe("setupScrollAway", () => {
     document.body.appendChild(container);
 
     const button = document.createElement("button");
-    button.setAttribute("lvt-scroll-away", "top");
+    button.setAttribute("lvt-scroll-away", "left");
     button.setAttribute("data-lvt-target", "#chat-log");
     document.body.appendChild(button);
 
     setupScrollAway(document.body);
 
-    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-scroll-away edge: top");
+    expect(console.warn).toHaveBeenCalledWith("Unknown lvt-scroll-away edge: left");
+  });
+
+  describe('edge="top" (scroll-to-top semantics)', () => {
+    it("adds 'visible' class when scrolled away from top", () => {
+      const container = mockScrollableElement("article-body", {
+        scrollHeight: 1000,
+        scrollTop: 600,
+        clientHeight: 400,
+      });
+      document.body.appendChild(container);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-scroll-away", "top");
+      button.setAttribute("data-lvt-target", "#article-body");
+      document.body.appendChild(button);
+
+      setupScrollAway(document.body);
+      flushRAF();
+
+      expect(button.classList.contains("visible")).toBe(true);
+    });
+
+    it("removes 'visible' class when at top", () => {
+      const container = mockScrollableElement("article-body", {
+        scrollHeight: 1000,
+        scrollTop: 0,
+        clientHeight: 400,
+      });
+      document.body.appendChild(container);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-scroll-away", "top");
+      button.setAttribute("data-lvt-target", "#article-body");
+      document.body.appendChild(button);
+
+      setupScrollAway(document.body);
+      flushRAF();
+
+      expect(button.classList.contains("visible")).toBe(false);
+    });
+
+    it("toggles on scroll events with top-edge semantics", () => {
+      const container = mockScrollableElement("article-body", {
+        scrollHeight: 1000,
+        scrollTop: 0,
+        clientHeight: 400,
+      });
+      document.body.appendChild(container);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-scroll-away", "top");
+      button.setAttribute("data-lvt-target", "#article-body");
+      document.body.appendChild(button);
+
+      setupScrollAway(document.body);
+      flushRAF();
+      expect(button.classList.contains("visible")).toBe(false);
+
+      Object.defineProperty(container, "scrollTop", { value: 600, configurable: true });
+      container.dispatchEvent(new Event("scroll"));
+      flushRAF();
+      expect(button.classList.contains("visible")).toBe(true);
+
+      Object.defineProperty(container, "scrollTop", { value: 0, configurable: true });
+      container.dispatchEvent(new Event("scroll"));
+      flushRAF();
+      expect(button.classList.contains("visible")).toBe(false);
+    });
+
+    it("respects threshold for top edge", () => {
+      const container = mockScrollableElement("article-body", {
+        scrollHeight: 1000,
+        scrollTop: 200,
+        clientHeight: 400,
+      });
+      document.body.appendChild(container);
+
+      const button = document.createElement("button");
+      button.setAttribute("lvt-scroll-away", "top");
+      button.setAttribute("data-lvt-target", "#article-body");
+      document.body.appendChild(button);
+
+      setupScrollAway(document.body);
+      flushRAF();
+
+      // scrollTop = 200 is NOT > 200 default threshold
+      expect(button.classList.contains("visible")).toBe(false);
+    });
   });
 
   it("does not duplicate listeners on re-scan with same target", () => {
