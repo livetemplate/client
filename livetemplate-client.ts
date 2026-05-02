@@ -1527,7 +1527,18 @@ export class LiveTemplateClient {
     // <!--lvt-targeted-skip:path--> placeholders that we now convert to
     // data-lvt-targeted-skip markers on their parent elements so morphdom
     // short-circuits those subtrees.
+    //
+    // Robustness: if any targeted op fails (apply returns null — e.g.
+    // container couldn't be located, or an op threw), the treeState was
+    // updated but the live DOM wasn't, so leaving the placeholder in
+    // place would either (a) tell morphdom to skip → live DOM stays
+    // stale, or (b) leave an empty container in tempWrapper → morphdom
+    // would empty the live container. Both are wrong. We re-render the
+    // full HTML from treeState (which is authoritative) and let morphdom
+    // sync from there.
     if (result.targetedOps && result.targetedOps.length > 0) {
+      const successContainers: Element[] = [];
+      let anyFailed = false;
       for (const op of result.targetedOps) {
         const container = this.rangeDomApplier.apply(
           element,
@@ -1536,9 +1547,26 @@ export class LiveTemplateClient {
         );
         if (container) {
           container.setAttribute(TARGETED_APPLIED_ATTR, "");
+          successContainers.push(container);
+        } else {
+          anyFailed = true;
         }
       }
-      this.replaceTargetedSkipPlaceholders(tempWrapper);
+
+      if (anyFailed) {
+        this.logger.warn(
+          "[updateDOM] one or more targeted DOM ops failed; rebuilding tempWrapper from treeState for a full morphdom sync"
+        );
+        // Strip success markers — we're going to do a full diff now.
+        for (const c of successContainers) {
+          c.removeAttribute(TARGETED_APPLIED_ATTR);
+        }
+        // Re-render full HTML (no skip placeholders) and reset tempWrapper.
+        const fullHtml = this.treeRenderer.renderState();
+        tempWrapper.innerHTML = fullHtml;
+      } else {
+        this.replaceTargetedSkipPlaceholders(tempWrapper);
+      }
     }
 
     try {

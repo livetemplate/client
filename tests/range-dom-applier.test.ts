@@ -70,6 +70,13 @@ function makeFixture(itemCount: number): Fixture {
     if (path === RANGE_PATH) return itemState.get(key);
     return undefined;
   });
+  // Mirror the production flow: callers run canApplyTargeted (which
+  // resolves and caches the container) before calling apply. Without
+  // this, a/p ops can't locate the container — they have no key in
+  // op[1] for findContainer to walk to.
+  if (items.length > 0) {
+    applier.findContainer(wrapper, RANGE_PATH, items[0]._k);
+  }
 
   return {
     wrapper,
@@ -99,24 +106,20 @@ describe("RangeDomApplier - container & predicate", () => {
     expect(c).toBe(fx.container);
   });
 
-  it("findContainer falls back to any keyed element in the wrapper when no sample provided", () => {
+  it("findContainer returns null when no sample key is provided and cache empty", () => {
     const fx = makeFixture(5);
     fx.applier.invalidate();
-    const c = fx.applier.findContainer(fx.wrapper, RANGE_PATH);
-    expect(c).toBe(fx.container);
+    // No anyKnownItemKey → must NOT fall back to an unscoped wrapper walk
+    // (which could return a container belonging to a different keyed range).
+    expect(fx.applier.findContainer(fx.wrapper, RANGE_PATH)).toBeNull();
   });
 
-  it("findContainer returns null when wrapper has no keyed elements", () => {
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = "<table><tbody><tr><td>nope</td></tr></tbody></table>";
-    const logger = createLogger({ level: "silent" });
-    const renderer = new TreeRenderer(logger);
-    const applier = new RangeDomApplier({
-      logger,
-      renderItem: renderer.renderRangeItem.bind(renderer),
-      executeLifecycleHook: () => {},
-    });
-    expect(applier.findContainer(wrapper, RANGE_PATH)).toBeNull();
+  it("findContainer returns null when sample key doesn't match any element", () => {
+    const fx = makeFixture(5);
+    fx.applier.invalidate();
+    expect(
+      fx.applier.findContainer(fx.wrapper, RANGE_PATH, "ghost-key")
+    ).toBeNull();
   });
 
   it("findContainer re-resolves when cached element detaches", () => {
@@ -183,6 +186,18 @@ describe("RangeDomApplier - container & predicate", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/lvt-ignore/);
   });
+
+  it("canApplyTargeted rejects when lvt-ignore is on the wrapper element itself", () => {
+    const fx = makeFixture(5);
+    fx.wrapper.setAttribute("lvt-ignore", "");
+    const result = fx.applier.canApplyTargeted(
+      fx.wrapper,
+      { d: [...fx.itemState.values()], s: ROW_STATICS, m: { idKey: "0" } },
+      RANGE_PATH
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/lvt-ignore/);
+  });
 });
 
 describe("RangeDomApplier - r (remove)", () => {
@@ -241,6 +256,79 @@ describe("RangeDomApplier - u (update)", () => {
     const row = fx.container.querySelector('[data-key="row-1"]')!;
     expect(row.textContent).toContain("updated-value");
     expect(fx.container.querySelectorAll("tr").length).toBe(3);
+  });
+
+  it("fires lvt-destroyed/lvt-mounted when called without morphdomOptions", () => {
+    const fx = makeFixture(3);
+    const oldRow = fx.container.querySelector(
+      '[data-key="row-1"]'
+    ) as Element;
+    oldRow.setAttribute("lvt-destroyed", "/* d */");
+    fx.itemState.set("row-1", {
+      _k: "row-1",
+      "0": "row-1",
+      "1": "v1-updated",
+    });
+    // Override renderItem to return HTML with lvt-mounted on the row.
+    const ctx = (fx.applier as any).ctx;
+    const origRender = ctx.renderItem;
+    ctx.renderItem = () =>
+      '<tr data-key="row-1" lvt-mounted="/* m */"><td>v1-updated</td></tr>';
+    // Reset hookCalls and count manual onNodeAdded notifications.
+    fx.hookCalls.length = 0;
+    let nodeAddedCalls = 0;
+    ctx.onNodeAdded = () => {
+      nodeAddedCalls++;
+    };
+    // Call apply WITHOUT passing morphdomOptions (third arg).
+    fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["u", "row-1", { "1": "v1-updated" }]])
+    );
+    // Restore.
+    ctx.renderItem = origRender;
+    ctx.onNodeAdded = undefined;
+
+    // Both lifecycle hooks fired AND the host was notified about the new node.
+    expect(
+      fx.hookCalls.find((c) => c.hook === "lvt-destroyed")
+    ).toBeDefined();
+    expect(
+      fx.hookCalls.find((c) => c.hook === "lvt-mounted")
+    ).toBeDefined();
+    expect(nodeAddedCalls).toBe(1);
+  });
+
+  it("morphs the row with childrenOnly:false so root-element attrs are diffed", async () => {
+    // Row attribute (class) changes between renders. With childrenOnly:true
+    // morphdom would skip attr diffing on the row root. Verify we override
+    // and the class makes it onto the live element.
+    const morphdom = (await import("morphdom")).default;
+    const fx = makeFixture(2);
+    fx.itemState.set("row-0", {
+      _k: "row-0",
+      "0": "row-0",
+      "1": "v0",
+    });
+    const ctx = (fx.applier as any).ctx;
+    const origRender = ctx.renderItem;
+    ctx.renderItem = () =>
+      '<tr data-key="row-0" class="highlighted"><td>v0</td></tr>';
+
+    const morphdomOpts = { childrenOnly: true }; // intentionally provoke the bug
+    fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["u", "row-0", { "1": "v0" }]]),
+      morphdomOpts
+    );
+    ctx.renderItem = origRender;
+
+    // The row root's class attribute should now be "highlighted" — only
+    // possible if the applier overrode childrenOnly to false.
+    const row = fx.container.querySelector('[data-key="row-0"]')!;
+    expect(row.getAttribute("class")).toBe("highlighted");
+    // morphdom is referenced just to ensure the import path stays alive
+    void morphdom;
   });
 
   it("preserves focus on an input inside the updated row when morphdomOptions provided", () => {

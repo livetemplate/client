@@ -64,6 +64,17 @@ export class RangeDomApplier {
    * Locate the live container element for a range path. The container is
    * the parent element of items rendered with data-key. Cached per path;
    * cache invalidated automatically when a cached element becomes detached.
+   *
+   * Resolution order:
+   *   1. Cached container (if still connected to the wrapper).
+   *   2. `wrapper.querySelector('[data-key="anyKnownItemKey"]').parentElement`.
+   *
+   * The original implementation also fell back to an unscoped
+   * `wrapper.querySelector('[data-key]')` walk, but that could return a
+   * container belonging to a *different* keyed range when the wrapper has
+   * more than one — silently mutating the wrong DOM subtree on subsequent
+   * ops. We now prefer to fail closed (return null → caller falls back to
+   * full rebuild) over mutating an unrelated container.
    */
   findContainer(
     wrapper: Element,
@@ -78,16 +89,10 @@ export class RangeDomApplier {
       this.containerCache.delete(rangePath);
     }
 
-    let sample: Element | null = null;
-    if (anyKnownItemKey !== undefined) {
-      sample = this.findItemByKey(wrapper, anyKnownItemKey);
+    if (anyKnownItemKey === undefined) {
+      return null;
     }
-    if (!sample) {
-      for (const attr of KEY_ATTRIBUTES) {
-        sample = wrapper.querySelector(`[${attr}]`);
-        if (sample) break;
-      }
-    }
+    const sample = this.findItemByKey(wrapper, anyKnownItemKey);
     if (!sample || !sample.parentElement) {
       return null;
     }
@@ -145,11 +150,16 @@ export class RangeDomApplier {
       return { ok: false, reason: "container not found in DOM" };
     }
 
+    // Walk up from container through wrapper (inclusive) — if any element
+    // on the path is lvt-ignore'd, the targeted-apply path would mutate
+    // DOM inside an ignored subtree while morphdom would have skipped it,
+    // violating the lvt-ignore contract.
     let cur: Element | null = container;
-    while (cur && cur !== wrapper) {
+    while (cur) {
       if (cur.hasAttribute("lvt-ignore")) {
         return { ok: false, reason: "lvt-ignore ancestor" };
       }
+      if (cur === wrapper) break;
       cur = cur.parentElement;
     }
 
@@ -303,9 +313,23 @@ export class RangeDomApplier {
       return;
     }
     if (morphdomOptions) {
-      morphdom(row, newRow, morphdomOptions);
+      // Override childrenOnly: the main morphdom call uses childrenOnly:true
+      // because it's diffing the wrapper's children. For a single-row morph
+      // we MUST diff the row element itself too (its attributes — class,
+      // style, aria, etc. — are produced by statics+dynamics and may have
+      // changed). Reuse the same callbacks for behavioral consistency.
+      morphdom(row, newRow, { ...morphdomOptions, childrenOnly: false });
     } else {
+      // No morphdom options provided — fall back to wholesale replacement.
+      // morphdom's onNodeAdded / onBeforeNodeDiscarded callbacks would
+      // normally fire lvt-mounted/lvt-destroyed hooks for us; here we have
+      // to fire them manually on both sides AND notify the host so its
+      // nodesAddedThisRender counter sees the new subtree (otherwise the
+      // post-render directive scans would skip wiring listeners on it).
+      this.fireHookOnSubtree(row, "lvt-destroyed");
       row.replaceWith(newRow);
+      this.ctx.onNodeAdded?.(newRow);
+      this.fireHookOnSubtree(newRow, "lvt-mounted");
     }
   }
 
@@ -396,6 +420,15 @@ export class RangeDomApplier {
     });
   }
 
+  /**
+   * Reorder existing children to match `newKeyOrder`. Protocol assumption:
+   * the server emits the *full* new key order (mirrors the assumption in
+   * `applyDifferentialOpsToRange`'s "o" case in tree-renderer). Children
+   * whose keys aren't in `newKeyOrder` are dropped without firing
+   * lvt-destroyed — if the server ever starts sending partial reorder ops,
+   * this would silently delete rows. We log a warning when that happens
+   * so the protocol mismatch is visible.
+   */
   private applyReorder(container: Element, newKeyOrder: string[]): void {
     if (!Array.isArray(newKeyOrder)) return;
     const byKey = new Map<string, Element>();
@@ -415,6 +448,12 @@ export class RangeDomApplier {
       if (el) {
         fragment.appendChild(el);
       }
+    }
+
+    if (newKeyOrder.length < byKey.size) {
+      this.ctx.logger.warn(
+        `[RangeDomApplier] o: newKeyOrder (${newKeyOrder.length}) shorter than existing children (${byKey.size}); ${byKey.size - newKeyOrder.length} children will be dropped without lvt-destroyed`
+      );
     }
 
     container.replaceChildren(fragment);
@@ -452,10 +491,22 @@ export class RangeDomApplier {
   }
 
   private findItemByKey(scope: Element, key: string): Element | null {
-    const escaped =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(key)
-        : key.replace(/(["\\])/g, "\\$1");
+    let escaped: string;
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      escaped = CSS.escape(key);
+    } else {
+      // CSS.escape polyfill is incomplete: only handles `"` and `\`.
+      // Keys containing other CSS special chars ([], (), :, ., #, >, ~,
+      // whitespace, etc.) would produce a malformed selector and miss the
+      // match. Warn so it's visible in test logs rather than silently
+      // returning null and looking like the row simply doesn't exist.
+      if (/[\[\]():.#>~+*=^$|! \t\n\r]/.test(key)) {
+        this.ctx.logger.warn(
+          `[RangeDomApplier] CSS.escape unavailable; key "${key}" contains characters that need escaping. Lookup may miss the row.`
+        );
+      }
+      escaped = key.replace(/(["\\])/g, "\\$1");
+    }
     for (const attr of KEY_ATTRIBUTES) {
       const el = scope.querySelector(`[${attr}="${escaped}"]`);
       if (el) return el;

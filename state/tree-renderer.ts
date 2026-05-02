@@ -231,6 +231,16 @@ export class TreeRenderer {
     return this.treeState.s || null;
   }
 
+  /**
+   * Re-render the current treeState as full HTML, with no targeted-apply
+   * skip placeholders. Used by `LiveTemplateClient.updateDOM` as a fallback
+   * when one or more targeted-apply DOM mutations failed: the treeState is
+   * authoritative, so a full rebuild + morphdom pass restores consistency.
+   */
+  renderState(): string {
+    return this.reconstructFromTree(this.treeState, "");
+  }
+
   private deepMergeTreeNodes(
     existing: any,
     update: any,
