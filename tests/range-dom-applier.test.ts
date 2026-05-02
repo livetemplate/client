@@ -365,6 +365,93 @@ describe("RangeDomApplier - u (update)", () => {
     expect(result).toBe(fx.container);
   });
 
+  it("apply() returns null for unknown op type (forward-compat fail-safe)", () => {
+    const fx = makeFixture(3);
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["zz-future-op", "row-0"]])
+    );
+    expect(result).toBeNull();
+  });
+
+  it("applyAppend bails entirely on partial render failure (no DOM mutation)", () => {
+    const fx = makeFixture(2);
+    const ctx = (fx.applier as any).ctx;
+    const origRender = ctx.renderItem;
+    let calls = 0;
+    ctx.renderItem = (item: any, idx: number, statics: string[]) => {
+      calls++;
+      if (calls === 2) return "<!--bad-->"; // parses to no element
+      return origRender(item, idx, statics);
+    };
+    const items = [
+      { _k: "row-a", "0": "row-a", "1": "va" },
+      { _k: "row-b", "0": "row-b", "1": "vb" },
+    ];
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["a", items]])
+    );
+    ctx.renderItem = origRender;
+    // Without atomic insert, row-a would have been appended before row-b's
+    // failure → 3 children. With atomic insert: still 2.
+    expect(fx.container.querySelectorAll("tr").length).toBe(2);
+    expect(result).toBeNull();
+  });
+
+  it("applyPrepend bails entirely on partial render failure", () => {
+    const fx = makeFixture(2);
+    const ctx = (fx.applier as any).ctx;
+    const origRender = ctx.renderItem;
+    let calls = 0;
+    ctx.renderItem = (item: any, idx: number, statics: string[]) => {
+      calls++;
+      if (calls === 2) return "<!--bad-->";
+      return origRender(item, idx, statics);
+    };
+    const items = [
+      { _k: "row-x", "0": "row-x", "1": "vx" },
+      { _k: "row-y", "0": "row-y", "1": "vy" },
+    ];
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["p", items]])
+    );
+    ctx.renderItem = origRender;
+    expect(fx.container.querySelectorAll("tr").length).toBe(2);
+    expect(result).toBeNull();
+  });
+
+  it("staticsContainKeyAttribute rejects longer-named attributes (data-keystone)", () => {
+    // Plain `s.includes('data-key=')` returned true here because
+    // `data-keystone=` contains `data-key=`-as-substring. The boundary
+    // check fixes it: `data-key\s*=` requires `=` after optional
+    // whitespace, so `data-keystone=` doesn't match.
+    const fx = makeFixture(1);
+    const result = fx.applier.canApplyTargeted(
+      fx.wrapper,
+      {
+        d: [{ _k: "x", "0": "value" }],
+        s: ['<tr data-keystone="', '"><td>', "</td></tr>"],
+      },
+      RANGE_PATH
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("staticsContainKeyAttribute accepts data-key as a real attribute", () => {
+    const fx = makeFixture(1);
+    const result = fx.applier.canApplyTargeted(
+      fx.wrapper,
+      {
+        d: [{ _k: "row-0", "0": "v" }],
+        s: ['<tr data-key="', '"><td>', "</td></tr>"],
+      },
+      RANGE_PATH
+    );
+    expect(result.ok).toBe(true);
+  });
+
   it("preserves focus on an input inside the updated row when morphdomOptions provided", () => {
     const fx = makeFixture(3);
     const formStatics = [

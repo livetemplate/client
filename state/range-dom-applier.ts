@@ -250,9 +250,15 @@ export class RangeDomApplier {
             opOK = this.applyReorder(container, op[1] as string[]);
             break;
           default:
-            this.ctx.logger.debug(
-              `[RangeDomApplier] unknown op type ${opType}; ignoring`
+            // Forward-compat: an unrecognised op type means we can't
+            // reason about the DOM mutation. Treat as failure so the
+            // caller falls back to a full morphdom rebuild from
+            // treeState (which the server-emitted unknown op type
+            // presumably already mutated correctly).
+            this.ctx.logger.warn(
+              `[RangeDomApplier] unknown op type ${opType}; falling back`
             );
+            opOK = false;
         }
         if (!opOK) {
           allOpsSucceeded = false;
@@ -401,28 +407,15 @@ export class RangeDomApplier {
       );
       return false;
     }
-    const list = Array.isArray(items) ? items : [items];
-    const baseIdx = this.indexOfChild(container, anchor) + 1;
-    let cursor: Node | null = anchor.nextSibling;
-    let allRendered = true;
-    list.forEach((item, offset) => {
-      const newRow = this.renderAndParse(
-        item,
-        baseIdx + offset,
-        statics,
-        staticsMap,
-        rangePath
-      );
-      if (!newRow) {
-        allRendered = false;
-        return;
-      }
-      container.insertBefore(newRow, cursor);
-      this.ctx.onNodeAdded?.(newRow);
-      this.fireHookOnSubtree(newRow, "lvt-mounted");
-      cursor = newRow.nextSibling;
-    });
-    return allRendered;
+    return this.renderItemsAtomic(
+      container,
+      items,
+      statics,
+      staticsMap,
+      rangePath,
+      this.indexOfChild(container, anchor) + 1,
+      (frag) => container.insertBefore(frag, anchor.nextSibling)
+    );
   }
 
   private applyAppend(
@@ -432,26 +425,15 @@ export class RangeDomApplier {
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): boolean {
-    const list = Array.isArray(items) ? items : [items];
-    const baseIdx = container.children.length;
-    let allRendered = true;
-    list.forEach((item, offset) => {
-      const newRow = this.renderAndParse(
-        item,
-        baseIdx + offset,
-        statics,
-        staticsMap,
-        rangePath
-      );
-      if (!newRow) {
-        allRendered = false;
-        return;
-      }
-      container.appendChild(newRow);
-      this.ctx.onNodeAdded?.(newRow);
-      this.fireHookOnSubtree(newRow, "lvt-mounted");
-    });
-    return allRendered;
+    return this.renderItemsAtomic(
+      container,
+      items,
+      statics,
+      staticsMap,
+      rangePath,
+      container.children.length,
+      (frag) => container.appendChild(frag)
+    );
   }
 
   private applyPrepend(
@@ -461,31 +443,57 @@ export class RangeDomApplier {
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): boolean {
+    return this.renderItemsAtomic(
+      container,
+      items,
+      statics,
+      staticsMap,
+      rangePath,
+      0,
+      (frag) => container.insertBefore(frag, container.firstChild)
+    );
+  }
+
+  /**
+   * Render N items into a scratch DocumentFragment, splicing them into the
+   * live DOM only if ALL renders succeeded. On partial failure no DOM
+   * mutation happens and the caller falls back to a full rebuild — this
+   * avoids `lvt-mounted` firing on items that morphdom is then about to
+   * re-add (which would double-fire the hook).
+   */
+  private renderItemsAtomic(
+    container: Element,
+    items: any | any[],
+    statics: string[],
+    staticsMap: Record<string, string[]> | undefined,
+    rangePath: string,
+    baseIdx: number,
+    splice: (frag: DocumentFragment) => void
+  ): boolean {
+    void container;
     const list = Array.isArray(items) ? items : [items];
-    const fragment = document.createDocumentFragment();
-    const mounted: Element[] = [];
-    let allRendered = true;
-    list.forEach((item, offset) => {
+    const scratch = document.createDocumentFragment();
+    const newRows: Element[] = [];
+    for (let i = 0; i < list.length; i++) {
       const newRow = this.renderAndParse(
-        item,
-        offset,
+        list[i],
+        baseIdx + i,
         statics,
         staticsMap,
         rangePath
       );
       if (!newRow) {
-        allRendered = false;
-        return;
+        return false;
       }
-      fragment.appendChild(newRow);
-      mounted.push(newRow);
-    });
-    container.insertBefore(fragment, container.firstChild);
-    mounted.forEach((row) => {
+      scratch.appendChild(newRow);
+      newRows.push(newRow);
+    }
+    splice(scratch);
+    for (const row of newRows) {
       this.ctx.onNodeAdded?.(row);
       this.fireHookOnSubtree(row, "lvt-mounted");
-    });
-    return allRendered;
+    }
+    return true;
   }
 
   /**
@@ -619,10 +627,24 @@ export class RangeDomApplier {
   }
 
   private staticsContainKeyAttribute(statics: string[]): boolean {
+    // Reduces false positives vs. plain `s.includes('data-key=')`:
+    //   - requires word boundary before the attr name (excludes longer
+    //     attribute names like `data-keystone=`, `my-data-key=`)
+    //   - requires `=` to follow optional whitespace (excludes
+    //     `data-key-something`)
+    //
+    // Known limitation: cannot distinguish a real attribute from
+    // `data-key=` appearing inside a quoted attribute value (e.g.
+    // `title='see data-key=foo'`). Such cases would still match. False
+    // positives are safe — `findContainer` just fails to locate by key,
+    // canApplyTargeted falls back to full rebuild — but they cost a
+    // render of wasted work. Real-world templates with `data-key` in
+    // attribute values are vanishingly rare.
     for (const s of statics) {
       if (typeof s !== "string") continue;
       for (const attr of KEY_ATTRIBUTES) {
-        if (s.includes(attr + "=") || s.includes(attr + " ")) {
+        const re = new RegExp(`(?:^|[\\s<])${attr}\\s*=`);
+        if (re.test(s)) {
           return true;
         }
       }
