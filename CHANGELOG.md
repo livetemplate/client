@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.39] - 2026-05-02
+
+### Changes
+
+- feat: per-op targeted DOM mutation for range diff ops (#107) (#108) (8f34384)
+
+
+
 ## [v0.8.38] - 2026-04-28
 
 ### Changes
