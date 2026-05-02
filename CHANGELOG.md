@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.40] - 2026-05-02
+
+### Changes
+
+- fix: always run fire-on-change directive scans (#107) (#114) (dff1765)
+
+
+
 ## [v0.8.39] - 2026-05-02
 
 ### Changes
