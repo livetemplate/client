@@ -7,6 +7,21 @@ export interface UpdateResult {
   html: string;
   changed: boolean;
   dom?: Element;
+  targetedOps?: TargetedRangeOp[];
+}
+
+/**
+ * Describes a single keyed-range diff op that can be applied directly to
+ * the live DOM, bypassing full HTML reconstruction. Produced by
+ * `TreeRenderer.applyUpdate` when the range is targeted-eligible (data-key
+ * present, no nested ranges, container resolvable).
+ */
+export interface TargetedRangeOp {
+  rangePath: string;
+  ops: any[];
+  statics: string[];
+  staticsMap?: Record<string, string[]>;
+  idKey?: string;
 }
 
 export interface ResponseMetadata {

@@ -28,6 +28,11 @@ import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
 import { TreeRenderer } from "./state/tree-renderer";
+import {
+  RangeDomApplier,
+  TARGETED_APPLIED_ATTR,
+  TARGETED_SKIP_ATTR,
+} from "./state/range-dom-applier";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
 import { WebSocketManager } from "./transport/websocket";
@@ -49,6 +54,9 @@ export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
+  private readonly rangeDomApplier: RangeDomApplier;
+  private nodesAddedThisRender: number = 0;
+  private directiveTouchedThisRender: boolean = false;
   private readonly focusManager: FocusManager;
   private readonly logger: Logger;
   private lvtId: string | null = null;
@@ -146,6 +154,38 @@ export class LiveTemplateClient {
     };
 
     this.treeRenderer = new TreeRenderer(this.logger.child("TreeRenderer"));
+    this.rangeDomApplier = new RangeDomApplier({
+      logger: this.logger.child("RangeDomApplier"),
+      renderItem: (item, idx, statics, sm, sp) =>
+        this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
+      executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
+      itemLookup: (rangePath, key) => {
+        // O(N) linear scan over range.d. For one `u` op per render this is
+        // ~50µs at N=10k — acceptable. For a render with many u ops on
+        // the same range, this becomes O(N×K); building a Map<key, item>
+        // once at apply() start would amortize, but the gain is small
+        // (whole `u` op cost is dominated by morphdom on the row anyway).
+        // Revisit if profiling shows this on the hot path.
+        const range = this.treeRenderer.getTreeState()[rangePath];
+        if (!range || !Array.isArray(range.d)) return null;
+        const idKey = range.m?.idKey;
+        for (const item of range.d) {
+          if (!item || typeof item !== "object") continue;
+          if (item._k === key) return item;
+          if (
+            idKey &&
+            item[idKey] !== undefined &&
+            String(item[idKey]) === key
+          ) {
+            return item;
+          }
+        }
+        return null;
+      },
+      onNodeAdded: () => {
+        this.nodesAddedThisRender++;
+      },
+    });
     this.focusManager = new FocusManager(this.logger.child("FocusManager"));
 
     this.formLifecycleManager = new FormLifecycleManager();
@@ -499,6 +539,7 @@ export class LiveTemplateClient {
   // intent — tests can observe the init transition a second time.
   private resetSessionState(): void {
     this.treeRenderer.reset();
+    this.rangeDomApplier.invalidate();
     this.focusManager.reset();
     this.observerManager.teardown();
     this.changeAutoWirer.teardown();
@@ -1135,8 +1176,33 @@ export class LiveTemplateClient {
    * @param meta - Optional metadata about the update (action, success, errors)
    */
   updateDOM(element: Element, update: TreeNode, meta?: ResponseMetadata): void {
-    // Apply update to internal state and get reconstructed HTML
-    const result = this.applyUpdate(update);
+    // Reset per-render counters before applying the update.
+    // - nodesAddedThisRender: incremented by morphdom.onNodeAdded and the
+    //   applier's onNodeAdded callback for i/a/p ops.
+    // - directiveTouchedThisRender: set by morphdom.onBeforeElUpdated when
+    //   it processes an element carrying a directive attribute (lvt-fx:*,
+    //   lvt-on:*, lvt-el:*) — covers attribute-only morphs that don't add
+    //   nodes but do change directive bindings, so the post-render scans
+    //   still need to wire them.
+    // Either signal triggers the wrapper-wide directive scans below.
+    this.nodesAddedThisRender = 0;
+    this.directiveTouchedThisRender = false;
+
+    // Apply update to internal state and get reconstructed HTML.
+    // Pass canApplyTargeted so eligible top-level range diff ops mutate
+    // treeState in place and are emitted as targetedOps for direct DOM
+    // mutation (skipping the full HTML rebuild + morphdom diff for that
+    // subtree).
+    const result = this.treeRenderer.applyUpdate(update, {
+      canApplyTargeted: (rangeStructure, rangePath) => {
+        const r = this.rangeDomApplier.canApplyTargeted(
+          element,
+          rangeStructure,
+          rangePath
+        );
+        return r.ok;
+      },
+    });
 
     // Helper to recursively check if there are any statics in the tree
     const hasStaticsInTree = (node: any): boolean => {
@@ -1267,8 +1333,10 @@ export class LiveTemplateClient {
       return;
     }
 
-    // Use morphdom to efficiently update the element
-    morphdom(element, tempWrapper, {
+    // Build morphdom options once so the applier's `u` op (which morphdoms
+    // a single row) uses the same callback set — focus skip, lvt-ignore,
+    // checkbox preservation, lifecycle hooks all stay consistent.
+    const morphdomOptions = {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
       getNodeKey: (node: any) => {
         // Use data-key or data-lvt-key for efficient reconciliation
@@ -1280,7 +1348,49 @@ export class LiveTemplateClient {
           );
         }
       },
-      onBeforeElUpdated: (fromEl, toEl) => {
+      onBeforeElUpdated: (fromEl: any, toEl: any) => {
+        // Targeted-apply skip: the live container's children were already
+        // mutated directly by RangeDomApplier, and the rebuilt tempWrapper
+        // has the container empty + tagged with data-lvt-targeted-skip.
+        // Returning false short-circuits the entire subtree update —
+        // morphdom skips both the diff walk AND the children-replacement.
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute(TARGETED_SKIP_ATTR)
+        ) {
+          return false;
+        }
+
+        // Track newly-introduced directive attributes so the post-render
+        // scan can wire any new lvt-fx:/lvt-on:/lvt-el: bindings even on
+        // renders that wouldn't otherwise trigger a wrapper-wide scan.
+        // Only flag when the directive attribute is NEW on toEl (not
+        // already present on fromEl) — otherwise high-frequency `u` ops
+        // on rows that ALREADY carry a directive (e.g. Todos rows with
+        // `lvt-fx:animate`) would trigger a wrapper-wide scan on every
+        // render even though no new binding needs wiring.
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          fromEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          const toAttrs = (toEl as Element).attributes;
+          const fromElement = fromEl as Element;
+          for (let i = 0; i < toAttrs.length; i++) {
+            const n = toAttrs[i].name;
+            if (
+              n.length > 4 &&
+              n.charCodeAt(0) === 0x6c /* l */ &&
+              n.charCodeAt(1) === 0x76 /* v */ &&
+              n.charCodeAt(2) === 0x74 /* t */ &&
+              n.charCodeAt(3) === 0x2d /* - */ &&
+              !fromElement.hasAttribute(n)
+            ) {
+              this.directiveTouchedThisRender = true;
+              break;
+            }
+          }
+        }
+
         // lvt-ignore: morphdom skips this element and its entire subtree.
         // Equivalent to Phoenix LiveView's phx-update="ignore".
         // Checked on fromEl (live DOM) so both server templates and
@@ -1422,7 +1532,7 @@ export class LiveTemplateClient {
         this.executeLifecycleHook(fromEl, "lvt-updated");
         return true;
       },
-      onElUpdated: (el) => {
+      onElUpdated: (el: any) => {
         // Textarea-specific: morphdom patches child text nodes but browsers
         // ignore textContent changes to "dirty" textareas (ones the user
         // has typed in), so we explicitly set .value. Inputs don't need
@@ -1437,7 +1547,7 @@ export class LiveTemplateClient {
           el.removeAttribute("data-lvt-force-update");
         }
       },
-      onNodeAdded: (node) => {
+      onNodeAdded: (node: any) => {
         // Sync textarea value for newly inserted textarea elements
         if (node instanceof HTMLTextAreaElement) {
           node.value = node.textContent ?? "";
@@ -1448,49 +1558,103 @@ export class LiveTemplateClient {
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.executeLifecycleHook(node as Element, "lvt-mounted");
+          this.nodesAddedThisRender++;
         }
       },
-      onBeforeNodeDiscarded: (node) => {
+      onBeforeNodeDiscarded: (node: any) => {
         // Execute lvt-destroyed lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.executeLifecycleHook(node as Element, "lvt-destroyed");
         }
         return true;
       },
-    });
+    };
+
+    // Apply per-op targeted DOM mutations BEFORE morphdom. The applier
+    // mutates the live DOM in place; tempWrapper has corresponding
+    // <!--lvt-targeted-skip:path--> placeholders that we now convert to
+    // data-lvt-targeted-skip markers on their parent elements so morphdom
+    // short-circuits those subtrees.
+    //
+    // Robustness: if any targeted op fails (apply returns null — e.g.
+    // container couldn't be located, or an op threw), the treeState was
+    // updated but the live DOM wasn't, so leaving the placeholder in
+    // place would either (a) tell morphdom to skip → live DOM stays
+    // stale, or (b) leave an empty container in tempWrapper → morphdom
+    // would empty the live container. Both are wrong. We re-render the
+    // full HTML from treeState (which is authoritative) and let morphdom
+    // sync from there.
+    if (result.targetedOps && result.targetedOps.length > 0) {
+      const successContainers: Element[] = [];
+      let anyFailed = false;
+      for (const op of result.targetedOps) {
+        const container = this.rangeDomApplier.apply(
+          element,
+          op,
+          morphdomOptions
+        );
+        if (container) {
+          container.setAttribute(TARGETED_APPLIED_ATTR, "");
+          successContainers.push(container);
+        } else {
+          anyFailed = true;
+        }
+      }
+
+      if (anyFailed) {
+        this.logger.warn(
+          "[updateDOM] one or more targeted DOM ops failed; rebuilding tempWrapper from treeState for a full morphdom sync"
+        );
+        // Strip success markers — we're going to do a full diff now.
+        for (const c of successContainers) {
+          c.removeAttribute(TARGETED_APPLIED_ATTR);
+        }
+        // Re-render full HTML (no skip placeholders) and reset tempWrapper.
+        const fullHtml = this.treeRenderer.renderState();
+        tempWrapper.innerHTML = fullHtml;
+      } else {
+        this.replaceTargetedSkipPlaceholders(tempWrapper);
+      }
+    }
+
+    try {
+      // Use morphdom to efficiently update the element
+      morphdom(element, tempWrapper, morphdomOptions);
+    } finally {
+      // Strip lifecycle markers regardless of whether morphdom threw,
+      // preventing leaked attributes on the live DOM.
+      this.rangeDomApplier.cleanupMarkers(element);
+    }
 
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Handle scroll directives (implicit trigger only)
-    handleScrollDirectives(element);
+    // Wrapper-wide directive scans walk every descendant of `element`.
+    // For a delete-only render against a large keyed range (10k+ rows),
+    // that's ~80k descendants × 9 scans = ~360ms wasted on a tree where
+    // no new elements need wiring. Skip them when neither:
+    //   - any new node was added (morphdom.onNodeAdded / applier i/a/p), nor
+    //   - any morphed element carried an lvt-* directive attribute that
+    //     might newly need wiring (morphdom.onBeforeElUpdated check above).
+    //
+    // The directive-touched signal handles the attribute-morph case:
+    // server adds `lvt-fx:keydown` to an existing button → onBeforeElUpdated
+    // sees the attribute on toEl → flag set → scans run → listener wired.
+    if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
+      handleScrollDirectives(element);
+      handleHighlightDirectives(element);
+      handleAnimateDirectives(element);
+      setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
+      this.eventDelegator.setupDOMEventTriggerDelegation(element);
+      setupScrollAway(element);
+      handleToastDirectives(element);
+      this.uploadHandler.initializeFileInputs(element);
+    }
 
-    // Handle highlight directives (implicit trigger only)
-    handleHighlightDirectives(element);
-
-    // Handle animate directives (implicit trigger only)
-    handleAnimateDirectives(element);
-
-    // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
-    // Registry always lives on wrapperElement so teardown can find all entries
-    setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
-
-    // Re-scan updated subtree for lvt-el:*:on:{event} DOM triggers
-    this.eventDelegator.setupDOMEventTriggerDelegation(element);
-
-    // Set up scroll-away visibility toggles
-    setupScrollAway(element);
-
-    // Handle toast trigger directives (ephemeral client-side toasts)
-    handleToastDirectives(element);
-
-    // Initialize upload file inputs
-    this.uploadHandler.initializeFileInputs(element);
-
-    // Auto-wire change listeners for bound form fields
+    // changeAutoWirer always runs: its eviction loop must process
+    // wirings on removed elements too, regardless of additions.
     this.changeAutoWirer.wireElements();
 
-    // Handle form lifecycle if metadata is present
     if (meta) {
       this.formLifecycleManager.handleResponse(meta);
     }
@@ -1501,6 +1665,38 @@ export class LiveTemplateClient {
    */
   private handleUploadStartResponse(response: UploadStartResponse): void {
     this.uploadHandler.handleUploadStartResponse(response);
+  }
+
+  /**
+   * Walk tempWrapper for `<!--lvt-targeted-skip:path-->` comments left by
+   * `reconstructFromTree` and convert each into a `data-lvt-targeted-skip`
+   * attribute on its parent element. The marker tells morphdom (via its
+   * onBeforeElUpdated callback) to short-circuit the subtree, leaving the
+   * live container's existing children — already updated by the applier —
+   * untouched.
+   */
+  private replaceTargetedSkipPlaceholders(tempWrapper: Element): void {
+    const walker = document.createTreeWalker(
+      tempWrapper,
+      NodeFilter.SHOW_COMMENT
+    );
+    const toReplace: Comment[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const c = node as Comment;
+      if (c.nodeValue && /^lvt-targeted-skip:.+$/.test(c.nodeValue)) {
+        toReplace.push(c);
+      }
+    }
+    for (const c of toReplace) {
+      const match = c.nodeValue!.match(/^lvt-targeted-skip:(.+)$/);
+      const path = match ? match[1] : "";
+      const parent = c.parentElement;
+      if (parent) {
+        parent.setAttribute(TARGETED_SKIP_ATTR, path);
+      }
+      c.remove();
+    }
   }
 
   /**

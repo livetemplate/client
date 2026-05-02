@@ -329,4 +329,80 @@ describe("TreeRenderer", () => {
       expect(treeState[0][0]).toBeUndefined();
     });
   });
+
+  describe("applyUpdate - targeted-apply opt-in", () => {
+    const ROW_STATICS = ['<tr data-key="', '"><td>', "</td></tr>"];
+
+    function seedRange(items: any[]) {
+      renderer.applyUpdate({
+        s: ["<table><tbody>", "</tbody></table>"],
+        0: { d: items, s: ROW_STATICS, m: { idKey: "0" } },
+      });
+    }
+
+    it("returns targetedOps and emits placeholder when canApplyTargeted true", () => {
+      seedRange([
+        { _k: "row-0", "0": "row-0", "1": "v0" },
+        { _k: "row-1", "0": "row-1", "1": "v1" },
+      ]);
+      const result = renderer.applyUpdate(
+        { 0: [["r", "row-1"]] as any },
+        { canApplyTargeted: () => true }
+      );
+      expect(result.targetedOps).toBeDefined();
+      expect(result.targetedOps!.length).toBe(1);
+      const op = result.targetedOps![0];
+      expect(op.rangePath).toBe("0");
+      expect(op.ops).toEqual([["r", "row-1"]]);
+      expect(op.statics).toEqual(ROW_STATICS);
+      expect(op.idKey).toBe("0");
+      expect(result.html).toContain("<!--lvt-targeted-skip:0-->");
+      expect(result.html).not.toContain("row-0");
+      expect(result.html).not.toContain("row-1");
+    });
+
+    it("falls back to deepClone path when canApplyTargeted false", () => {
+      seedRange([
+        { _k: "row-0", "0": "row-0", "1": "v0" },
+        { _k: "row-1", "0": "row-1", "1": "v1" },
+      ]);
+      const result = renderer.applyUpdate(
+        { 0: [["r", "row-1"]] as any },
+        { canApplyTargeted: () => false }
+      );
+      expect(result.targetedOps).toBeUndefined();
+      expect(result.html).toContain("row-0");
+      expect(result.html).not.toContain("row-1");
+      expect(result.html).not.toContain("lvt-targeted-skip");
+    });
+
+    it("mutates treeState in place on the targeted path (no extra deep copy)", () => {
+      const items = [
+        { _k: "row-0", "0": "row-0", "1": "v0" },
+        { _k: "row-1", "0": "row-1", "1": "v1" },
+      ];
+      seedRange(items);
+      const beforeRange = renderer.getTreeState()[0];
+      const beforeItems = beforeRange.d;
+      renderer.applyUpdate({ 0: [["r", "row-0"]] as any }, {
+        canApplyTargeted: () => true,
+      });
+      const afterRange = renderer.getTreeState()[0];
+      // Same items array reference (in-place splice). The fallback path
+      // would have replaced the entire range structure with a fresh deep clone.
+      expect(afterRange.d).toBe(beforeItems);
+      expect(afterRange.d.length).toBe(1);
+      expect(afterRange.d[0]._k).toBe("row-1");
+    });
+
+    it("does not emit targetedOps when no diff-op keys are present", () => {
+      seedRange([{ _k: "row-0", "0": "row-0", "1": "v0" }]);
+      const result = renderer.applyUpdate(
+        { 1: { 0: "scalar" } },
+        { canApplyTargeted: () => true }
+      );
+      expect(result.targetedOps).toBeUndefined();
+      expect(result.html).not.toContain("lvt-targeted-skip");
+    });
+  });
 });
