@@ -221,6 +221,13 @@ export class RangeDomApplier {
       }
     }
 
+    // Observability hook: increment a global counter so E2E tests can
+    // assert the targeted-apply path was actually taken (vs silently
+    // hitting the fallback). Cost: one integer increment per applied op.
+    if (typeof window !== "undefined") {
+      (window as any).__lvtTargetedHits =
+        ((window as any).__lvtTargetedHits || 0) + 1;
+    }
     return container;
   }
 
@@ -514,6 +521,9 @@ export class RangeDomApplier {
   }
 
   private lookupCurrentItem(rangePath: string, key: string): any {
+    // O(N) over range.d via the wired callback (linear scan in
+    // livetemplate-client.ts). Bounded cost per `u` op: one walk per
+    // updated row per render. At N=10k that's ~50µs in JS — acceptable.
     return this.itemLookup ? this.itemLookup(rangePath, key) : null;
   }
 
