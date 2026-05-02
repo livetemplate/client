@@ -284,6 +284,14 @@ export class RangeDomApplier {
     // to a full rebuild — otherwise the live DOM stays out of sync with
     // treeState and morphdom would skip the subtree (TARGETED_APPLIED
     // marker tells it to).
+    //
+    // Note: earlier ops in this batch that succeeded are NOT rolled back.
+    // No rollback is needed because `treeState` was already mutated to
+    // its complete post-op state by `applyDifferentialOpsToRange` BEFORE
+    // this method ran. The caller's fallback path re-renders from
+    // `treeState.renderState()` and runs morphdom over the full HTML —
+    // morphdom reconciles whatever partial DOM mutations we made toward
+    // the authoritative end state.
     if (!allOpsSucceeded) {
       return null;
     }
@@ -622,6 +630,19 @@ export class RangeDomApplier {
       }
       if (t === "o" && Array.isArray(op[1]) && op[1].length > 0) {
         return typeof op[1][0] === "string" ? op[1][0] : undefined;
+      }
+      // For a/p ops there's no DOM-resident key in op[1], but the new
+      // items themselves carry `_k`. Sample the first to give
+      // findContainer something to walk to (rare cold-cache case;
+      // canApplyTargeted normally warms the cache via existing.d[0]
+      // before apply runs, so in practice the cache hit covers this).
+      if (t === "a" || t === "p") {
+        const items = Array.isArray(op[1]) ? op[1] : [op[1]];
+        for (const it of items) {
+          if (it && typeof it === "object" && it._k !== undefined) {
+            return String(it._k);
+          }
+        }
       }
     }
     return undefined;

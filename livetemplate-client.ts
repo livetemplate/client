@@ -1361,20 +1361,29 @@ export class LiveTemplateClient {
           return false;
         }
 
-        // Track directive attributes on touched elements so the post-render
-        // scan can wire any newly-introduced lvt-fx:/lvt-on:/lvt-el:
-        // bindings even on delete-only renders that wouldn't otherwise
-        // trigger a wrapper-wide scan.
-        if (toEl.nodeType === Node.ELEMENT_NODE) {
-          const attrs = (toEl as Element).attributes;
-          for (let i = 0; i < attrs.length; i++) {
-            const n = attrs[i].name;
+        // Track newly-introduced directive attributes so the post-render
+        // scan can wire any new lvt-fx:/lvt-on:/lvt-el: bindings even on
+        // renders that wouldn't otherwise trigger a wrapper-wide scan.
+        // Only flag when the directive attribute is NEW on toEl (not
+        // already present on fromEl) — otherwise high-frequency `u` ops
+        // on rows that ALREADY carry a directive (e.g. Todos rows with
+        // `lvt-fx:animate`) would trigger a wrapper-wide scan on every
+        // render even though no new binding needs wiring.
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          fromEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          const toAttrs = (toEl as Element).attributes;
+          const fromElement = fromEl as Element;
+          for (let i = 0; i < toAttrs.length; i++) {
+            const n = toAttrs[i].name;
             if (
               n.length > 4 &&
               n.charCodeAt(0) === 0x6c /* l */ &&
               n.charCodeAt(1) === 0x76 /* v */ &&
               n.charCodeAt(2) === 0x74 /* t */ &&
-              n.charCodeAt(3) === 0x2d /* - */
+              n.charCodeAt(3) === 0x2d /* - */ &&
+              !fromElement.hasAttribute(n)
             ) {
               this.directiveTouchedThisRender = true;
               break;
