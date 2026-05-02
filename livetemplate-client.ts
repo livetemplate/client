@@ -1629,25 +1629,34 @@ export class LiveTemplateClient {
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Wrapper-wide directive scans walk every descendant of `element`.
-    // For a delete-only render against a large keyed range (10k+ rows),
-    // that's ~80k descendants × 9 scans = ~360ms wasted on a tree where
-    // no new elements need wiring. Skip them when neither:
-    //   - any new node was added (morphdom.onNodeAdded / applier i/a/p), nor
-    //   - any morphed element carried an lvt-* directive attribute that
-    //     might newly need wiring (morphdom.onBeforeElUpdated check above).
+    // Two classes of post-render scans:
     //
-    // The directive-touched signal handles the attribute-morph case:
-    // server adds `lvt-fx:keydown` to an existing button → onBeforeElUpdated
-    // sees the attribute on toEl → flag set → scans run → listener wired.
+    //   FIRE-ON-CHANGE (always run): handleScrollDirectives,
+    //   handleHighlightDirectives, handleAnimateDirectives,
+    //   handleToastDirectives, setupScrollAway. These detect VALUE changes
+    //   on existing directive-bearing elements (e.g. lvt-fx:highlight
+    //   flashes on every render where the underlying value changed) — so
+    //   they must run on every render. Cost is bounded: each does a CSS
+    //   attribute selector qsa for its specific directive (`[lvt-fx\:highlight]`
+    //   etc.); for a 10k-row LargeTable where rows DON'T have these
+    //   directives, the qsa returns empty in ~1-3ms total.
+    //
+    //   WIRE-IDEMPOTENT (skip when nothing new): setupFxDOMEventTriggers,
+    //   setupDOMEventTriggerDelegation, uploadHandler.initializeFileInputs.
+    //   These walk EVERY descendant via qsa("*") to attach event listeners
+    //   on lvt-fx:event:on:trigger / lvt-el: / file inputs. They have
+    //   per-element guards so re-running is safe but wasteful — at 80k
+    //   descendants the walk costs ~150-200ms each. Skip when neither
+    //   morphdom.onNodeAdded fired nor a new lvt-* directive attribute
+    //   appeared on any morphed element (tracked via onBeforeElUpdated).
+    handleScrollDirectives(element);
+    handleHighlightDirectives(element);
+    handleAnimateDirectives(element);
+    handleToastDirectives(element);
+    setupScrollAway(element);
     if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
-      handleScrollDirectives(element);
-      handleHighlightDirectives(element);
-      handleAnimateDirectives(element);
       setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
       this.eventDelegator.setupDOMEventTriggerDelegation(element);
-      setupScrollAway(element);
-      handleToastDirectives(element);
       this.uploadHandler.initializeFileInputs(element);
     }
 
