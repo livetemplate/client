@@ -3,6 +3,12 @@ import type { Logger } from "../utils/logger";
 import type { TargetedRangeOp } from "../types";
 
 const KEY_ATTRIBUTES = ["data-key", "data-lvt-key"] as const;
+// Pre-compile attribute-presence regexes once at module load — these were
+// previously rebuilt on every staticsContainKeyAttribute call (per static
+// segment, per attribute) which showed up in profiling on initial render.
+const KEY_ATTR_REGEXES: RegExp[] = KEY_ATTRIBUTES.map(
+  (attr) => new RegExp(`(?:^|[\\s<])${attr}\\s*=`)
+);
 export const TARGETED_APPLIED_ATTR = "data-lvt-targeted-applied";
 export const TARGETED_SKIP_ATTR = "data-lvt-targeted-skip";
 
@@ -408,7 +414,6 @@ export class RangeDomApplier {
       return false;
     }
     return this.renderItemsAtomic(
-      container,
       items,
       statics,
       staticsMap,
@@ -426,7 +431,6 @@ export class RangeDomApplier {
     rangePath: string
   ): boolean {
     return this.renderItemsAtomic(
-      container,
       items,
       statics,
       staticsMap,
@@ -444,7 +448,6 @@ export class RangeDomApplier {
     rangePath: string
   ): boolean {
     return this.renderItemsAtomic(
-      container,
       items,
       statics,
       staticsMap,
@@ -462,7 +465,6 @@ export class RangeDomApplier {
    * re-add (which would double-fire the hook).
    */
   private renderItemsAtomic(
-    container: Element,
     items: any | any[],
     statics: string[],
     staticsMap: Record<string, string[]> | undefined,
@@ -470,7 +472,6 @@ export class RangeDomApplier {
     baseIdx: number,
     splice: (frag: DocumentFragment) => void
   ): boolean {
-    void container;
     const list = Array.isArray(items) ? items : [items];
     const scratch = document.createDocumentFragment();
     const newRows: Element[] = [];
@@ -499,11 +500,11 @@ export class RangeDomApplier {
   /**
    * Reorder existing children to match `newKeyOrder`. Protocol assumption:
    * the server emits the *full* new key order (mirrors the assumption in
-   * `applyDifferentialOpsToRange`'s "o" case in tree-renderer). Children
-   * whose keys aren't in `newKeyOrder` are dropped without firing
-   * lvt-destroyed — if the server ever starts sending partial reorder ops,
-   * this would silently delete rows. We log a warning when that happens
-   * so the protocol mismatch is visible.
+   * `applyDifferentialOpsToRange`'s "o" case in tree-renderer). When the
+   * new order is shorter than the current child set, we treat the missing
+   * keys as removals and fire `lvt-destroyed` on each dropped subtree
+   * (so user teardown — timer cancellation, observer disconnect, etc. —
+   * still runs) plus log a warning surfacing the protocol mismatch.
    */
   private applyReorder(container: Element, newKeyOrder: string[]): boolean {
     if (!Array.isArray(newKeyOrder)) return false;
@@ -642,8 +643,7 @@ export class RangeDomApplier {
     // attribute values are vanishingly rare.
     for (const s of statics) {
       if (typeof s !== "string") continue;
-      for (const attr of KEY_ATTRIBUTES) {
-        const re = new RegExp(`(?:^|[\\s<])${attr}\\s*=`);
+      for (const re of KEY_ATTR_REGEXES) {
         if (re.test(s)) {
           return true;
         }
