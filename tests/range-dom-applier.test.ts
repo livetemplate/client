@@ -520,6 +520,32 @@ describe("RangeDomApplier - o (reorder)", () => {
     );
     expect(after).toEqual(["row-2", "row-0", "row-1"]);
   });
+
+  it("fires lvt-destroyed on dropped children (partial newKeyOrder)", () => {
+    const fx = makeFixture(4);
+    // Tag two of the rows with lvt-destroyed so we can assert hooks fire.
+    fx.container
+      .querySelector('[data-key="row-1"]')!
+      .setAttribute("lvt-destroyed", "/* hook1 */");
+    fx.container
+      .querySelector('[data-key="row-3"]')!
+      .setAttribute("lvt-destroyed", "/* hook3 */");
+    fx.hookCalls.length = 0;
+    // newKeyOrder excludes row-1 and row-3 → both should be destroyed.
+    fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["o", ["row-2", "row-0"]]])
+    );
+    const destroyedKeys = fx.hookCalls
+      .filter((c) => c.hook === "lvt-destroyed")
+      .map((c) => c.key)
+      .sort();
+    expect(destroyedKeys).toEqual(["row-1", "row-3"]);
+    const after = Array.from(fx.container.children).map((r) =>
+      r.getAttribute("data-key")
+    );
+    expect(after).toEqual(["row-2", "row-0"]);
+  });
 });
 
 describe("RangeDomApplier - skip mechanism with morphdom", () => {

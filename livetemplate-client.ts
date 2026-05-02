@@ -56,6 +56,7 @@ export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
   private readonly rangeDomApplier: RangeDomApplier;
   private nodesAddedThisRender: number = 0;
+  private directiveTouchedThisRender: boolean = false;
   private readonly focusManager: FocusManager;
   private readonly logger: Logger;
   private lvtId: string | null = null;
@@ -159,6 +160,12 @@ export class LiveTemplateClient {
         this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
       executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
       itemLookup: (rangePath, key) => {
+        // O(N) linear scan over range.d. For one `u` op per render this is
+        // ~50µs at N=10k — acceptable. For a render with many u ops on
+        // the same range, this becomes O(N×K); building a Map<key, item>
+        // once at apply() start would amortize, but the gain is small
+        // (whole `u` op cost is dominated by morphdom on the row anyway).
+        // Revisit if profiling shows this on the hot path.
         const range = this.treeRenderer.getTreeState()[rangePath];
         if (!range || !Array.isArray(range.d)) return null;
         const idKey = range.m?.idKey;
@@ -1169,10 +1176,17 @@ export class LiveTemplateClient {
    * @param meta - Optional metadata about the update (action, success, errors)
    */
   updateDOM(element: Element, update: TreeNode, meta?: ResponseMetadata): void {
-    // Reset per-render counters before applying the update. The applier
-    // and morphdom's onNodeAdded both increment nodesAddedThisRender so
-    // we can skip wrapper-wide directive scans for delete-only renders.
+    // Reset per-render counters before applying the update.
+    // - nodesAddedThisRender: incremented by morphdom.onNodeAdded and the
+    //   applier's onNodeAdded callback for i/a/p ops.
+    // - directiveTouchedThisRender: set by morphdom.onBeforeElUpdated when
+    //   it processes an element carrying a directive attribute (lvt-fx:*,
+    //   lvt-on:*, lvt-el:*) — covers attribute-only morphs that don't add
+    //   nodes but do change directive bindings, so the post-render scans
+    //   still need to wire them.
+    // Either signal triggers the wrapper-wide directive scans below.
     this.nodesAddedThisRender = 0;
+    this.directiveTouchedThisRender = false;
 
     // Apply update to internal state and get reconstructed HTML.
     // Pass canApplyTargeted so eligible top-level range diff ops mutate
@@ -1345,6 +1359,27 @@ export class LiveTemplateClient {
           (toEl as Element).hasAttribute(TARGETED_SKIP_ATTR)
         ) {
           return false;
+        }
+
+        // Track directive attributes on touched elements so the post-render
+        // scan can wire any newly-introduced lvt-fx:/lvt-on:/lvt-el:
+        // bindings even on delete-only renders that wouldn't otherwise
+        // trigger a wrapper-wide scan.
+        if (toEl.nodeType === Node.ELEMENT_NODE) {
+          const attrs = (toEl as Element).attributes;
+          for (let i = 0; i < attrs.length; i++) {
+            const n = attrs[i].name;
+            if (
+              n.length > 4 &&
+              n.charCodeAt(0) === 0x6c /* l */ &&
+              n.charCodeAt(1) === 0x76 /* v */ &&
+              n.charCodeAt(2) === 0x74 /* t */ &&
+              n.charCodeAt(3) === 0x2d /* - */
+            ) {
+              this.directiveTouchedThisRender = true;
+              break;
+            }
+          }
         }
 
         // lvt-ignore: morphdom skips this element and its entire subtree.
@@ -1588,16 +1623,15 @@ export class LiveTemplateClient {
     // Wrapper-wide directive scans walk every descendant of `element`.
     // For a delete-only render against a large keyed range (10k+ rows),
     // that's ~80k descendants × 9 scans = ~360ms wasted on a tree where
-    // no new elements need wiring. Skip them when no nodes were added by
-    // morphdom or by the targeted DOM applier this render.
+    // no new elements need wiring. Skip them when neither:
+    //   - any new node was added (morphdom.onNodeAdded / applier i/a/p), nor
+    //   - any morphed element carried an lvt-* directive attribute that
+    //     might newly need wiring (morphdom.onBeforeElUpdated check above).
     //
-    // Limitation: if the server adds new directive attributes to an
-    // existing element via attribute morph (e.g. adds lvt-fx:keydown to
-    // a button that didn't have it before), the listener won't be wired
-    // until a render that DOES add a node fires the next scan. This is
-    // rare in practice; add a data-lvt-force-update on the affected
-    // element to opt out of the skip.
-    if (this.nodesAddedThisRender > 0) {
+    // The directive-touched signal handles the attribute-morph case:
+    // server adds `lvt-fx:keydown` to an existing button → onBeforeElUpdated
+    // sees the attribute on toEl → flag set → scans run → listener wired.
+    if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
       handleScrollDirectives(element);
       handleHighlightDirectives(element);
       handleAnimateDirectives(element);

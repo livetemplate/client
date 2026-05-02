@@ -278,10 +278,15 @@ export class RangeDomApplier {
 
     // Observability hook: increment a global counter so E2E tests can
     // assert the targeted-apply path was actually taken (vs silently
-    // hitting the fallback). Cost: one integer increment per applied op.
-    if (typeof window !== "undefined") {
-      (window as any).__lvtTargetedHits =
-        ((window as any).__lvtTargetedHits || 0) + 1;
+    // hitting the fallback). Opt-in: tests must initialize the property
+    // first (e.g. `window.__lvtTargetedHits = 0`); production never sets
+    // it so the increment is skipped and we don't pollute the window
+    // object outside of test environments.
+    if (
+      typeof window !== "undefined" &&
+      "__lvtTargetedHits" in (window as any)
+    ) {
+      (window as any).__lvtTargetedHits++;
     }
     return container;
   }
@@ -506,6 +511,7 @@ export class RangeDomApplier {
     });
 
     const fragment = document.createDocumentFragment();
+    const newKeySet = new Set(newKeyOrder);
     for (const key of newKeyOrder) {
       const el = byKey.get(key);
       if (el) {
@@ -513,10 +519,19 @@ export class RangeDomApplier {
       }
     }
 
-    if (newKeyOrder.length < byKey.size) {
+    // Fire lvt-destroyed on children that aren't in the new order. The
+    // protocol normally sends the FULL key order, but if a partial reorder
+    // ever lands here, user-defined teardown (timer cancellation, observer
+    // disconnect, etc.) must still run.
+    if (newKeySet.size < byKey.size) {
       this.ctx.logger.warn(
-        `[RangeDomApplier] o: newKeyOrder (${newKeyOrder.length}) shorter than existing children (${byKey.size}); ${byKey.size - newKeyOrder.length} children will be dropped without lvt-destroyed`
+        `[RangeDomApplier] o: newKeyOrder (${newKeySet.size}) shorter than existing children (${byKey.size}); ${byKey.size - newKeySet.size} children will be dropped`
       );
+      for (const [k, el] of byKey) {
+        if (!newKeySet.has(k)) {
+          this.fireHookOnSubtree(el, "lvt-destroyed");
+        }
+      }
     }
 
     container.replaceChildren(fragment);
