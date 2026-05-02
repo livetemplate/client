@@ -16,11 +16,22 @@ type RenderItemFn = (
 
 type LifecycleHookFn = (el: Element, hookName: string) => void;
 type NodeAddedFn = (el: Element) => void;
+type ItemLookupFn = (rangePath: string, key: string) => any;
 
 export interface RangeDomApplierContext {
   logger: Logger;
   renderItem: RenderItemFn;
   executeLifecycleHook: LifecycleHookFn;
+  /**
+   * Look up the current item state for the given range path + key. Used by
+   * the `u` op to render the FULL post-merge item (treeState is mutated in
+   * place by `applyDifferentialOpsToRange` before the applier runs).
+   *
+   * Required: an applier without an `itemLookup` would silently no-op every
+   * `u` op, leaving the live DOM stale while morphdom's skip marker
+   * prevents the fallback diff from running. The constructor enforces this.
+   */
+  itemLookup: ItemLookupFn;
   /**
    * Notification that the applier inserted a new element into the live DOM
    * (i/a/p ops). Lets the caller track per-render DOM additions so it can
@@ -187,16 +198,18 @@ export class RangeDomApplier {
       return null;
     }
 
+    let allOpsSucceeded = true;
     for (const op of ops) {
       if (!Array.isArray(op) || op.length < 1) continue;
       const opType = op[0];
       try {
+        let opOK = true;
         switch (opType) {
           case "r":
-            this.applyRemove(container, op[1] as string);
+            opOK = this.applyRemove(container, op[1] as string);
             break;
           case "u":
-            this.applyUpdateRow(
+            opOK = this.applyUpdateRow(
               container,
               op[1] as string,
               statics,
@@ -206,7 +219,7 @@ export class RangeDomApplier {
             );
             break;
           case "i":
-            this.applyInsertAfter(
+            opOK = this.applyInsertAfter(
               container,
               op[1] as string,
               op[2],
@@ -216,18 +229,33 @@ export class RangeDomApplier {
             );
             break;
           case "a":
-            this.applyAppend(container, op[1], statics, staticsMap, rangePath);
+            opOK = this.applyAppend(
+              container,
+              op[1],
+              statics,
+              staticsMap,
+              rangePath
+            );
             break;
           case "p":
-            this.applyPrepend(container, op[1], statics, staticsMap, rangePath);
+            opOK = this.applyPrepend(
+              container,
+              op[1],
+              statics,
+              staticsMap,
+              rangePath
+            );
             break;
           case "o":
-            this.applyReorder(container, op[1] as string[]);
+            opOK = this.applyReorder(container, op[1] as string[]);
             break;
           default:
             this.ctx.logger.debug(
               `[RangeDomApplier] unknown op type ${opType}; ignoring`
             );
+        }
+        if (!opOK) {
+          allOpsSucceeded = false;
         }
       } catch (err) {
         this.ctx.logger.error(
@@ -236,6 +264,16 @@ export class RangeDomApplier {
         );
         return null;
       }
+    }
+
+    // If any per-op method silently no-op'd because of stale state
+    // (e.g. `u` for a row that's no longer in the DOM, `i` with a
+    // missing anchor), we MUST signal failure so the caller falls back
+    // to a full rebuild — otherwise the live DOM stays out of sync with
+    // treeState and morphdom would skip the subtree (TARGETED_APPLIED
+    // marker tells it to).
+    if (!allOpsSucceeded) {
+      return null;
     }
 
     // Observability hook: increment a global counter so E2E tests can
@@ -262,17 +300,26 @@ export class RangeDomApplier {
   }
 
   // --- per-op implementations -----------------------------------------------
+  //
+  // Each per-op method returns `boolean`:
+  //   true  → the live DOM is now consistent with the new treeState
+  //   false → silent no-op (e.g. row not found, item state unavailable);
+  //           the caller should invalidate the targeted-apply marker and
+  //           fall back to a full rebuild
 
-  private applyRemove(container: Element, key: string): void {
+  private applyRemove(container: Element, key: string): boolean {
     const row = this.findItemByKey(container, key);
     if (!row) {
+      // r is idempotent: if the row is already gone, treeState's post-op
+      // view (also without the row) matches the DOM. No fallback needed.
       this.ctx.logger.debug(
-        `[RangeDomApplier] r: row with key ${key} not found`
+        `[RangeDomApplier] r: row with key ${key} not found (idempotent no-op)`
       );
-      return;
+      return true;
     }
     this.fireHookOnSubtree(row, "lvt-destroyed");
     row.remove();
+    return true;
   }
 
   private applyUpdateRow(
@@ -282,21 +329,21 @@ export class RangeDomApplier {
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string,
     morphdomOptions?: any
-  ): void {
+  ): boolean {
     const row = this.findItemByKey(container, key);
     if (!row) {
       this.ctx.logger.debug(
-        `[RangeDomApplier] u: row with key ${key} not found`
+        `[RangeDomApplier] u: row with key ${key} not found in DOM; falling back`
       );
-      return;
+      return false;
     }
     const itemIdx = this.indexOfChild(container, row);
     const item = this.lookupCurrentItem(rangePath, key);
     if (!item) {
       this.ctx.logger.debug(
-        `[RangeDomApplier] u: item state for key ${key} not available; skipping`
+        `[RangeDomApplier] u: item state for key ${key} not available; falling back`
       );
-      return;
+      return false;
     }
     const newHtml = this.ctx.renderItem(
       item,
@@ -308,9 +355,9 @@ export class RangeDomApplier {
     const newRow = this.parseSingleRow(newHtml);
     if (!newRow) {
       this.ctx.logger.warn(
-        `[RangeDomApplier] u: failed to parse rendered row HTML`
+        `[RangeDomApplier] u: failed to parse rendered row HTML; falling back`
       );
-      return;
+      return false;
     }
     if (morphdomOptions) {
       // Override childrenOnly: the main morphdom call uses childrenOnly:true
@@ -331,6 +378,7 @@ export class RangeDomApplier {
       this.ctx.onNodeAdded?.(newRow);
       this.fireHookOnSubtree(newRow, "lvt-mounted");
     }
+    return true;
   }
 
   private applyInsertAfter(
@@ -340,17 +388,18 @@ export class RangeDomApplier {
     statics: string[],
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string
-  ): void {
+  ): boolean {
     const anchor = this.findItemByKey(container, afterKey);
     if (!anchor) {
       this.ctx.logger.debug(
-        `[RangeDomApplier] i: anchor key ${afterKey} not found`
+        `[RangeDomApplier] i: anchor key ${afterKey} not found; falling back`
       );
-      return;
+      return false;
     }
     const list = Array.isArray(items) ? items : [items];
     const baseIdx = this.indexOfChild(container, anchor) + 1;
     let cursor: Node | null = anchor.nextSibling;
+    let allRendered = true;
     list.forEach((item, offset) => {
       const newRow = this.renderAndParse(
         item,
@@ -359,12 +408,16 @@ export class RangeDomApplier {
         staticsMap,
         rangePath
       );
-      if (!newRow) return;
+      if (!newRow) {
+        allRendered = false;
+        return;
+      }
       container.insertBefore(newRow, cursor);
       this.ctx.onNodeAdded?.(newRow);
       this.fireHookOnSubtree(newRow, "lvt-mounted");
       cursor = newRow.nextSibling;
     });
+    return allRendered;
   }
 
   private applyAppend(
@@ -373,9 +426,10 @@ export class RangeDomApplier {
     statics: string[],
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string
-  ): void {
+  ): boolean {
     const list = Array.isArray(items) ? items : [items];
     const baseIdx = container.children.length;
+    let allRendered = true;
     list.forEach((item, offset) => {
       const newRow = this.renderAndParse(
         item,
@@ -384,11 +438,15 @@ export class RangeDomApplier {
         staticsMap,
         rangePath
       );
-      if (!newRow) return;
+      if (!newRow) {
+        allRendered = false;
+        return;
+      }
       container.appendChild(newRow);
       this.ctx.onNodeAdded?.(newRow);
       this.fireHookOnSubtree(newRow, "lvt-mounted");
     });
+    return allRendered;
   }
 
   private applyPrepend(
@@ -397,10 +455,11 @@ export class RangeDomApplier {
     statics: string[],
     staticsMap: Record<string, string[]> | undefined,
     rangePath: string
-  ): void {
+  ): boolean {
     const list = Array.isArray(items) ? items : [items];
     const fragment = document.createDocumentFragment();
     const mounted: Element[] = [];
+    let allRendered = true;
     list.forEach((item, offset) => {
       const newRow = this.renderAndParse(
         item,
@@ -409,7 +468,10 @@ export class RangeDomApplier {
         staticsMap,
         rangePath
       );
-      if (!newRow) return;
+      if (!newRow) {
+        allRendered = false;
+        return;
+      }
       fragment.appendChild(newRow);
       mounted.push(newRow);
     });
@@ -418,6 +480,7 @@ export class RangeDomApplier {
       this.ctx.onNodeAdded?.(row);
       this.fireHookOnSubtree(row, "lvt-mounted");
     });
+    return allRendered;
   }
 
   /**
@@ -429,8 +492,8 @@ export class RangeDomApplier {
    * this would silently delete rows. We log a warning when that happens
    * so the protocol mismatch is visible.
    */
-  private applyReorder(container: Element, newKeyOrder: string[]): void {
-    if (!Array.isArray(newKeyOrder)) return;
+  private applyReorder(container: Element, newKeyOrder: string[]): boolean {
+    if (!Array.isArray(newKeyOrder)) return false;
     const byKey = new Map<string, Element>();
     Array.from(container.children).forEach((child) => {
       for (const attr of KEY_ATTRIBUTES) {
@@ -457,6 +520,7 @@ export class RangeDomApplier {
     }
 
     container.replaceChildren(fragment);
+    return true;
   }
 
   // --- helpers --------------------------------------------------------------
@@ -572,22 +636,11 @@ export class RangeDomApplier {
     return undefined;
   }
 
-  /**
-   * Override hook used by `applyUpdateRow` to read the current item state
-   * after the diff op has been applied to treeState. Wired by the caller
-   * via context (see `wireItemLookup`).
-   */
-  private itemLookup: ((rangePath: string, key: string) => any) | null = null;
-
-  wireItemLookup(fn: (rangePath: string, key: string) => any): void {
-    this.itemLookup = fn;
-  }
-
   private lookupCurrentItem(rangePath: string, key: string): any {
-    // O(N) over range.d via the wired callback (linear scan in
+    // O(N) over range.d via the context callback (linear scan in
     // livetemplate-client.ts). Bounded cost per `u` op: one walk per
     // updated row per render. At N=10k that's ~50µs in JS — acceptable.
-    return this.itemLookup ? this.itemLookup(rangePath, key) : null;
+    return this.ctx.itemLookup(rangePath, key);
   }
 
   private fireHookOnSubtree(root: Element, hookName: string): void {

@@ -158,22 +158,26 @@ export class LiveTemplateClient {
       renderItem: (item, idx, statics, sm, sp) =>
         this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
       executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
+      itemLookup: (rangePath, key) => {
+        const range = this.treeRenderer.getTreeState()[rangePath];
+        if (!range || !Array.isArray(range.d)) return null;
+        const idKey = range.m?.idKey;
+        for (const item of range.d) {
+          if (!item || typeof item !== "object") continue;
+          if (item._k === key) return item;
+          if (
+            idKey &&
+            item[idKey] !== undefined &&
+            String(item[idKey]) === key
+          ) {
+            return item;
+          }
+        }
+        return null;
+      },
       onNodeAdded: () => {
         this.nodesAddedThisRender++;
       },
-    });
-    this.rangeDomApplier.wireItemLookup((rangePath, key) => {
-      const range = this.treeRenderer.getTreeState()[rangePath];
-      if (!range || !Array.isArray(range.d)) return null;
-      const idKey = range.m?.idKey;
-      for (const item of range.d) {
-        if (!item || typeof item !== "object") continue;
-        if (item._k === key) return item;
-        if (idKey && item[idKey] !== undefined && String(item[idKey]) === key) {
-          return item;
-        }
-      }
-      return null;
     });
     this.focusManager = new FocusManager(this.logger.child("FocusManager"));
 

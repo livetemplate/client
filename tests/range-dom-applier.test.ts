@@ -65,10 +65,10 @@ function makeFixture(itemCount: number): Fixture {
     executeLifecycleHook: (el, hook) => {
       hookCalls.push({ hook, key: el.getAttribute("data-key") });
     },
-  });
-  applier.wireItemLookup((path, key) => {
-    if (path === RANGE_PATH) return itemState.get(key);
-    return undefined;
+    itemLookup: (path, key) => {
+      if (path === RANGE_PATH) return itemState.get(key);
+      return undefined;
+    },
   });
   // Mirror the production flow: callers run canApplyTargeted (which
   // resolves and caches the container) before calling apply. Without
@@ -329,6 +329,40 @@ describe("RangeDomApplier - u (update)", () => {
     expect(row.getAttribute("class")).toBe("highlighted");
     // morphdom is referenced just to ensure the import path stays alive
     void morphdom;
+  });
+
+  it("returns null from apply() when u op silently no-ops (item state missing)", () => {
+    // Stale state: item is in DOM but lookup returns nothing. Previously,
+    // applyUpdateRow would log + return silently and apply() would still
+    // mark the container as TARGETED_APPLIED → morphdom skips → live DOM
+    // stays out of sync forever. With the boolean-return fix, apply()
+    // returns null and updateDOM falls back to a full rebuild.
+    const fx = makeFixture(3);
+    fx.itemState.delete("row-1"); // simulate desync
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["u", "row-1", { "1": "v1-new" }]])
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns null from apply() when i op anchor is missing", () => {
+    const fx = makeFixture(3);
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["i", "ghost-anchor", { _k: "row-new" }]])
+    );
+    expect(result).toBeNull();
+  });
+
+  it("r op is idempotent (apply succeeds even when row already gone)", () => {
+    const fx = makeFixture(3);
+    fx.container.querySelector('[data-key="row-1"]')!.remove();
+    const result = fx.applier.apply(
+      fx.wrapper,
+      makeTargetedOp([["r", "row-1"]])
+    );
+    expect(result).toBe(fx.container);
   });
 
   it("preserves focus on an input inside the updated row when morphdomOptions provided", () => {
