@@ -1,5 +1,20 @@
-import type { TreeNode, UpdateResult } from "../types";
+import type { TargetedRangeOp, TreeNode, UpdateResult } from "../types";
 import type { Logger } from "../utils/logger";
+
+/**
+ * Optional context for `applyUpdate` that opts into per-op targeted DOM
+ * mutation. When `canApplyTargeted` returns true for a top-level diff-op
+ * key, applyUpdate mutates treeState in place (no deepClone) and emits
+ * a `TargetedRangeOp` in the result. The caller is then responsible for
+ * applying the op directly to the live DOM (typically via RangeDomApplier).
+ *
+ * The corresponding range subtree is replaced in `result.html` with a
+ * `<!--lvt-targeted-skip:${rangePath}-->` placeholder so that morphdom
+ * can be told to short-circuit that subtree.
+ */
+export interface ApplyUpdateOptions {
+  canApplyTargeted?: (rangeStructure: any, rangePath: string) => boolean;
+}
 
 interface RangeStateEntry {
   items: any[];
@@ -125,8 +140,13 @@ export class TreeRenderer {
 
   constructor(private readonly logger: Logger) {}
 
-  applyUpdate(update: TreeNode): UpdateResult {
+  applyUpdate(
+    update: TreeNode,
+    opts?: ApplyUpdateOptions
+  ): UpdateResult {
     let changed = false;
+    const targetedOps: TargetedRangeOp[] = [];
+    const skipPaths = new Set<string>();
 
     for (const [key, value] of Object.entries(update)) {
       const isDifferentialOps =
@@ -146,9 +166,26 @@ export class TreeRenderer {
           Array.isArray(existing.s);
 
         if (existingIsRange) {
-          // Apply differential operations to existing range structure
-          this.treeState[key] = deepClone(existing);
-          this.applyDifferentialOpsToRange(this.treeState[key], value, key);
+          const targetedEligible =
+            opts?.canApplyTargeted?.(existing, key) === true;
+          if (targetedEligible) {
+            // Mutate in place — applyDifferentialOpsToRange uses splice/push/unshift
+            // on existing.d, so no fresh array is created and treeState[key]
+            // remains the same object reference (now with updated contents).
+            this.applyDifferentialOpsToRange(existing, value, key);
+            targetedOps.push({
+              rangePath: key,
+              ops: value,
+              statics: existing.s,
+              staticsMap: existing.sm,
+              idKey: existing.m?.idKey,
+            });
+            skipPaths.add(key);
+          } else {
+            // Apply differential operations to a clone (defensive, fallback path)
+            this.treeState[key] = deepClone(existing);
+            this.applyDifferentialOpsToRange(this.treeState[key], value, key);
+          }
         } else {
           // No existing range, store operations directly (will use rangeState later)
           this.treeState[key] = value;
@@ -168,8 +205,16 @@ export class TreeRenderer {
       }
     }
 
-    const html = this.reconstructFromTree(this.treeState, "");
-    return { html, changed };
+    const html = this.reconstructFromTree(
+      this.treeState,
+      "",
+      skipPaths.size > 0 ? skipPaths : undefined
+    );
+    const result: UpdateResult = { html, changed };
+    if (targetedOps.length > 0) {
+      result.targetedOps = targetedOps;
+    }
+    return result;
   }
 
   reset(): void {
@@ -438,7 +483,11 @@ export class TreeRenderer {
     };
   }
 
-  private reconstructFromTree(node: TreeNode, statePath: string): string {
+  private reconstructFromTree(
+    node: TreeNode,
+    statePath: string,
+    skipPaths?: Set<string>
+  ): string {
     if (node.s && Array.isArray(node.s)) {
       let html = "";
 
@@ -452,6 +501,16 @@ export class TreeRenderer {
             const newStatePath = statePath
               ? `${statePath}.${dynamicKey}`
               : dynamicKey;
+
+            // Targeted-apply skip mechanism: emit a comment placeholder that
+            // the client's updateDOM walks for, converting to the live
+            // container's data-lvt-targeted-skip marker so morphdom can
+            // short-circuit the subtree.
+            if (skipPaths && skipPaths.has(newStatePath)) {
+              html += `<!--lvt-targeted-skip:${newStatePath}-->`;
+              continue;
+            }
+
             html += this.renderValue(
               node[dynamicKey],
               dynamicKey,
@@ -584,40 +643,11 @@ export class TreeRenderer {
       return "";
     }
 
-    // Check if we have per-item statics via StaticsMap
-    const hasStaticsMap = staticsMap && typeof staticsMap === "object";
-
     if (statics && Array.isArray(statics)) {
       return dynamics
-        .map((item: any, itemIdx: number) => {
-          // Get per-item statics from StaticsMap if available, otherwise use shared statics
-          let itemStatics = statics;
-          if (hasStaticsMap && item._sk && staticsMap[item._sk]) {
-            itemStatics = staticsMap[item._sk];
-          }
-
-          let html = "";
-
-          for (let i = 0; i < itemStatics.length; i++) {
-            html += itemStatics[i];
-
-            if (i < itemStatics.length - 1) {
-              const localKey = i.toString();
-              if (item[localKey] !== undefined) {
-                const itemStatePath = statePath
-                  ? `${statePath}.${itemIdx}.${localKey}`
-                  : `${itemIdx}.${localKey}`;
-                html += this.renderValue(
-                  item[localKey],
-                  localKey,
-                  itemStatePath
-                );
-              }
-            }
-          }
-
-          return html;
-        })
+        .map((item: any, itemIdx: number) =>
+          this.renderRangeItem(item, itemIdx, statics, staticsMap, statePath)
+        )
         .join("");
     }
 
@@ -628,6 +658,51 @@ export class TreeRenderer {
         return this.renderValue(item, itemKey, itemStatePath);
       })
       .join("");
+  }
+
+  /**
+   * Renders a single range item to HTML by interleaving its dynamic slots
+   * with the range's statics. Honors per-item statics (`_sk` lookup in
+   * `staticsMap`) when present.
+   *
+   * Used by `renderRangeStructure` and `renderItemsWithStatics` for full
+   * range rendering, and by `range-dom-applier` to render a single new
+   * or updated item for targeted DOM mutations.
+   */
+  renderRangeItem(
+    item: any,
+    itemIdx: number,
+    statics: string[],
+    staticsMap?: Record<string, string[]>,
+    statePath?: string
+  ): string {
+    let itemStatics = statics;
+    if (
+      staticsMap &&
+      typeof staticsMap === "object" &&
+      item._sk &&
+      staticsMap[item._sk]
+    ) {
+      itemStatics = staticsMap[item._sk];
+    }
+
+    let html = "";
+
+    for (let i = 0; i < itemStatics.length; i++) {
+      html += itemStatics[i];
+
+      if (i < itemStatics.length - 1) {
+        const fieldKey = i.toString();
+        if (item[fieldKey] !== undefined) {
+          const itemStatePath = statePath
+            ? `${statePath}.${itemIdx}.${fieldKey}`
+            : `${itemIdx}.${fieldKey}`;
+          html += this.renderValue(item[fieldKey], fieldKey, itemStatePath);
+        }
+      }
+    }
+
+    return html;
   }
 
   private applyDifferentialOperations(
@@ -802,36 +877,9 @@ export class TreeRenderer {
     statePath?: string
   ): string {
     const result = items
-      .map((item: any, itemIdx: number) => {
-        // Get per-item statics from StaticsMap if available, otherwise use shared statics
-        let itemStatics = statics;
-        if (
-          staticsMap &&
-          typeof staticsMap === "object" &&
-          item._sk &&
-          staticsMap[item._sk]
-        ) {
-          itemStatics = staticsMap[item._sk];
-        }
-
-        let html = "";
-
-        for (let i = 0; i < itemStatics.length; i++) {
-          html += itemStatics[i];
-
-          if (i < itemStatics.length - 1) {
-            const fieldKey = i.toString();
-            if (item[fieldKey] !== undefined) {
-              const itemStatePath = statePath
-                ? `${statePath}.${itemIdx}.${fieldKey}`
-                : `${itemIdx}.${fieldKey}`;
-              html += this.renderValue(item[fieldKey], fieldKey, itemStatePath);
-            }
-          }
-        }
-
-        return html;
-      })
+      .map((item: any, itemIdx: number) =>
+        this.renderRangeItem(item, itemIdx, statics, staticsMap, statePath)
+      )
       .join("");
 
     if (this.logger.isDebugEnabled()) {

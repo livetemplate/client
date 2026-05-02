@@ -28,6 +28,11 @@ import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
 import { TreeRenderer } from "./state/tree-renderer";
+import {
+  RangeDomApplier,
+  TARGETED_APPLIED_ATTR,
+  TARGETED_SKIP_ATTR,
+} from "./state/range-dom-applier";
 import { FormLifecycleManager } from "./state/form-lifecycle-manager";
 import { ChangeAutoWirer } from "./state/change-auto-wirer";
 import { WebSocketManager } from "./transport/websocket";
@@ -49,6 +54,7 @@ export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
+  private readonly rangeDomApplier: RangeDomApplier;
   private readonly focusManager: FocusManager;
   private readonly logger: Logger;
   private lvtId: string | null = null;
@@ -146,6 +152,25 @@ export class LiveTemplateClient {
     };
 
     this.treeRenderer = new TreeRenderer(this.logger.child("TreeRenderer"));
+    this.rangeDomApplier = new RangeDomApplier({
+      logger: this.logger.child("RangeDomApplier"),
+      renderItem: (item, idx, statics, sm, sp) =>
+        this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
+      executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
+    });
+    this.rangeDomApplier.wireItemLookup((rangePath, key) => {
+      const range = this.treeRenderer.getTreeState()[rangePath];
+      if (!range || !Array.isArray(range.d)) return null;
+      const idKey = range.m?.idKey;
+      for (const item of range.d) {
+        if (!item || typeof item !== "object") continue;
+        if (item._k === key) return item;
+        if (idKey && item[idKey] !== undefined && String(item[idKey]) === key) {
+          return item;
+        }
+      }
+      return null;
+    });
     this.focusManager = new FocusManager(this.logger.child("FocusManager"));
 
     this.formLifecycleManager = new FormLifecycleManager();
@@ -499,6 +524,7 @@ export class LiveTemplateClient {
   // intent — tests can observe the init transition a second time.
   private resetSessionState(): void {
     this.treeRenderer.reset();
+    this.rangeDomApplier.invalidate();
     this.focusManager.reset();
     this.observerManager.teardown();
     this.changeAutoWirer.teardown();
@@ -1135,8 +1161,21 @@ export class LiveTemplateClient {
    * @param meta - Optional metadata about the update (action, success, errors)
    */
   updateDOM(element: Element, update: TreeNode, meta?: ResponseMetadata): void {
-    // Apply update to internal state and get reconstructed HTML
-    const result = this.applyUpdate(update);
+    // Apply update to internal state and get reconstructed HTML.
+    // Pass canApplyTargeted so eligible top-level range diff ops mutate
+    // treeState in place and are emitted as targetedOps for direct DOM
+    // mutation (skipping the full HTML rebuild + morphdom diff for that
+    // subtree).
+    const result = this.treeRenderer.applyUpdate(update, {
+      canApplyTargeted: (rangeStructure, rangePath) => {
+        const r = this.rangeDomApplier.canApplyTargeted(
+          element,
+          rangeStructure,
+          rangePath
+        );
+        return r.ok;
+      },
+    });
 
     // Helper to recursively check if there are any statics in the tree
     const hasStaticsInTree = (node: any): boolean => {
@@ -1267,8 +1306,10 @@ export class LiveTemplateClient {
       return;
     }
 
-    // Use morphdom to efficiently update the element
-    morphdom(element, tempWrapper, {
+    // Build morphdom options once so the applier's `u` op (which morphdoms
+    // a single row) uses the same callback set — focus skip, lvt-ignore,
+    // checkbox preservation, lifecycle hooks all stay consistent.
+    const morphdomOptions = {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
       getNodeKey: (node: any) => {
         // Use data-key or data-lvt-key for efficient reconciliation
@@ -1280,7 +1321,19 @@ export class LiveTemplateClient {
           );
         }
       },
-      onBeforeElUpdated: (fromEl, toEl) => {
+      onBeforeElUpdated: (fromEl: any, toEl: any) => {
+        // Targeted-apply skip: the live container's children were already
+        // mutated directly by RangeDomApplier, and the rebuilt tempWrapper
+        // has the container empty + tagged with data-lvt-targeted-skip.
+        // Returning false short-circuits the entire subtree update —
+        // morphdom skips both the diff walk AND the children-replacement.
+        if (
+          toEl.nodeType === Node.ELEMENT_NODE &&
+          (toEl as Element).hasAttribute(TARGETED_SKIP_ATTR)
+        ) {
+          return false;
+        }
+
         // lvt-ignore: morphdom skips this element and its entire subtree.
         // Equivalent to Phoenix LiveView's phx-update="ignore".
         // Checked on fromEl (live DOM) so both server templates and
@@ -1422,7 +1475,7 @@ export class LiveTemplateClient {
         this.executeLifecycleHook(fromEl, "lvt-updated");
         return true;
       },
-      onElUpdated: (el) => {
+      onElUpdated: (el: any) => {
         // Textarea-specific: morphdom patches child text nodes but browsers
         // ignore textContent changes to "dirty" textareas (ones the user
         // has typed in), so we explicitly set .value. Inputs don't need
@@ -1437,7 +1490,7 @@ export class LiveTemplateClient {
           el.removeAttribute("data-lvt-force-update");
         }
       },
-      onNodeAdded: (node) => {
+      onNodeAdded: (node: any) => {
         // Sync textarea value for newly inserted textarea elements
         if (node instanceof HTMLTextAreaElement) {
           node.value = node.textContent ?? "";
@@ -1450,14 +1503,42 @@ export class LiveTemplateClient {
           this.executeLifecycleHook(node as Element, "lvt-mounted");
         }
       },
-      onBeforeNodeDiscarded: (node) => {
+      onBeforeNodeDiscarded: (node: any) => {
         // Execute lvt-destroyed lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.executeLifecycleHook(node as Element, "lvt-destroyed");
         }
         return true;
       },
-    });
+    };
+
+    // Apply per-op targeted DOM mutations BEFORE morphdom. The applier
+    // mutates the live DOM in place; tempWrapper has corresponding
+    // <!--lvt-targeted-skip:path--> placeholders that we now convert to
+    // data-lvt-targeted-skip markers on their parent elements so morphdom
+    // short-circuits those subtrees.
+    if (result.targetedOps && result.targetedOps.length > 0) {
+      for (const op of result.targetedOps) {
+        const container = this.rangeDomApplier.apply(
+          element,
+          op,
+          morphdomOptions
+        );
+        if (container) {
+          container.setAttribute(TARGETED_APPLIED_ATTR, "");
+        }
+      }
+      this.replaceTargetedSkipPlaceholders(tempWrapper);
+    }
+
+    try {
+      // Use morphdom to efficiently update the element
+      morphdom(element, tempWrapper, morphdomOptions);
+    } finally {
+      // Strip lifecycle markers regardless of whether morphdom threw,
+      // preventing leaked attributes on the live DOM.
+      this.rangeDomApplier.cleanupMarkers(element);
+    }
 
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
@@ -1501,6 +1582,38 @@ export class LiveTemplateClient {
    */
   private handleUploadStartResponse(response: UploadStartResponse): void {
     this.uploadHandler.handleUploadStartResponse(response);
+  }
+
+  /**
+   * Walk tempWrapper for `<!--lvt-targeted-skip:path-->` comments left by
+   * `reconstructFromTree` and convert each into a `data-lvt-targeted-skip`
+   * attribute on its parent element. The marker tells morphdom (via its
+   * onBeforeElUpdated callback) to short-circuit the subtree, leaving the
+   * live container's existing children — already updated by the applier —
+   * untouched.
+   */
+  private replaceTargetedSkipPlaceholders(tempWrapper: Element): void {
+    const walker = document.createTreeWalker(
+      tempWrapper,
+      NodeFilter.SHOW_COMMENT
+    );
+    const toReplace: Comment[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const c = node as Comment;
+      if (c.nodeValue && /^lvt-targeted-skip:.+$/.test(c.nodeValue)) {
+        toReplace.push(c);
+      }
+    }
+    for (const c of toReplace) {
+      const match = c.nodeValue!.match(/^lvt-targeted-skip:(.+)$/);
+      const path = match ? match[1] : "";
+      const parent = c.parentElement;
+      if (parent) {
+        parent.setAttribute(TARGETED_SKIP_ATTR, path);
+      }
+      c.remove();
+    }
   }
 
   /**
