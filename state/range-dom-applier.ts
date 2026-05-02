@@ -15,11 +15,18 @@ type RenderItemFn = (
 ) => string;
 
 type LifecycleHookFn = (el: Element, hookName: string) => void;
+type NodeAddedFn = (el: Element) => void;
 
 export interface RangeDomApplierContext {
   logger: Logger;
   renderItem: RenderItemFn;
   executeLifecycleHook: LifecycleHookFn;
+  /**
+   * Notification that the applier inserted a new element into the live DOM
+   * (i/a/p ops). Lets the caller track per-render DOM additions so it can
+   * decide whether the post-render directive scans need to walk the wrapper.
+   */
+  onNodeAdded?: NodeAddedFn;
 }
 
 export interface CanApplyResult {
@@ -330,6 +337,7 @@ export class RangeDomApplier {
       );
       if (!newRow) return;
       container.insertBefore(newRow, cursor);
+      this.ctx.onNodeAdded?.(newRow);
       this.fireHookOnSubtree(newRow, "lvt-mounted");
       cursor = newRow.nextSibling;
     });
@@ -354,6 +362,7 @@ export class RangeDomApplier {
       );
       if (!newRow) return;
       container.appendChild(newRow);
+      this.ctx.onNodeAdded?.(newRow);
       this.fireHookOnSubtree(newRow, "lvt-mounted");
     });
   }
@@ -381,7 +390,10 @@ export class RangeDomApplier {
       mounted.push(newRow);
     });
     container.insertBefore(fragment, container.firstChild);
-    mounted.forEach((row) => this.fireHookOnSubtree(row, "lvt-mounted"));
+    mounted.forEach((row) => {
+      this.ctx.onNodeAdded?.(row);
+      this.fireHookOnSubtree(row, "lvt-mounted");
+    });
   }
 
   private applyReorder(container: Element, newKeyOrder: string[]): void {

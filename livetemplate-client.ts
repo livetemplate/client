@@ -55,6 +55,7 @@ export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
   private readonly rangeDomApplier: RangeDomApplier;
+  private nodesAddedThisRender: number = 0;
   private readonly focusManager: FocusManager;
   private readonly logger: Logger;
   private lvtId: string | null = null;
@@ -157,6 +158,9 @@ export class LiveTemplateClient {
       renderItem: (item, idx, statics, sm, sp) =>
         this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
       executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
+      onNodeAdded: () => {
+        this.nodesAddedThisRender++;
+      },
     });
     this.rangeDomApplier.wireItemLookup((rangePath, key) => {
       const range = this.treeRenderer.getTreeState()[rangePath];
@@ -1161,6 +1165,11 @@ export class LiveTemplateClient {
    * @param meta - Optional metadata about the update (action, success, errors)
    */
   updateDOM(element: Element, update: TreeNode, meta?: ResponseMetadata): void {
+    // Reset per-render counters before applying the update. The applier
+    // and morphdom's onNodeAdded both increment nodesAddedThisRender so
+    // we can skip wrapper-wide directive scans for delete-only renders.
+    this.nodesAddedThisRender = 0;
+
     // Apply update to internal state and get reconstructed HTML.
     // Pass canApplyTargeted so eligible top-level range diff ops mutate
     // treeState in place and are emitted as targetedOps for direct DOM
@@ -1501,6 +1510,7 @@ export class LiveTemplateClient {
         // Execute lvt-mounted lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.executeLifecycleHook(node as Element, "lvt-mounted");
+          this.nodesAddedThisRender++;
         }
       },
       onBeforeNodeDiscarded: (node: any) => {
@@ -1543,35 +1553,33 @@ export class LiveTemplateClient {
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Handle scroll directives (implicit trigger only)
-    handleScrollDirectives(element);
+    // Wrapper-wide directive scans walk every descendant of `element`.
+    // For a delete-only render against a large keyed range (10k+ rows),
+    // that's ~80k descendants × 9 scans = ~360ms wasted on a tree where
+    // no new elements need wiring. Skip them when no nodes were added by
+    // morphdom or by the targeted DOM applier this render.
+    //
+    // Limitation: if the server adds new directive attributes to an
+    // existing element via attribute morph (e.g. adds lvt-fx:keydown to
+    // a button that didn't have it before), the listener won't be wired
+    // until a render that DOES add a node fires the next scan. This is
+    // rare in practice; add a data-lvt-force-update on the affected
+    // element to opt out of the skip.
+    if (this.nodesAddedThisRender > 0) {
+      handleScrollDirectives(element);
+      handleHighlightDirectives(element);
+      handleAnimateDirectives(element);
+      setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
+      this.eventDelegator.setupDOMEventTriggerDelegation(element);
+      setupScrollAway(element);
+      handleToastDirectives(element);
+      this.uploadHandler.initializeFileInputs(element);
+    }
 
-    // Handle highlight directives (implicit trigger only)
-    handleHighlightDirectives(element);
-
-    // Handle animate directives (implicit trigger only)
-    handleAnimateDirectives(element);
-
-    // Set up DOM event triggers for lvt-fx: attributes with :on:{event}
-    // Registry always lives on wrapperElement so teardown can find all entries
-    setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
-
-    // Re-scan updated subtree for lvt-el:*:on:{event} DOM triggers
-    this.eventDelegator.setupDOMEventTriggerDelegation(element);
-
-    // Set up scroll-away visibility toggles
-    setupScrollAway(element);
-
-    // Handle toast trigger directives (ephemeral client-side toasts)
-    handleToastDirectives(element);
-
-    // Initialize upload file inputs
-    this.uploadHandler.initializeFileInputs(element);
-
-    // Auto-wire change listeners for bound form fields
+    // changeAutoWirer always runs: its eviction loop must process
+    // wirings on removed elements too, regardless of additions.
     this.changeAutoWirer.wireElements();
 
-    // Handle form lifecycle if metadata is present
     if (meta) {
       this.formLifecycleManager.handleResponse(meta);
     }
