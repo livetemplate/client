@@ -2,6 +2,8 @@
 
 TypeScript/JavaScript client library for LiveTemplate - reactive HTML over the wire.
 
+📚 **Framework documentation:** **<https://livetemplate.fly.dev>** — guides, recipes, patterns catalog. The `/client` section of the docs site covers this package's browser API.
+
 ## Overview
 
 The LiveTemplate client enables reactive web applications by efficiently applying tree-based HTML updates from the server. It uses DOM morphing, intelligent static content caching, and WebSocket transport for real-time interactivity.
