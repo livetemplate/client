@@ -19,7 +19,6 @@ export interface ApplyUpdateOptions {
 interface RangeStateEntry {
   items: any[];
   statics: any[];
-  staticsMap?: Record<string, string[]>;
 }
 
 /**
@@ -177,7 +176,6 @@ export class TreeRenderer {
               rangePath: key,
               ops: value,
               statics: existing.s,
-              staticsMap: existing.sm,
               idKey: existing.m?.idKey,
             });
             skipPaths.add(key);
@@ -355,7 +353,6 @@ export class TreeRenderer {
       this.rangeState[statePath] = {
         items: currentItems,
         statics: rangeStructure.s,
-        staticsMap: rangeStructure.sm,
       };
     }
     // Also check for idKey metadata
@@ -489,7 +486,6 @@ export class TreeRenderer {
     this.rangeState[statePath] = {
       items: currentItems,
       statics: rangeStructure.s,
-      staticsMap: rangeStructure.sm,
     };
   }
 
@@ -566,7 +562,6 @@ export class TreeRenderer {
           this.rangeState[stateKey] = {
             items: value.d,
             statics: value.s,
-            staticsMap: value.sm,
           };
           if (
             value.m &&
@@ -638,7 +633,7 @@ export class TreeRenderer {
     fieldKey?: string,
     statePath?: string
   ): string {
-    const { d: dynamics, s: statics, sm: staticsMap } = rangeNode;
+    const { d: dynamics, s: statics } = rangeNode;
 
     if (!dynamics || !Array.isArray(dynamics)) {
       return "";
@@ -656,7 +651,7 @@ export class TreeRenderer {
     if (statics && Array.isArray(statics)) {
       return dynamics
         .map((item: any, itemIdx: number) =>
-          this.renderRangeItem(item, itemIdx, statics, staticsMap, statePath)
+          this.renderRangeItem(item, itemIdx, statics, statePath)
         )
         .join("");
     }
@@ -672,8 +667,7 @@ export class TreeRenderer {
 
   /**
    * Renders a single range item to HTML by interleaving its dynamic slots
-   * with the range's statics. Honors per-item statics (`_sk` lookup in
-   * `staticsMap`) when present.
+   * with the range's statics.
    *
    * Used by `renderRangeStructure` and `renderItemsWithStatics` for full
    * range rendering, and by `range-dom-applier` to render a single new
@@ -683,18 +677,9 @@ export class TreeRenderer {
     item: any,
     itemIdx: number,
     statics: string[],
-    staticsMap?: Record<string, string[]>,
     statePath?: string
   ): string {
-    let itemStatics = statics;
-    if (
-      staticsMap &&
-      typeof staticsMap === "object" &&
-      item._sk &&
-      staticsMap[item._sk]
-    ) {
-      itemStatics = staticsMap[item._sk];
-    }
+    const itemStatics = statics;
 
     let html = "";
 
@@ -837,13 +822,11 @@ export class TreeRenderer {
     this.rangeState[statePath] = {
       items: currentItems,
       statics: rangeData.statics,
-      staticsMap: rangeData.staticsMap,
     };
 
     this.treeState[statePath] = {
       d: currentItems,
       s: rangeData.statics,
-      sm: rangeData.staticsMap,
     };
 
     const rangeStructure = this.getCurrentRangeStructure(statePath);
@@ -851,7 +834,6 @@ export class TreeRenderer {
       return this.renderItemsWithStatics(
         currentItems,
         rangeStructure.s,
-        rangeStructure.sm,
         statePath
       );
     }
@@ -864,7 +846,6 @@ export class TreeRenderer {
       return {
         d: this.rangeState[stateKey].items,
         s: this.rangeState[stateKey].statics,
-        sm: this.rangeState[stateKey].staticsMap,
       };
     }
 
@@ -883,12 +864,11 @@ export class TreeRenderer {
   private renderItemsWithStatics(
     items: any[],
     statics: string[],
-    staticsMap?: Record<string, string[]>,
     statePath?: string
   ): string {
     const result = items
       .map((item: any, itemIdx: number) =>
-        this.renderRangeItem(item, itemIdx, statics, staticsMap, statePath)
+        this.renderRangeItem(item, itemIdx, statics, statePath)
       )
       .join("");
 

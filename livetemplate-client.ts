@@ -156,8 +156,8 @@ export class LiveTemplateClient {
     this.treeRenderer = new TreeRenderer(this.logger.child("TreeRenderer"));
     this.rangeDomApplier = new RangeDomApplier({
       logger: this.logger.child("RangeDomApplier"),
-      renderItem: (item, idx, statics, sm, sp) =>
-        this.treeRenderer.renderRangeItem(item, idx, statics, sm, sp),
+      renderItem: (item, idx, statics, sp) =>
+        this.treeRenderer.renderRangeItem(item, idx, statics, sp),
       executeLifecycleHook: (el, hook) => this.executeLifecycleHook(el, hook),
       itemLookup: (rangePath, key) => {
         // O(N) linear scan over range.d. For one `u` op per render this is
