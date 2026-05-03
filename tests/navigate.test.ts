@@ -17,21 +17,25 @@
 
 import { LinkInterceptor, LinkInterceptorContext } from "../dom/link-interceptor";
 import type { Logger } from "../utils/logger";
+import { _resetLegacyNoInterceptWarned } from "../utils/legacy-attr";
 
-// Minimal logger stub — LinkInterceptor uses it only for debug/error logging.
-const silentLogger: Logger = {
-  isDebugEnabled: () => false,
-  isInfoEnabled: () => false,
-  isWarnEnabled: () => true,
-  isErrorEnabled: () => true,
-  child: () => silentLogger,
-  setLevel: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  trace: () => {},
-} as unknown as Logger;
+function makeLogger(): Logger & { warn: jest.Mock } {
+  return {
+    isDebugEnabled: () => false,
+    isInfoEnabled: () => false,
+    isWarnEnabled: () => true,
+    isErrorEnabled: () => true,
+    child: function (this: Logger) {
+      return this;
+    },
+    setLevel: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: jest.fn(),
+    error: () => {},
+    trace: () => {},
+  } as unknown as Logger & { warn: jest.Mock };
+}
 
 describe("LinkInterceptor same-pathname navigate bypass", () => {
   let wrapper: HTMLElement;
@@ -39,6 +43,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
   let handleNavigationResponseSpy: jest.Mock<void, [string]>;
   let fetchMock: jest.SpyInstance;
   let interceptor: LinkInterceptor;
+  let logger: Logger & { warn: jest.Mock };
 
   beforeEach(() => {
     document.body.replaceChildren();
@@ -48,6 +53,11 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
     sendNavigateSpy = jest.fn().mockReturnValue(true);
     handleNavigationResponseSpy = jest.fn();
+    logger = makeLogger();
+    // Reset the once-per-process deprecation-warning latch so each test starts
+    // from a clean state. The latch is module-level state in utils/legacy-attr,
+    // exposed via an @internal helper specifically for tests.
+    _resetLegacyNoInterceptWarned();
     // jsdom doesn't ship a global fetch; define a no-op stub so jest.spyOn
     // has something to wrap. jest.restoreAllMocks() in afterEach then cleans
     // up the spy automatically, even if beforeEach throws after this point.
@@ -66,7 +76,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       sendNavigate: sendNavigateSpy,
       canSendNavigate: () => true,
     };
-    interceptor = new LinkInterceptor(ctx, silentLogger);
+    interceptor = new LinkInterceptor(ctx, logger);
     interceptor.setup(wrapper);
 
     // Pin the current location so test navigations have something to
@@ -135,6 +145,113 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     expect(sendNavigateSpy).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(handleNavigationResponseSpy).not.toHaveBeenCalled();
+  });
+
+  it("target=\"_blank\" link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=blank-target";
+    link.target = "_blank";
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("target=\"_self\" link click is intercepted (treated like default)", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=self-target";
+    link.target = "_self";
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("download link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?file=report.csv";
+    link.setAttribute("download", "report.csv");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lvt-nav:no-intercept link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=opt-out";
+    link.setAttribute("lvt-nav:no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lvt-no-intercept (legacy) link click is skipped via backward-compat shim", async () => {
+    // Pre-Phase 1A name. The shim recognizes it so apps upgrading the
+    // client without simultaneously renaming all templates keep working.
+    // Drop the shim in v0.9.0 (see dom/link-interceptor.ts).
+    const link = document.createElement("a");
+    link.href = "/claude?s=legacy-opt-out";
+    link.setAttribute("lvt-no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Verify the deprecation warning was emitted so consumers can find
+    // call-sites to migrate before v0.9.0 removes the shim.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toMatch(/lvt-no-intercept.*deprecated/);
+  });
+
+  it("lvt-no-intercept legacy shim warns only once across multiple clicks", async () => {
+    // Avoid spamming the console: a single deprecation warning per process
+    // is enough to prompt migration. The latch in utils/legacy-attr
+    // suppresses subsequent warns until the page reloads.
+    const link = document.createElement("a");
+    link.href = "/claude?s=legacy-opt-out";
+    link.setAttribute("lvt-no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    link.click();
+    link.click();
+    // Use a macrotask boundary so we don't depend on jsdom's synchronous
+    // click dispatch. If a future jsdom makes click async, this still flushes.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["mailto:user@example.com", "mailto"],
+    ["tel:+1234567890", "tel"],
+    ["javascript:void(0)", "javascript"],
+  ])("non-http protocol %s is skipped", async (href, _name) => {
+    const link = document.createElement("a");
+    link.href = href;
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("same-pathname click aborts any in-flight cross-path fetch", async () => {
@@ -208,7 +325,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       sendNavigate: sendNavigateSpy,
       canSendNavigate: () => false, // HTTP mode
     };
-    const httpInterceptor = new LinkInterceptor(httpCtx, silentLogger);
+    const httpInterceptor = new LinkInterceptor(httpCtx, logger);
     httpInterceptor.setup(wrapper);
 
     const link = document.createElement("a");

@@ -2,6 +2,7 @@ import { debounce, throttle } from "../utils/rate-limit";
 import { lvtSelector } from "../utils/lvt-selector";
 import { executeAction, resolveTarget, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
+import { hasNoInterceptOptOut } from "../utils/legacy-attr";
 
 // Methods supported by click-away, derived from ReactiveAction values
 const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
@@ -192,7 +193,7 @@ export class EventDelegator {
           // enhancement fallback (no-JS POST). The client does not read it;
           // the server extracts it from form data directly.
           if (!action && eventType === "submit" && element instanceof HTMLFormElement) {
-            if (!element.hasAttribute("lvt-form:no-intercept")) {
+            if (!hasNoInterceptOptOut(element, "lvt-form:no-intercept", this.logger)) {
               // Check for explicit routing attribute first.
               // Empty string ("") falls through to submitter/form name resolution.
               const explicitAction = element.getAttribute("lvt-form:action");

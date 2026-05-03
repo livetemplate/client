@@ -1,4 +1,5 @@
 import type { Logger } from "../utils/logger";
+import { hasNoInterceptOptOut } from "../utils/legacy-attr";
 import { isHashLinkTarget, activateHashTarget } from "./hash-link";
 
 export interface LinkInterceptorContext {
@@ -27,7 +28,9 @@ export interface LinkInterceptorContext {
  *   new HTML and hands it to handleNavigationResponse, which decides
  *   between same-handler DOM replace and cross-handler reconnect.
  * - External links, target="_blank", download, and lvt-nav:no-intercept
- *   are skipped.
+ *   are skipped. The legacy lvt-no-intercept attribute is also accepted via
+ *   a backward-compat shim in shouldSkip(); the shim emits a one-time
+ *   deprecation warning and is removed in v0.9.0.
  *
  * Uses AbortController to cancel in-flight fetches when a new navigation
  * starts (rapid clicks, back/forward during fetch).
@@ -138,8 +141,10 @@ export class LinkInterceptor {
     if (link.target && link.target !== "_self") return true;
     // Download links
     if (link.hasAttribute("download")) return true;
-    // Opt-out attribute for link interception
-    if (link.hasAttribute("lvt-nav:no-intercept")) return true;
+    // Opt-out attribute for link interception. hasNoInterceptOptOut also
+    // accepts the pre-Phase 1A `lvt-no-intercept` name and emits a one-time
+    // deprecation warning. The shim is removed in v0.9.0.
+    if (hasNoInterceptOptOut(link, "lvt-nav:no-intercept", this.logger)) return true;
     // mailto/tel/javascript
     const protocol = link.protocol;
     if (protocol !== "http:" && protocol !== "https:") return true;
