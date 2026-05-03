@@ -140,6 +140,8 @@ export class LinkInterceptor {
     if (link.hasAttribute("download")) return true;
     // Opt-out attribute for link interception
     if (link.hasAttribute("lvt-nav:no-intercept")) return true;
+    // Backward-compat shim for the pre-Phase 1A name. Drop in v0.9.0.
+    if (link.hasAttribute("lvt-no-intercept")) return true;
     // mailto/tel/javascript
     const protocol = link.protocol;
     if (protocol !== "http:" && protocol !== "https:") return true;

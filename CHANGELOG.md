@@ -5,6 +5,49 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Migration: Phase 1A breaking changes (v0.8.13 / v0.8.14)
+
+If you're upgrading from `< 0.8.13`, the attribute surface changed substantially. Run
+`grep -rn 'lvt-' templates/` to find call-sites that need updating.
+
+### Renamed attributes
+
+| Old | New | Phase |
+|-----|-----|-------|
+| `lvt-click`, `lvt-input`, `lvt-change`, `lvt-keydown`, `lvt-submit`, ... (16 event-specific attributes) | `lvt-on:{event}` (generic event router) | v0.8.13 |
+| `lvt-{action}-on:{event}` (reactive shortcuts) | `lvt-el:{method}:on:{state}` | v0.8.13 |
+| `lvt-data-*`, `lvt-value-*` | standard `data-*` attributes | v0.8.13 |
+| `lvt-disable-with` | `lvt-form:disable-with` | v0.8.13 |
+| `lvt-no-intercept` (on `<a>` links) | `lvt-nav:no-intercept` | v0.8.14 |
+| `lvt-no-intercept` (on `<form>`) | `lvt-form:no-intercept` | v0.8.14 |
+| (form action routing — implicit) | `lvt-form:action="..."` (explicit, highest priority) | v0.8.14 |
+
+### Removed (no replacement — use the standard-HTML alternative)
+
+| Removed | Use instead |
+|---------|-------------|
+| `ModalManager` / `lvt-modal-open` / `lvt-modal-close` | Native `<dialog>` element + `dialog.showModal()` / `dialog.close()` |
+| `lvt-confirm="message"` | `onclick="return confirm('message')"` (standard browser API) |
+| `lvt-disable-on:{event}` / `lvt-enable-on:{event}` reactive actions | `lvt-el:{method}:on:{state}` (e.g. `lvt-el:setAttr:disabled:on:save:pending`) |
+
+### New Tier 2 namespaces
+
+- `lvt-on:{event}` — DOM event handlers (Tier 1: standard HTML `onclick=...` is preferred when no server round-trip is needed)
+- `lvt-el:{method}:on:{state}` — reactive DOM mutations driven by client state
+- `lvt-fx:{directive}` — visual effects (`lvt-fx:scroll`, `lvt-fx:highlight`, `lvt-fx:animate`)
+- `lvt-form:{behavior}` — form-scoped behaviors (`preserve`, `disable-with`, `action`, `no-intercept`)
+- `lvt-nav:{behavior}` — navigation-scoped behaviors (`no-intercept`)
+- `lvt-mod:{modifier}` — event-handling modifiers (`debounce`, `throttle`)
+
+### Backward-compat shims
+
+The legacy `lvt-no-intercept` attribute on links is recognized via a backward-compat shim
+in `LinkInterceptor.shouldSkip()` so apps that upgrade the client without renaming all
+templates in lockstep keep working. **The shim will be removed in v0.9.0** — migrate to
+`lvt-nav:no-intercept` before then.
+
+For the full design rationale, see the [attribute-reduction proposal](https://github.com/livetemplate/livetemplate/blob/main/docs/archive/proposals/attribute-reduction-proposal.md) in the server repo.
+
 ## [v0.8.40] - 2026-05-02
 
 ### Changes

@@ -137,6 +137,90 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     expect(handleNavigationResponseSpy).not.toHaveBeenCalled();
   });
 
+  it("target=\"_blank\" link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=blank-target";
+    link.target = "_blank";
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("target=\"_self\" link click is intercepted (treated like default)", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=self-target";
+    link.target = "_self";
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("download link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?file=report.csv";
+    link.setAttribute("download", "report.csv");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lvt-nav:no-intercept link click is skipped", async () => {
+    const link = document.createElement("a");
+    link.href = "/claude?s=opt-out";
+    link.setAttribute("lvt-nav:no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lvt-no-intercept (legacy) link click is skipped via backward-compat shim", async () => {
+    // Pre-Phase 1A name. The shim recognizes it so apps upgrading the
+    // client without simultaneously renaming all templates keep working.
+    // Drop the shim in v0.9.0 (see dom/link-interceptor.ts).
+    const link = document.createElement("a");
+    link.href = "/claude?s=legacy-opt-out";
+    link.setAttribute("lvt-no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["mailto:user@example.com", "mailto"],
+    ["tel:+1234567890", "tel"],
+    ["javascript:void(0)", "javascript"],
+  ])("non-http protocol %s is skipped", async (href, _name) => {
+    const link = document.createElement("a");
+    link.href = href;
+    wrapper.appendChild(link);
+
+    link.click();
+    await Promise.resolve();
+
+    expect(sendNavigateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("same-pathname click aborts any in-flight cross-path fetch", async () => {
     // Regression: if a cross-path fetch is in flight and the user then
     // clicks a same-pathname link, the earlier fetch must be aborted so
