@@ -2,6 +2,7 @@ import { debounce } from "../utils/rate-limit";
 import { DEFAULT_CHANGE_DEBOUNCE_MS } from "../constants";
 import type { TreeNode } from "../types";
 import type { Logger } from "../utils/logger";
+import { hasNoInterceptOptOut } from "../utils/legacy-attr";
 
 export type BindingType = "value" | "content" | "attribute";
 
@@ -77,7 +78,7 @@ export class ChangeAutoWirer {
         const parentForm = el.closest("form");
         if (parentForm) {
           if (parentForm.hasAttribute("lvt-change")) continue;
-          if (parentForm.hasAttribute("lvt-form:no-intercept")) continue;
+          if (hasNoInterceptOptOut(parentForm, "lvt-form:no-intercept", this.logger)) continue;
         }
 
         if (el instanceof HTMLInputElement) {

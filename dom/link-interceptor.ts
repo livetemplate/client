@@ -1,4 +1,5 @@
 import type { Logger } from "../utils/logger";
+import { hasNoInterceptOptOut } from "../utils/legacy-attr";
 import { isHashLinkTarget, activateHashTarget } from "./hash-link";
 
 export interface LinkInterceptorContext {
@@ -35,7 +36,6 @@ export interface LinkInterceptorContext {
  * starts (rapid clicks, back/forward during fetch).
  */
 export class LinkInterceptor {
-  private static legacyNoInterceptWarned = false;
   private popstateListener: (() => void) | null = null;
   private abortController: AbortController | null = null;
   // Tracks the URL that was last successfully navigated to (or the initial
@@ -141,18 +141,10 @@ export class LinkInterceptor {
     if (link.target && link.target !== "_self") return true;
     // Download links
     if (link.hasAttribute("download")) return true;
-    // Opt-out attribute for link interception
-    if (link.hasAttribute("lvt-nav:no-intercept")) return true;
-    // Backward-compat shim for the pre-Phase 1A name. Drop in v0.9.0.
-    if (link.hasAttribute("lvt-no-intercept")) {
-      if (!LinkInterceptor.legacyNoInterceptWarned) {
-        LinkInterceptor.legacyNoInterceptWarned = true;
-        this.logger.warn(
-          "lvt-no-intercept is deprecated; use lvt-nav:no-intercept. The shim will be removed in v0.9.0."
-        );
-      }
-      return true;
-    }
+    // Opt-out attribute for link interception. hasNoInterceptOptOut also
+    // accepts the pre-Phase 1A `lvt-no-intercept` name and emits a one-time
+    // deprecation warning. The shim is removed in v0.9.0.
+    if (hasNoInterceptOptOut(link, "lvt-nav:no-intercept", this.logger)) return true;
     // mailto/tel/javascript
     const protocol = link.protocol;
     if (protocol !== "http:" && protocol !== "https:") return true;

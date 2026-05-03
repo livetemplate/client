@@ -1,6 +1,7 @@
 import { ChangeAutoWirer } from "../state/change-auto-wirer";
 import type { ChangeAutoWirerContext } from "../state/change-auto-wirer";
 import { createLogger } from "../utils/logger";
+import { _resetLegacyNoInterceptWarned } from "../utils/legacy-attr";
 
 describe("ChangeAutoWirer", () => {
   let wirer: ChangeAutoWirer;
@@ -19,6 +20,9 @@ describe("ChangeAutoWirer", () => {
     document.body.appendChild(wrapper);
     const logger = createLogger({ scope: "ChangeAutoWirerTest", level: "silent" });
     wirer = new ChangeAutoWirer(createContext(), logger);
+    // The lvt-no-intercept backward-compat shim warns once per process; reset
+    // the latch so each test starts fresh.
+    _resetLegacyNoInterceptWarned();
   });
 
   afterEach(() => {
@@ -351,6 +355,32 @@ describe("ChangeAutoWirer", () => {
     it("skips elements inside form with lvt-form:no-intercept", () => {
       const form = document.createElement("form");
       form.setAttribute("lvt-form:no-intercept", "");
+      const input = document.createElement("input");
+      input.setAttribute("name", "Title");
+      form.appendChild(input);
+      wrapper.appendChild(form);
+
+      setupWirer({
+        s: ['<input name="Title" value="', '">'],
+        "0": "",
+      });
+
+      wirer.wireElements();
+
+      input.value = "test";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      jest.advanceTimersByTime(300);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("skips elements inside form with legacy lvt-no-intercept (backward-compat shim)", () => {
+      // Pre-Phase 1A name. Apps that upgrade the client without renaming
+      // form attributes still get correct opt-out behavior. The shim is
+      // shared with the link interceptor; deprecation-warn coverage lives
+      // in tests/navigate.test.ts. Drop in v0.9.0.
+      const form = document.createElement("form");
+      form.setAttribute("lvt-no-intercept", "");
       const input = document.createElement("input");
       input.setAttribute("name", "Title");
       form.appendChild(input);

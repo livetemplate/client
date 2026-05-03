@@ -17,6 +17,7 @@
 
 import { LinkInterceptor, LinkInterceptorContext } from "../dom/link-interceptor";
 import type { Logger } from "../utils/logger";
+import { _resetLegacyNoInterceptWarned } from "../utils/legacy-attr";
 
 function makeLogger(): Logger & { warn: jest.Mock } {
   return {
@@ -54,9 +55,9 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     handleNavigationResponseSpy = jest.fn();
     logger = makeLogger();
     // Reset the once-per-process deprecation-warning latch so each test starts
-    // from a clean state. The shim's static flag is internal to LinkInterceptor
-    // and not part of its public API; this cast is intentional for test isolation.
-    (LinkInterceptor as unknown as { legacyNoInterceptWarned: boolean }).legacyNoInterceptWarned = false;
+    // from a clean state. The latch is module-level state in utils/legacy-attr,
+    // exposed via an @internal helper specifically for tests.
+    _resetLegacyNoInterceptWarned();
     // jsdom doesn't ship a global fetch; define a no-op stub so jest.spyOn
     // has something to wrap. jest.restoreAllMocks() in afterEach then cleans
     // up the spy automatically, even if beforeEach throws after this point.
@@ -220,7 +221,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
   it("lvt-no-intercept legacy shim warns only once across multiple clicks", async () => {
     // Avoid spamming the console: a single deprecation warning per process
-    // is enough to prompt migration. The static flag in LinkInterceptor
+    // is enough to prompt migration. The latch in utils/legacy-attr
     // suppresses subsequent warns until the page reloads.
     const link = document.createElement("a");
     link.href = "/claude?s=legacy-opt-out";
@@ -230,7 +231,9 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
     link.click();
     link.click();
     link.click();
-    await Promise.resolve();
+    // Use a macrotask boundary so we don't depend on jsdom's synchronous
+    // click dispatch. If a future jsdom makes click async, this still flushes.
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });

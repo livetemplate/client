@@ -42,10 +42,12 @@ find call-sites that need updating.
 
 ### Backward-compat shims
 
-The legacy `lvt-no-intercept` attribute on links is recognized via a backward-compat shim
-in `LinkInterceptor.shouldSkip()` so apps that upgrade the client without renaming all
-templates in lockstep keep working. **The shim will be removed in v0.9.0** — migrate to
-`lvt-nav:no-intercept` before then.
+The legacy `lvt-no-intercept` attribute is recognized on both `<a>` links and `<form>`
+elements via a shared shim in `utils/legacy-attr.ts`. Apps that upgrade the client
+without renaming all templates in lockstep keep working. The first time a legacy
+attribute is encountered the client logs a one-time deprecation warning so app authors
+can find call-sites to migrate. **The shim will be removed in v0.9.0** — migrate to
+`lvt-nav:no-intercept` (links) and `lvt-form:no-intercept` (forms) before then.
 
 For the full design rationale, see the [attribute-reduction proposal](https://github.com/livetemplate/livetemplate/blob/main/docs/archive/proposals/attribute-reduction-proposal.md) in the server repo.
 
