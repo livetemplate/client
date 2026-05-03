@@ -20,7 +20,6 @@ export interface TargetedRangeOp {
   rangePath: string;
   ops: any[];
   statics: string[];
-  staticsMap?: Record<string, string[]>;
   idKey?: string;
 }
 

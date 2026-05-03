@@ -16,7 +16,6 @@ type RenderItemFn = (
   item: any,
   itemIdx: number,
   statics: string[],
-  staticsMap?: Record<string, string[]>,
   statePath?: string
 ) => string;
 
@@ -194,7 +193,7 @@ export class RangeDomApplier {
     targetedOp: TargetedRangeOp,
     morphdomOptions?: any
   ): Element | null {
-    const { rangePath, ops, statics, staticsMap } = targetedOp;
+    const { rangePath, ops, statics } = targetedOp;
     const sampleKey = this.firstKnownKey(ops);
     const container = this.findContainer(wrapper, rangePath, sampleKey);
     if (!container) {
@@ -219,7 +218,6 @@ export class RangeDomApplier {
               container,
               op[1] as string,
               statics,
-              staticsMap,
               rangePath,
               morphdomOptions
             );
@@ -230,7 +228,6 @@ export class RangeDomApplier {
               op[1] as string,
               op[2],
               statics,
-              staticsMap,
               rangePath
             );
             break;
@@ -239,7 +236,6 @@ export class RangeDomApplier {
               container,
               op[1],
               statics,
-              staticsMap,
               rangePath
             );
             break;
@@ -248,7 +244,6 @@ export class RangeDomApplier {
               container,
               op[1],
               statics,
-              staticsMap,
               rangePath
             );
             break;
@@ -351,7 +346,6 @@ export class RangeDomApplier {
     container: Element,
     key: string,
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string,
     morphdomOptions?: any
   ): boolean {
@@ -374,7 +368,6 @@ export class RangeDomApplier {
       item,
       itemIdx,
       statics,
-      staticsMap,
       rangePath
     );
     const newRow = this.parseSingleRow(newHtml);
@@ -411,7 +404,6 @@ export class RangeDomApplier {
     afterKey: string,
     items: any | any[],
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): boolean {
     const anchor = this.findItemByKey(container, afterKey);
@@ -424,7 +416,6 @@ export class RangeDomApplier {
     return this.renderItemsAtomic(
       items,
       statics,
-      staticsMap,
       rangePath,
       this.indexOfChild(container, anchor) + 1,
       (frag) => container.insertBefore(frag, anchor.nextSibling)
@@ -435,13 +426,11 @@ export class RangeDomApplier {
     container: Element,
     items: any | any[],
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): boolean {
     return this.renderItemsAtomic(
       items,
       statics,
-      staticsMap,
       rangePath,
       container.children.length,
       (frag) => container.appendChild(frag)
@@ -452,13 +441,11 @@ export class RangeDomApplier {
     container: Element,
     items: any | any[],
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): boolean {
     return this.renderItemsAtomic(
       items,
       statics,
-      staticsMap,
       rangePath,
       0,
       (frag) => container.insertBefore(frag, container.firstChild)
@@ -475,7 +462,6 @@ export class RangeDomApplier {
   private renderItemsAtomic(
     items: any | any[],
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string,
     baseIdx: number,
     splice: (frag: DocumentFragment) => void
@@ -488,7 +474,6 @@ export class RangeDomApplier {
         list[i],
         baseIdx + i,
         statics,
-        staticsMap,
         rangePath
       );
       if (!newRow) {
@@ -561,16 +546,9 @@ export class RangeDomApplier {
     item: any,
     itemIdx: number,
     statics: string[],
-    staticsMap: Record<string, string[]> | undefined,
     rangePath: string
   ): Element | null {
-    const html = this.ctx.renderItem(
-      item,
-      itemIdx,
-      statics,
-      staticsMap,
-      rangePath
-    );
+    const html = this.ctx.renderItem(item, itemIdx, statics, rangePath);
     return this.parseSingleRow(html);
   }
 

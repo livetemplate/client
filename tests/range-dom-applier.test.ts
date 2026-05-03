@@ -60,8 +60,8 @@ function makeFixture(itemCount: number): Fixture {
   const hookCalls: Array<{ hook: string; key: string | null }> = [];
   const applier = new RangeDomApplier({
     logger,
-    renderItem: (item, idx, statics, sm, sp) =>
-      renderer.renderRangeItem(item, idx, statics, sm, sp),
+    renderItem: (item, idx, statics, sp) =>
+      renderer.renderRangeItem(item, idx, statics, sp),
     executeLifecycleHook: (el, hook) => {
       hookCalls.push({ hook, key: el.getAttribute("data-key") });
     },
