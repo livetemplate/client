@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Migration: Phase 1A breaking changes (v0.8.13 / v0.8.14)
 
 If you're upgrading from `< 0.8.13`, the attribute surface changed substantially. Run
-`grep -rn 'lvt-' templates/` to find call-sites that need updating.
+`grep -rn 'lvt-' <your-template-dir>` (or `grep -rn 'lvt-' .` from your app root) to
+find call-sites that need updating.
 
 ### Renamed attributes
 

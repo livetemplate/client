@@ -18,20 +18,23 @@
 import { LinkInterceptor, LinkInterceptorContext } from "../dom/link-interceptor";
 import type { Logger } from "../utils/logger";
 
-// Minimal logger stub — LinkInterceptor uses it only for debug/error logging.
-const silentLogger: Logger = {
-  isDebugEnabled: () => false,
-  isInfoEnabled: () => false,
-  isWarnEnabled: () => true,
-  isErrorEnabled: () => true,
-  child: () => silentLogger,
-  setLevel: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  trace: () => {},
-} as unknown as Logger;
+function makeLogger(): Logger & { warn: jest.Mock } {
+  return {
+    isDebugEnabled: () => false,
+    isInfoEnabled: () => false,
+    isWarnEnabled: () => true,
+    isErrorEnabled: () => true,
+    child: function (this: Logger) {
+      return this;
+    },
+    setLevel: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: jest.fn(),
+    error: () => {},
+    trace: () => {},
+  } as unknown as Logger & { warn: jest.Mock };
+}
 
 describe("LinkInterceptor same-pathname navigate bypass", () => {
   let wrapper: HTMLElement;
@@ -39,6 +42,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
   let handleNavigationResponseSpy: jest.Mock<void, [string]>;
   let fetchMock: jest.SpyInstance;
   let interceptor: LinkInterceptor;
+  let logger: Logger & { warn: jest.Mock };
 
   beforeEach(() => {
     document.body.replaceChildren();
@@ -48,6 +52,11 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
     sendNavigateSpy = jest.fn().mockReturnValue(true);
     handleNavigationResponseSpy = jest.fn();
+    logger = makeLogger();
+    // Reset the once-per-process deprecation-warning latch so each test starts
+    // from a clean state. The shim's static flag is internal to LinkInterceptor
+    // and not part of its public API; this cast is intentional for test isolation.
+    (LinkInterceptor as unknown as { legacyNoInterceptWarned: boolean }).legacyNoInterceptWarned = false;
     // jsdom doesn't ship a global fetch; define a no-op stub so jest.spyOn
     // has something to wrap. jest.restoreAllMocks() in afterEach then cleans
     // up the spy automatically, even if beforeEach throws after this point.
@@ -66,7 +75,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       sendNavigate: sendNavigateSpy,
       canSendNavigate: () => true,
     };
-    interceptor = new LinkInterceptor(ctx, silentLogger);
+    interceptor = new LinkInterceptor(ctx, logger);
     interceptor.setup(wrapper);
 
     // Pin the current location so test navigations have something to
@@ -203,6 +212,27 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
 
     expect(sendNavigateSpy).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+    // Verify the deprecation warning was emitted so consumers can find
+    // call-sites to migrate before v0.9.0 removes the shim.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toMatch(/lvt-no-intercept.*deprecated/);
+  });
+
+  it("lvt-no-intercept legacy shim warns only once across multiple clicks", async () => {
+    // Avoid spamming the console: a single deprecation warning per process
+    // is enough to prompt migration. The static flag in LinkInterceptor
+    // suppresses subsequent warns until the page reloads.
+    const link = document.createElement("a");
+    link.href = "/claude?s=legacy-opt-out";
+    link.setAttribute("lvt-no-intercept", "");
+    wrapper.appendChild(link);
+
+    link.click();
+    link.click();
+    link.click();
+    await Promise.resolve();
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -292,7 +322,7 @@ describe("LinkInterceptor same-pathname navigate bypass", () => {
       sendNavigate: sendNavigateSpy,
       canSendNavigate: () => false, // HTTP mode
     };
-    const httpInterceptor = new LinkInterceptor(httpCtx, silentLogger);
+    const httpInterceptor = new LinkInterceptor(httpCtx, logger);
     httpInterceptor.setup(wrapper);
 
     const link = document.createElement("a");

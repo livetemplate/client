@@ -27,12 +27,15 @@ export interface LinkInterceptorContext {
  *   new HTML and hands it to handleNavigationResponse, which decides
  *   between same-handler DOM replace and cross-handler reconnect.
  * - External links, target="_blank", download, and lvt-nav:no-intercept
- *   are skipped.
+ *   are skipped. The legacy lvt-no-intercept attribute is also accepted via
+ *   a backward-compat shim in shouldSkip(); the shim emits a one-time
+ *   deprecation warning and is removed in v0.9.0.
  *
  * Uses AbortController to cancel in-flight fetches when a new navigation
  * starts (rapid clicks, back/forward during fetch).
  */
 export class LinkInterceptor {
+  private static legacyNoInterceptWarned = false;
   private popstateListener: (() => void) | null = null;
   private abortController: AbortController | null = null;
   // Tracks the URL that was last successfully navigated to (or the initial
@@ -141,7 +144,15 @@ export class LinkInterceptor {
     // Opt-out attribute for link interception
     if (link.hasAttribute("lvt-nav:no-intercept")) return true;
     // Backward-compat shim for the pre-Phase 1A name. Drop in v0.9.0.
-    if (link.hasAttribute("lvt-no-intercept")) return true;
+    if (link.hasAttribute("lvt-no-intercept")) {
+      if (!LinkInterceptor.legacyNoInterceptWarned) {
+        LinkInterceptor.legacyNoInterceptWarned = true;
+        this.logger.warn(
+          "lvt-no-intercept is deprecated; use lvt-nav:no-intercept. The shim will be removed in v0.9.0."
+        );
+      }
+      return true;
+    }
     // mailto/tel/javascript
     const protocol = link.protocol;
     if (protocol !== "http:" && protocol !== "https:") return true;
