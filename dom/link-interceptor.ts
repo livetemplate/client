@@ -4,7 +4,7 @@ import { isHashLinkTarget, activateHashTarget } from "./hash-link";
 
 export interface LinkInterceptorContext {
   getWrapperElement(): Element | null;
-  handleNavigationResponse(html: string): void;
+  handleNavigationResponse(html: string, destinationHref: string): void;
   // Send an in-band navigate message over the existing WebSocket.
   // Returns true if the message was sent, false if it was dropped
   // (e.g. WS not open). The caller uses this to decide whether to push
@@ -244,7 +244,7 @@ export class LinkInterceptor {
       }
 
       this.currentHref = href;
-      this.context.handleNavigationResponse(html);
+      this.context.handleNavigationResponse(html, href);
     } catch (e: unknown) {
       // AbortError means a new navigation superseded this one — ignore
       if (e instanceof DOMException && e.name === "AbortError") return;

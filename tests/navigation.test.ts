@@ -21,8 +21,11 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (html: string) => {
-    (client as any).handleNavigationResponse(html);
+  const callHandleNavigationResponse = (
+    html: string,
+    destinationHref: string = "https://example.com/"
+  ) => {
+    (client as any).handleNavigationResponse(html, destinationHref);
   };
 
   describe("same-handler navigation", () => {
@@ -423,6 +426,91 @@ describe("handleNavigationResponse", () => {
       expect(() =>
         callHandleNavigationResponse("<html><body></body></html>")
       ).not.toThrow();
+    });
+  });
+
+  describe("cross-app boundary (different stylesheets)", () => {
+    // Real-world repro from livetemplate.fly.dev: a docs site reverse-proxies
+    // a separately-deployed app at /patterns/*. Each app owns its <head>
+    // (different <link rel="stylesheet"> URLs). Without this guard, clicking
+    // a link from the proxied app back to the docs root patches the docs body
+    // into a page whose head still references the proxied app's stylesheets,
+    // producing a broken layout that "fixes itself on refresh."
+
+    beforeEach(() => {
+      // Pre-populate the current document head with the "originating" app's
+      // stylesheet, then have the fetched doc declare a different one.
+      const link = document.createElement("link");
+      link.setAttribute("rel", "stylesheet");
+      link.setAttribute("href", "https://example.com/assets/lt-patterns.css");
+      document.head.appendChild(link);
+    });
+
+    afterEach(() => {
+      document.head.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove());
+    });
+
+    it("triggers a full navigation when fetched HTML declares a different set of stylesheets", () => {
+      const performNavSpy = jest
+        .spyOn(client as any, "performFullNavigation")
+        .mockImplementation(() => {});
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+
+      const html = [
+        "<html>",
+        "<head>",
+        '  <link rel="stylesheet" href="https://example.com/assets/docs-site.css">',
+        "</head>",
+        "<body>",
+        '  <div data-lvt-id="lvt-handler-a">',
+        "    <p>Docs root content</p>",
+        "  </div>",
+        "</body>",
+        "</html>",
+      ].join("\n");
+
+      callHandleNavigationResponse(html, "https://example.com/docs/intro");
+
+      // Cross-app boundary: full navigation called with the destination
+      // URL (NOT reload(), which would silently rely on caller-set
+      // window.location ordering — see PR #119 review).
+      expect(performNavSpy).toHaveBeenCalledWith("https://example.com/docs/intro");
+      // Body swap path NOT taken: disconnect serves as the proxy signal
+      // for "we proceeded into the swap path", and it must not have run.
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Wrapper content unchanged — confirms we early-returned BEFORE
+      // replaceChildren, so the page can't enter a half-swapped state.
+      expect(wrapper.textContent).toContain("Handler A content");
+    });
+
+    it("performs body swap when fetched HTML has the same stylesheets", () => {
+      // Within-app navigation: same head, body swap is the correct
+      // optimization. This is the path that the cross-app guard must
+      // not regress.
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      jest.spyOn(client as any, "connect").mockResolvedValue(undefined);
+
+      const html = [
+        "<html>",
+        "<head>",
+        '  <link rel="stylesheet" href="https://example.com/assets/lt-patterns.css">',
+        "</head>",
+        "<body>",
+        '  <div data-lvt-id="lvt-handler-b">',
+        "    <p>Same-app new route</p>",
+        "  </div>",
+        "</body>",
+        "</html>",
+      ].join("\n");
+
+      callHandleNavigationResponse(html);
+
+      // disconnect() was called — the body swap path proceeded
+      expect(disconnectSpy).toHaveBeenCalled();
     });
   });
 });

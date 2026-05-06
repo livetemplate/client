@@ -258,7 +258,8 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+        handleNavigationResponse: (html: string, destinationHref: string) =>
+          this.handleNavigationResponse(html, destinationHref),
         sendNavigate: (href: string) => this.sendNavigate(href),
         // Only take the in-band fast path when the WS is actually OPEN.
         // If WS is CONNECTING or CLOSED, falling through to the normal fetch
@@ -939,7 +940,58 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
-  private handleNavigationResponse(html: string): void {
+  /**
+   * Compare the set of <link rel="stylesheet"> URLs in the current
+   * document's <head> against those in a fetched (parsed) document.
+   * Returns true when the two pages declare different stylesheets,
+   * which is our signal that swapping the body alone would leave the
+   * new content styled by the wrong app's CSS. URLs are compared as
+   * absolute (the live doc's via the browser-resolved .href; the
+   * fetched doc's via explicit base-URL resolution against the
+   * destination, since the parsed Document has no inherent base) so
+   * that "/foo.css" and "https://host/foo.css" don't appear to differ.
+   */
+  private stylesheetsDiffer(doc: Document, destinationHref: string): boolean {
+    const currentLinks = document.querySelectorAll(
+      'link[rel~="stylesheet"][href]'
+    );
+    const current = new Set<string>();
+    currentLinks.forEach((l) => {
+      const href = (l as HTMLLinkElement).href;
+      if (href) current.add(href);
+    });
+
+    const fetchedLinks = doc.querySelectorAll('link[rel~="stylesheet"][href]');
+    const fetched = new Set<string>();
+    fetchedLinks.forEach((l) => {
+      const raw = l.getAttribute("href");
+      if (!raw) return;
+      try {
+        fetched.add(new URL(raw, destinationHref).href);
+      } catch {
+        fetched.add(raw);
+      }
+    });
+
+    if (current.size !== fetched.size) return true;
+    let differs = false;
+    current.forEach((href) => {
+      if (!fetched.has(href)) differs = true;
+    });
+    return differs;
+  }
+
+  /**
+   * Force a full document navigation to `destinationHref`. Used when
+   * an SPA-style body-swap is unsafe (e.g. cross-app navigation). The
+   * indirection exists for testability — jsdom locks the real Location
+   * object, so tests spy on this method instead.
+   */
+  private performFullNavigation(destinationHref: string): void {
+    window.location.href = destinationHref;
+  }
+
+  private handleNavigationResponse(html: string, destinationHref: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
@@ -975,6 +1027,23 @@ export class LiveTemplateClient {
       if (!newId) {
         this.logger.warn("Cross-handler navigation: new wrapper has empty data-lvt-id");
         window.location.reload();
+        return;
+      }
+
+      // Cross-app boundary: the SPA optimization (swap body, keep head)
+      // only works when both pages share the same <head> contract. When
+      // a user navigates from one deployed app to another that shares
+      // the origin (e.g., a docs site reverse-proxying a separately-
+      // deployed pattern showcase), the two apps may declare different
+      // <link rel="stylesheet"> URLs. Patching only the body would leave
+      // the new body styled by the previous app's CSS — broken layout
+      // that "fixes itself on refresh" because a real navigation reloads
+      // the head too. Detect this and fall through to a full navigation.
+      if (this.stylesheetsDiffer(doc, destinationHref)) {
+        this.logger.info(
+          "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); falling back to full navigation"
+        );
+        this.performFullNavigation(destinationHref);
         return;
       }
 
