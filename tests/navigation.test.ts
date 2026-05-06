@@ -425,4 +425,86 @@ describe("handleNavigationResponse", () => {
       ).not.toThrow();
     });
   });
+
+  describe("cross-app boundary (different stylesheets)", () => {
+    // Real-world repro from livetemplate.fly.dev: a docs site reverse-proxies
+    // a separately-deployed app at /patterns/*. Each app owns its <head>
+    // (different <link rel="stylesheet"> URLs). Without this guard, clicking
+    // a link from the proxied app back to the docs root patches the docs body
+    // into a page whose head still references the proxied app's stylesheets,
+    // producing a broken layout that "fixes itself on refresh."
+
+    beforeEach(() => {
+      // Pre-populate the current document head with the "originating" app's
+      // stylesheet, then have the fetched doc declare a different one.
+      const link = document.createElement("link");
+      link.setAttribute("rel", "stylesheet");
+      link.setAttribute("href", "/assets/lt-patterns.css");
+      document.head.appendChild(link);
+    });
+
+    afterEach(() => {
+      document.head.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove());
+    });
+
+    it("skips body swap when fetched HTML declares a different set of stylesheets", () => {
+      // jsdom's Location is read-only and refuses both .reload override and
+      // defineProperty replacement. Test the observable consequence instead:
+      // when stylesheets differ, the body swap path (which calls disconnect)
+      // must NOT run — the cross-app reload short-circuit returns first.
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+
+      const html = [
+        "<html>",
+        "<head>",
+        '  <link rel="stylesheet" href="/assets/docs-site.css">',
+        "</head>",
+        "<body>",
+        '  <div data-lvt-id="lvt-handler-a">',
+        "    <p>Docs root content</p>",
+        "  </div>",
+        "</body>",
+        "</html>",
+      ].join("\n");
+
+      callHandleNavigationResponse(html);
+
+      // Body swap path NOT taken: disconnect() was the first observable
+      // side effect of the swap path, so it serves as the proxy signal.
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Wrapper content unchanged — confirms we early-returned BEFORE
+      // replaceChildren, so the page can't enter a half-swapped state.
+      expect(wrapper.textContent).toContain("Handler A content");
+    });
+
+    it("performs body swap when fetched HTML has the same stylesheets", () => {
+      // Within-app navigation: same head, body swap is the correct
+      // optimization. This is the path that the cross-app guard must
+      // not regress.
+      const disconnectSpy = jest
+        .spyOn(client, "disconnect")
+        .mockImplementation(() => {});
+      jest.spyOn(client as any, "connect").mockResolvedValue(undefined);
+
+      const html = [
+        "<html>",
+        "<head>",
+        '  <link rel="stylesheet" href="/assets/lt-patterns.css">',
+        "</head>",
+        "<body>",
+        '  <div data-lvt-id="lvt-handler-b">',
+        "    <p>Same-app new route</p>",
+        "  </div>",
+        "</body>",
+        "</html>",
+      ].join("\n");
+
+      callHandleNavigationResponse(html);
+
+      // disconnect() was called — the body swap path proceeded
+      expect(disconnectSpy).toHaveBeenCalled();
+    });
+  });
 });

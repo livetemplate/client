@@ -939,6 +939,42 @@ export class LiveTemplateClient {
    * (done in LinkInterceptor.navigate) so the WebSocket connects to
    * the correct handler.
    */
+  /**
+   * Compare the set of <link rel="stylesheet"> URLs in the current
+   * document's <head> against those in a fetched (parsed) document.
+   * Returns true when the two pages declare different stylesheets,
+   * which is our signal that swapping the body alone would leave the
+   * new content styled by the wrong app's CSS. URLs are compared as
+   * absolute (resolved against the relevant base) so that "/foo.css"
+   * and "https://host/foo.css" don't appear to differ.
+   */
+  private stylesheetsDiffer(doc: Document): boolean {
+    const baseHref = window.location.href;
+    const collect = (root: Document | DocumentFragment): Set<string> => {
+      const set = new Set<string>();
+      const links = root.querySelectorAll('link[rel~="stylesheet"][href]');
+      links.forEach((l) => {
+        const raw = l.getAttribute("href");
+        if (!raw) return;
+        try {
+          set.add(new URL(raw, baseHref).href);
+        } catch {
+          set.add(raw);
+        }
+      });
+      return set;
+    };
+
+    const current = collect(document);
+    const fetched = collect(doc);
+    if (current.size !== fetched.size) return true;
+    let differs = false;
+    current.forEach((href) => {
+      if (!fetched.has(href)) differs = true;
+    });
+    return differs;
+  }
+
   private handleNavigationResponse(html: string): void {
     if (!this.wrapperElement) return;
 
@@ -974,6 +1010,23 @@ export class LiveTemplateClient {
       // Guard: attribute exists (we queried by [data-lvt-id]) but could be empty
       if (!newId) {
         this.logger.warn("Cross-handler navigation: new wrapper has empty data-lvt-id");
+        window.location.reload();
+        return;
+      }
+
+      // Cross-app boundary: the SPA optimization (swap body, keep head)
+      // only works when both pages share the same <head> contract. When
+      // a user navigates from one deployed app to another that shares
+      // the origin (e.g., a docs site reverse-proxying a separately-
+      // deployed pattern showcase), the two apps may declare different
+      // <link rel="stylesheet"> URLs. Patching only the body would leave
+      // the new body styled by the previous app's CSS — broken layout
+      // that "fixes itself on refresh" because a real navigation reloads
+      // the head too. Detect this and fall through to a full navigation.
+      if (this.stylesheetsDiffer(doc)) {
+        this.logger.info(
+          "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); reloading to pick up the new head"
+        );
         window.location.reload();
         return;
       }
