@@ -5,6 +5,18 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.8.41] - 2026-05-06
+
+### Changes
+
+- fix: full reload when SPA navigation crosses an app boundary (#119) (067827a)
+- refactor: remove dead StaticsMap code (#17) (226811f)
+- docs(README): cross-link to https://livetemplate.fly.dev docs site (#117) (c168b97)
+- chore: Phase 1A migration ergonomics — shim, tests, docs (#46, #47, #48) (#116) (df2c1fd)
+- ci: dispatch livetemplate/docs sync on release tag (#115) (dc0147f)
+
+
+
 ## Migration: Phase 1A breaking changes (v0.8.13 / v0.8.14)
 
 If you're upgrading from `< 0.8.13`, the attribute surface changed substantially. Run
