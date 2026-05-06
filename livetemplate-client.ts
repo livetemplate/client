@@ -1019,6 +1019,27 @@ export class LiveTemplateClient {
     // Same-pathname same-ID navigation (query-param change on the same route)
     // is covered exclusively by LinkInterceptor's fast path and navigate.test.ts.
 
+    // Cross-app boundary: the SPA optimization (swap body, keep head)
+    // only works when both pages share the same <head> contract. When
+    // a user navigates from one deployed app to another that shares
+    // the origin (e.g., a docs site reverse-proxying a separately-
+    // deployed pattern showcase), the two apps may declare different
+    // <link rel="stylesheet"> URLs. Patching only the body would leave
+    // the new body styled by the previous app's CSS — broken layout
+    // that "fixes itself on refresh" because a real navigation reloads
+    // the head too. This guard runs BEFORE either branch (with-wrapper
+    // and no-wrapper) below, because both branches end up swapping body
+    // content while the head stays unchanged. The destination page may
+    // not have a data-lvt-id at all (e.g., a static docs page), so the
+    // check cannot live inside the wrapper-found branch.
+    if (this.stylesheetsDiffer(doc, destinationHref)) {
+      this.logger.info(
+        "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); falling back to full navigation"
+      );
+      this.performFullNavigation(destinationHref);
+      return;
+    }
+
     // Check for any handler wrapper (same-ID cross-path or different handler)
     const newWrapper = doc.querySelector("[data-lvt-id]");
     if (newWrapper) {
@@ -1030,22 +1051,6 @@ export class LiveTemplateClient {
         return;
       }
 
-      // Cross-app boundary: the SPA optimization (swap body, keep head)
-      // only works when both pages share the same <head> contract. When
-      // a user navigates from one deployed app to another that shares
-      // the origin (e.g., a docs site reverse-proxying a separately-
-      // deployed pattern showcase), the two apps may declare different
-      // <link rel="stylesheet"> URLs. Patching only the body would leave
-      // the new body styled by the previous app's CSS — broken layout
-      // that "fixes itself on refresh" because a real navigation reloads
-      // the head too. Detect this and fall through to a full navigation.
-      if (this.stylesheetsDiffer(doc, destinationHref)) {
-        this.logger.info(
-          "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); falling back to full navigation"
-        );
-        this.performFullNavigation(destinationHref);
-        return;
-      }
 
       // Clean up stale event listeners keyed to the old wrapper ID.
       // Each component knows its own listener keys, so we delegate.

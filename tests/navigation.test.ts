@@ -512,5 +512,36 @@ describe("handleNavigationResponse", () => {
       // disconnect() was called — the body swap path proceeded
       expect(disconnectSpy).toHaveBeenCalled();
     });
+
+    it("triggers a full navigation even when destination has NO data-lvt-id", () => {
+      // Real-world repro: navigating from a LiveTemplate-handler page
+      // (with data-lvt-id) to a static page that has none — e.g., a
+      // tinkerdown-rendered docs root. The previous fix only checked
+      // stylesheets inside the with-wrapper branch, so this case fell
+      // through to the no-wrapper body-replace fallback at the bottom
+      // of handleNavigationResponse, cementing the same head-vs-body
+      // mismatch we are trying to prevent. Move the check to run before
+      // either branch so the no-wrapper case is also covered.
+      const performNavSpy = jest
+        .spyOn(client as any, "performFullNavigation")
+        .mockImplementation(() => {});
+
+      const html = [
+        "<html>",
+        "<head>",
+        '  <link rel="stylesheet" href="https://example.com/assets/docs-site.css">',
+        "</head>",
+        "<body>",
+        "  <main><h1>Docs root — no data-lvt-id anywhere</h1></main>",
+        "</body>",
+        "</html>",
+      ].join("\n");
+
+      callHandleNavigationResponse(html, "https://example.com/");
+
+      expect(performNavSpy).toHaveBeenCalledWith("https://example.com/");
+      // Wrapper untouched — we early-returned before any body-replace
+      expect(wrapper.textContent).toContain("Handler A content");
+    });
   });
 });
