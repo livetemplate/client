@@ -21,8 +21,11 @@ describe("handleNavigationResponse", () => {
     document.body.innerHTML = ""; // safe: test cleanup
   });
 
-  const callHandleNavigationResponse = (html: string) => {
-    (client as any).handleNavigationResponse(html);
+  const callHandleNavigationResponse = (
+    html: string,
+    destinationHref: string = "https://example.com/"
+  ) => {
+    (client as any).handleNavigationResponse(html, destinationHref);
   };
 
   describe("same-handler navigation", () => {
@@ -439,7 +442,7 @@ describe("handleNavigationResponse", () => {
       // stylesheet, then have the fetched doc declare a different one.
       const link = document.createElement("link");
       link.setAttribute("rel", "stylesheet");
-      link.setAttribute("href", "/assets/lt-patterns.css");
+      link.setAttribute("href", "https://example.com/assets/lt-patterns.css");
       document.head.appendChild(link);
     });
 
@@ -447,11 +450,10 @@ describe("handleNavigationResponse", () => {
       document.head.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove());
     });
 
-    it("skips body swap when fetched HTML declares a different set of stylesheets", () => {
-      // jsdom's Location is read-only and refuses both .reload override and
-      // defineProperty replacement. Test the observable consequence instead:
-      // when stylesheets differ, the body swap path (which calls disconnect)
-      // must NOT run — the cross-app reload short-circuit returns first.
+    it("triggers a full navigation when fetched HTML declares a different set of stylesheets", () => {
+      const performNavSpy = jest
+        .spyOn(client as any, "performFullNavigation")
+        .mockImplementation(() => {});
       const disconnectSpy = jest
         .spyOn(client, "disconnect")
         .mockImplementation(() => {});
@@ -459,7 +461,7 @@ describe("handleNavigationResponse", () => {
       const html = [
         "<html>",
         "<head>",
-        '  <link rel="stylesheet" href="/assets/docs-site.css">',
+        '  <link rel="stylesheet" href="https://example.com/assets/docs-site.css">',
         "</head>",
         "<body>",
         '  <div data-lvt-id="lvt-handler-a">',
@@ -469,10 +471,14 @@ describe("handleNavigationResponse", () => {
         "</html>",
       ].join("\n");
 
-      callHandleNavigationResponse(html);
+      callHandleNavigationResponse(html, "https://example.com/docs/intro");
 
-      // Body swap path NOT taken: disconnect() was the first observable
-      // side effect of the swap path, so it serves as the proxy signal.
+      // Cross-app boundary: full navigation called with the destination
+      // URL (NOT reload(), which would silently rely on caller-set
+      // window.location ordering — see PR #119 review).
+      expect(performNavSpy).toHaveBeenCalledWith("https://example.com/docs/intro");
+      // Body swap path NOT taken: disconnect serves as the proxy signal
+      // for "we proceeded into the swap path", and it must not have run.
       expect(disconnectSpy).not.toHaveBeenCalled();
       // Wrapper content unchanged — confirms we early-returned BEFORE
       // replaceChildren, so the page can't enter a half-swapped state.
@@ -491,7 +497,7 @@ describe("handleNavigationResponse", () => {
       const html = [
         "<html>",
         "<head>",
-        '  <link rel="stylesheet" href="/assets/lt-patterns.css">',
+        '  <link rel="stylesheet" href="https://example.com/assets/lt-patterns.css">',
         "</head>",
         "<body>",
         '  <div data-lvt-id="lvt-handler-b">',

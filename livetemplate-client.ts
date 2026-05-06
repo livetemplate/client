@@ -258,7 +258,8 @@ export class LiveTemplateClient {
     this.linkInterceptor = new LinkInterceptor(
       {
         getWrapperElement: () => this.wrapperElement,
-        handleNavigationResponse: (html: string) => this.handleNavigationResponse(html),
+        handleNavigationResponse: (html: string, destinationHref: string) =>
+          this.handleNavigationResponse(html, destinationHref),
         sendNavigate: (href: string) => this.sendNavigate(href),
         // Only take the in-band fast path when the WS is actually OPEN.
         // If WS is CONNECTING or CLOSED, falling through to the normal fetch
@@ -945,28 +946,33 @@ export class LiveTemplateClient {
    * Returns true when the two pages declare different stylesheets,
    * which is our signal that swapping the body alone would leave the
    * new content styled by the wrong app's CSS. URLs are compared as
-   * absolute (resolved against the relevant base) so that "/foo.css"
-   * and "https://host/foo.css" don't appear to differ.
+   * absolute (the live doc's via the browser-resolved .href; the
+   * fetched doc's via explicit base-URL resolution against the
+   * destination, since the parsed Document has no inherent base) so
+   * that "/foo.css" and "https://host/foo.css" don't appear to differ.
    */
-  private stylesheetsDiffer(doc: Document): boolean {
-    const baseHref = window.location.href;
-    const collect = (root: Document | DocumentFragment): Set<string> => {
-      const set = new Set<string>();
-      const links = root.querySelectorAll('link[rel~="stylesheet"][href]');
-      links.forEach((l) => {
-        const raw = l.getAttribute("href");
-        if (!raw) return;
-        try {
-          set.add(new URL(raw, baseHref).href);
-        } catch {
-          set.add(raw);
-        }
-      });
-      return set;
-    };
+  private stylesheetsDiffer(doc: Document, destinationHref: string): boolean {
+    const currentLinks = document.querySelectorAll(
+      'link[rel~="stylesheet"][href]'
+    );
+    const current = new Set<string>();
+    currentLinks.forEach((l) => {
+      const href = (l as HTMLLinkElement).href;
+      if (href) current.add(href);
+    });
 
-    const current = collect(document);
-    const fetched = collect(doc);
+    const fetchedLinks = doc.querySelectorAll('link[rel~="stylesheet"][href]');
+    const fetched = new Set<string>();
+    fetchedLinks.forEach((l) => {
+      const raw = l.getAttribute("href");
+      if (!raw) return;
+      try {
+        fetched.add(new URL(raw, destinationHref).href);
+      } catch {
+        fetched.add(raw);
+      }
+    });
+
     if (current.size !== fetched.size) return true;
     let differs = false;
     current.forEach((href) => {
@@ -975,7 +981,17 @@ export class LiveTemplateClient {
     return differs;
   }
 
-  private handleNavigationResponse(html: string): void {
+  /**
+   * Force a full document navigation to `destinationHref`. Used when
+   * an SPA-style body-swap is unsafe (e.g. cross-app navigation). The
+   * indirection exists for testability — jsdom locks the real Location
+   * object, so tests spy on this method instead.
+   */
+  private performFullNavigation(destinationHref: string): void {
+    window.location.href = destinationHref;
+  }
+
+  private handleNavigationResponse(html: string, destinationHref: string): void {
     if (!this.wrapperElement) return;
 
     const parser = new DOMParser();
@@ -1023,11 +1039,11 @@ export class LiveTemplateClient {
       // the new body styled by the previous app's CSS — broken layout
       // that "fixes itself on refresh" because a real navigation reloads
       // the head too. Detect this and fall through to a full navigation.
-      if (this.stylesheetsDiffer(doc)) {
+      if (this.stylesheetsDiffer(doc, destinationHref)) {
         this.logger.info(
-          "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); reloading to pick up the new head"
+          "Cross-app navigation detected (different <link rel=\"stylesheet\"> set in fetched HTML); falling back to full navigation"
         );
-        window.location.reload();
+        this.performFullNavigation(destinationHref);
         return;
       }
 
