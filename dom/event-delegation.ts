@@ -278,6 +278,17 @@ export class EventDelegator {
                   element.appendChild(hiddenInput);
                 }
                 hiddenInput.value = submitter.name;
+              } else {
+                // No named submitter on this submission — clear any stale
+                // hidden input left over from a previous named submit.
+                // Without this, a [name=save] click followed by an unnamed
+                // click would send the stale "save" value to the server
+                // and misroute the action.
+                element
+                  .querySelector<HTMLInputElement>(
+                    'input[type="hidden"][name="lvt-submitter"]'
+                  )
+                  ?.remove();
               }
             }
           }

@@ -1580,6 +1580,34 @@ describe("EventDelegator", () => {
       expect(hiddenInput!.value).toBe("go");
     });
 
+    it("lvt-form:emit-submitter clears stale hidden input on unnamed follow-up submission", () => {
+      // Regression: a named submit creates the hidden input with "save",
+      // then an unnamed submit must not leave that value on the form.
+      // Without the clear-on-unnamed branch, the server would receive
+      // the stale value and misroute the unnamed submit to the "save"
+      // action.
+      setupForm(
+        `<form id="seq-form" lvt-form:no-intercept lvt-form:emit-submitter action="/post" method="POST">
+          <input name="title" value="Hello" />
+          <button type="submit" id="save-btn" name="save">Save</button>
+          <button type="submit" id="unnamed-btn">Submit</button>
+        </form>`,
+        "wrapper-emit-submitter-named-then-unnamed"
+      );
+
+      const form = document.getElementById("seq-form") as HTMLFormElement;
+      const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+      const unnamedBtn = document.getElementById("unnamed-btn") as HTMLButtonElement;
+
+      dispatchSubmit(form, saveBtn);
+      expect(
+        form.querySelector<HTMLInputElement>('input[type="hidden"][name="lvt-submitter"]')!.value
+      ).toBe("save");
+
+      dispatchSubmit(form, unnamedBtn);
+      expect(form.querySelector('input[name="lvt-submitter"]')).toBeNull();
+    });
+
     it("lvt-form:emit-submitter does not create hidden input when submitter has no name", () => {
       // Matches the WS and HTTP-multipart paths: when SubmitEvent.submitter
       // has no name (or is null), do not write lvt-submitter. The server
