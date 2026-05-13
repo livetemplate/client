@@ -71,6 +71,11 @@ export const DELEGATED_EVENT_TYPES = [
 ] as const;
 
 export class EventDelegator {
+  // Track forms we've already warned about for lvt-form:emit-submitter on
+  // GET. Per-form de-dup so dev consoles aren't flooded; WeakSet so forms
+  // GC'd from the DOM don't pin memory.
+  private warnedEmitSubmitterGETForms = new WeakSet<HTMLFormElement>();
+
   constructor(
     private readonly context: EventDelegationContext,
     private readonly logger: Logger
@@ -243,13 +248,23 @@ export class EventDelegator {
               // routing GET forms with multiple submit buttons should
               // either not opt into this directive or accept the URL
               // pollution as the cost of explicit routing.
+              if (element.method === "get" && !this.warnedEmitSubmitterGETForms.has(element)) {
+                this.logger.warn(
+                  "lvt-form:emit-submitter on a GET form serializes lvt-submitter into the URL query string, polluting browser history and any shared/bookmarked URLs. Use method=\"POST\" or remove the directive if URL pollution is unacceptable.",
+                  element
+                );
+                this.warnedEmitSubmitterGETForms.add(element);
+              }
               const submitter = (e as SubmitEvent).submitter as
                 | HTMLButtonElement
                 | HTMLInputElement
                 | null;
               if (submitter?.name) {
+                // Filter on type="hidden" so we never mutate a developer-
+                // authored visible <input name="lvt-submitter"> that happens
+                // to live in the form for some other purpose.
                 let hiddenInput = element.querySelector<HTMLInputElement>(
-                  'input[name="lvt-submitter"]'
+                  'input[type="hidden"][name="lvt-submitter"]'
                 );
                 if (!hiddenInput) {
                   hiddenInput = document.createElement("input");

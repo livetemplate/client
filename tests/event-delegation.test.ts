@@ -1450,6 +1450,11 @@ describe("EventDelegator", () => {
     };
 
     const dispatchSubmit = (form: HTMLFormElement, submitter: HTMLButtonElement | HTMLInputElement | null) => {
+      // jsdom's SubmitEvent constructor does not accept a submitter option
+      // (and pre-jsdom-20 didn't expose SubmitEvent at all), so we construct
+      // a plain Event and assign .submitter directly. The cast matches the
+      // existing pattern in this test file (see the password-field test
+      // around line 130 for the canonical reference).
       const event = new Event("submit", {
         bubbles: true,
         cancelable: true,
@@ -1619,6 +1624,74 @@ describe("EventDelegator", () => {
       expect(hiddenInput!.value).toBe("draft");
       // Exactly one hidden input — not created twice.
       expect(form.querySelectorAll('input[name="lvt-submitter"]').length).toBe(1);
+    });
+
+    it("lvt-form:emit-submitter does not hijack a developer-authored visible lvt-submitter input", () => {
+      // Regression for a selector bug: looking up the lvt-submitter input
+      // without an explicit type="hidden" filter would silently mutate any
+      // existing user-visible <input name="lvt-submitter"> in the form.
+      setupForm(
+        `<form id="manual-form" lvt-form:no-intercept lvt-form:emit-submitter action="/post" method="POST">
+          <input type="text" name="lvt-submitter" value="user-chose-me" id="visible-input" />
+          <button type="submit" id="save-btn" name="save">Save</button>
+        </form>`,
+        "wrapper-emit-submitter-hidden-only"
+      );
+
+      const form = document.getElementById("manual-form") as HTMLFormElement;
+      const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+      const visibleInput = document.getElementById("visible-input") as HTMLInputElement;
+
+      dispatchSubmit(form, saveBtn);
+
+      // Visible input must not have been touched.
+      expect(visibleInput.value).toBe("user-chose-me");
+      expect(visibleInput.type).toBe("text");
+
+      // A separate hidden input was injected for the directive's purpose.
+      const hiddenInput = form.querySelector<HTMLInputElement>(
+        'input[type="hidden"][name="lvt-submitter"]'
+      );
+      expect(hiddenInput).not.toBeNull();
+      expect(hiddenInput!.value).toBe("save");
+
+      // Two inputs named lvt-submitter coexist: one user-visible, one hidden.
+      // The native browser form serializer will send both — the server's
+      // resolveSubmitterFallback (and the lvt-submitter form key extractor
+      // upstream of it) reads the first non-empty value, but this assertion
+      // documents the wire reality so future contributors aren't surprised.
+      expect(form.querySelectorAll('input[name="lvt-submitter"]').length).toBe(2);
+    });
+
+    it("lvt-form:emit-submitter warns once per form when used on a GET form", () => {
+      const warnSpy = jest.fn();
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-emit-submitter-get-warn");
+      wrapper.innerHTML = `<form id="get-form" lvt-form:no-intercept lvt-form:emit-submitter action="/q" method="GET">
+        <input type="text" name="q" value="hello" />
+        <button type="submit" id="go-btn" name="go">Go</button>
+      </form>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        // Custom logger captures warn calls without scoping or formatting.
+        { debug: jest.fn(), info: jest.fn(), warn: warnSpy, error: jest.fn() } as any
+      );
+      delegator.setupEventDelegation();
+
+      const form = document.getElementById("get-form") as HTMLFormElement;
+      const goBtn = document.getElementById("go-btn") as HTMLButtonElement;
+
+      dispatchSubmit(form, goBtn);
+      dispatchSubmit(form, goBtn);
+      dispatchSubmit(form, goBtn);
+
+      // Warning emitted exactly once across three submissions.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain("lvt-form:emit-submitter");
+      expect(warnSpy.mock.calls[0][0]).toContain("GET");
     });
 
     it("lvt-form:emit-submitter does not run when form is auto-intercepted", () => {
