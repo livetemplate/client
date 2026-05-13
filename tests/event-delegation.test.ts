@@ -1655,12 +1655,52 @@ describe("EventDelegator", () => {
       expect(hiddenInput).not.toBeNull();
       expect(hiddenInput!.value).toBe("save");
 
-      // Two inputs named lvt-submitter coexist: one user-visible, one hidden.
-      // The native browser form serializer will send both — the server's
-      // resolveSubmitterFallback (and the lvt-submitter form key extractor
-      // upstream of it) reads the first non-empty value, but this assertion
-      // documents the wire reality so future contributors aren't surprised.
-      expect(form.querySelectorAll('input[name="lvt-submitter"]').length).toBe(2);
+      // Two inputs named lvt-submitter coexist: one user-visible (declared
+      // first in the markup, so it appears first in DOM order), one hidden
+      // (appended by the directive). The native browser form serializer
+      // sends both values in DOM order, and the server's
+      // r.FormValue("lvt-submitter") returns the first value — so the
+      // user-visible input's value wins and the directive's hidden input is
+      // effectively a no-op for this submission. This matches the proposal's
+      // reserved-name semantics: apps that put user data in a field named
+      // lvt-submitter accept that the value will be routed as the submitter
+      // (i.e., used as the action), which is exactly what the developer
+      // asked for in this scenario even if accidentally. The framework
+      // does not arbitrate this conflict client-side.
+      const inputs = form.querySelectorAll('input[name="lvt-submitter"]');
+      expect(inputs.length).toBe(2);
+      expect(inputs[0]).toBe(visibleInput);
+      expect((inputs[1] as HTMLInputElement).type).toBe("hidden");
+    });
+
+    it("lvt-form:emit-submitter does not warn on GET form when submitter is unnamed (no field injected)", () => {
+      // Regression for a false-positive bug: an earlier draft of the
+      // warning fired on every GET-form submission, even when the
+      // submitter had no name and the directive was about to skip
+      // injection. No injection means no URL pollution, so no warning.
+      const warnSpy = jest.fn();
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", "wrapper-emit-submitter-get-no-name");
+      wrapper.innerHTML = `<form id="get-anon-form" lvt-form:no-intercept lvt-form:emit-submitter action="/q" method="GET">
+        <input type="text" name="q" value="hello" />
+        <button type="submit" id="anon-btn">Submit</button>
+      </form>`;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        { debug: jest.fn(), info: jest.fn(), warn: warnSpy, error: jest.fn() } as any
+      );
+      delegator.setupEventDelegation();
+
+      const form = document.getElementById("get-anon-form") as HTMLFormElement;
+      const anonBtn = document.getElementById("anon-btn") as HTMLButtonElement;
+
+      dispatchSubmit(form, anonBtn);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(form.querySelector('input[name="lvt-submitter"]')).toBeNull();
     });
 
     it("lvt-form:emit-submitter warns once per form when used on a GET form", () => {

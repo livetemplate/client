@@ -248,18 +248,23 @@ export class EventDelegator {
               // routing GET forms with multiple submit buttons should
               // either not opt into this directive or accept the URL
               // pollution as the cost of explicit routing.
-              if (element.method === "get" && !this.warnedEmitSubmitterGETForms.has(element)) {
-                this.logger.warn(
-                  "lvt-form:emit-submitter on a GET form serializes lvt-submitter into the URL query string, polluting browser history and any shared/bookmarked URLs. Use method=\"POST\" or remove the directive if URL pollution is unacceptable.",
-                  element
-                );
-                this.warnedEmitSubmitterGETForms.add(element);
-              }
               const submitter = (e as SubmitEvent).submitter as
                 | HTMLButtonElement
                 | HTMLInputElement
                 | null;
               if (submitter?.name) {
+                // GET-form URL pollution: only warn when we'd actually
+                // inject a field (named submitter). A GET form whose
+                // current submission has no named submitter writes no
+                // lvt-submitter, so there's nothing to pollute and no
+                // warning to fire.
+                if (element.method === "get" && !this.warnedEmitSubmitterGETForms.has(element)) {
+                  this.logger.warn(
+                    "lvt-form:emit-submitter on a GET form serializes lvt-submitter into the URL query string, polluting browser history and any shared/bookmarked URLs. Use method=\"POST\" or remove the directive if URL pollution is unacceptable.",
+                    element
+                  );
+                  this.warnedEmitSubmitterGETForms.add(element);
+                }
                 // Filter on type="hidden" so we never mutate a developer-
                 // authored visible <input name="lvt-submitter"> that happens
                 // to live in the form for some other purpose.
