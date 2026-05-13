@@ -226,23 +226,39 @@ export class EventDelegator {
               // submissions, inject a hidden <input name="lvt-submitter">
               // populated from SubmitEvent.submitter.name so the server can
               // route the action without falling back to the empty-value
-              // heuristic. Updates an existing hidden input on subsequent
-              // submits; creates it on first submit if absent. Pure no-JS
-              // forms cannot use this — they keep relying on the heuristic.
+              // heuristic. Creates on first submit if absent; updates on
+              // subsequent submits. Pure no-JS forms cannot use this — they
+              // keep relying on the heuristic.
+              //
+              // Only acts when SubmitEvent.submitter has a non-empty name,
+              // matching the WS and HTTP-multipart paths above. Submits with
+              // no named submitter (e.g., programmatic dispatch — out of
+              // scope per the proposal) keep any previous value and fall
+              // through to the heuristic for that submission.
+              //
+              // GET-form caveat: a `method="GET"` form serializes form
+              // fields into the URL query string, so `lvt-submitter` will
+              // appear in the browser history bar and any shared/bookmarked
+              // URLs. The directive does not guard against this — apps
+              // routing GET forms with multiple submit buttons should
+              // either not opt into this directive or accept the URL
+              // pollution as the cost of explicit routing.
               const submitter = (e as SubmitEvent).submitter as
                 | HTMLButtonElement
                 | HTMLInputElement
                 | null;
-              let hiddenInput = element.querySelector<HTMLInputElement>(
-                'input[name="lvt-submitter"]'
-              );
-              if (!hiddenInput) {
-                hiddenInput = document.createElement("input");
-                hiddenInput.type = "hidden";
-                hiddenInput.name = "lvt-submitter";
-                element.appendChild(hiddenInput);
+              if (submitter?.name) {
+                let hiddenInput = element.querySelector<HTMLInputElement>(
+                  'input[name="lvt-submitter"]'
+                );
+                if (!hiddenInput) {
+                  hiddenInput = document.createElement("input");
+                  hiddenInput.type = "hidden";
+                  hiddenInput.name = "lvt-submitter";
+                  element.appendChild(hiddenInput);
+                }
+                hiddenInput.value = submitter.name;
               }
-              hiddenInput.value = submitter?.name ?? "";
             }
           }
 

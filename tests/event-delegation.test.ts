@@ -1553,9 +1553,12 @@ describe("EventDelegator", () => {
 
     it("lvt-form:emit-submitter populates hidden input on keyboard submit (Enter)", () => {
       // Simulates browser behavior: Enter in a text input selects the form's
-      // default submit button as SubmitEvent.submitter.
+      // default submit button as SubmitEvent.submitter. Form uses POST to
+      // avoid the URL-pollution caveat documented in the directive — GET
+      // forms serialize lvt-submitter into the query string, which is fine
+      // for apps that opt in but unhelpful as a default in tests.
       setupForm(
-        `<form id="search-form" lvt-form:no-intercept lvt-form:emit-submitter action="/q" method="GET">
+        `<form id="search-form" lvt-form:no-intercept lvt-form:emit-submitter action="/q" method="POST">
           <input type="text" name="q" value="hello" />
           <button type="submit" id="default-submit" name="go">Go</button>
         </form>`,
@@ -1570,6 +1573,27 @@ describe("EventDelegator", () => {
       const hiddenInput = form.querySelector<HTMLInputElement>('input[name="lvt-submitter"]');
       expect(hiddenInput).not.toBeNull();
       expect(hiddenInput!.value).toBe("go");
+    });
+
+    it("lvt-form:emit-submitter does not create hidden input when submitter has no name", () => {
+      // Matches the WS and HTTP-multipart paths: when SubmitEvent.submitter
+      // has no name (or is null), do not write lvt-submitter. The server
+      // falls back to the heuristic for that submission. No empty-string
+      // lvt-submitter="" appears on the wire.
+      setupForm(
+        `<form id="anon-form" lvt-form:no-intercept lvt-form:emit-submitter action="/post" method="POST">
+          <input name="title" value="Hello" />
+          <button type="submit" id="unnamed-btn">Submit</button>
+        </form>`,
+        "wrapper-emit-submitter-no-name"
+      );
+
+      const form = document.getElementById("anon-form") as HTMLFormElement;
+      const unnamedBtn = document.getElementById("unnamed-btn") as HTMLButtonElement;
+
+      dispatchSubmit(form, unnamedBtn);
+
+      expect(form.querySelector('input[name="lvt-submitter"]')).toBeNull();
     });
 
     it("lvt-form:emit-submitter updates existing hidden input on subsequent submits", () => {
