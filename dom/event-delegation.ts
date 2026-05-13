@@ -71,6 +71,11 @@ export const DELEGATED_EVENT_TYPES = [
 ] as const;
 
 export class EventDelegator {
+  // Track forms we've already warned about for lvt-form:emit-submitter on
+  // GET. Per-form de-dup so dev consoles aren't flooded; WeakSet so forms
+  // GC'd from the DOM don't pin memory.
+  private warnedEmitSubmitterGETForms = new WeakSet<HTMLFormElement>();
+
   constructor(
     private readonly context: EventDelegationContext,
     private readonly logger: Logger
@@ -221,6 +226,70 @@ export class EventDelegator {
               if (dialog && element.getAttribute("method")?.toLowerCase() === "dialog") {
                 (element as any).__lvtCloseDialog = dialog;
               }
+            } else if (element.hasAttribute("lvt-form:emit-submitter")) {
+              // Phase 2 of livetemplate#237: for non-intercepted (native HTML)
+              // submissions, inject a hidden <input name="lvt-submitter">
+              // populated from SubmitEvent.submitter.name so the server can
+              // route the action without falling back to the empty-value
+              // heuristic. Creates on first submit if absent; updates on
+              // subsequent submits. Pure no-JS forms cannot use this — they
+              // keep relying on the heuristic.
+              //
+              // Only acts when SubmitEvent.submitter has a non-empty name,
+              // matching the WS and HTTP-multipart paths above. Submits with
+              // no named submitter (e.g., programmatic dispatch — out of
+              // scope per the proposal) keep any previous value and fall
+              // through to the heuristic for that submission.
+              //
+              // GET-form caveat: a `method="GET"` form serializes form
+              // fields into the URL query string, so `lvt-submitter` will
+              // appear in the browser history bar and any shared/bookmarked
+              // URLs. The directive does not guard against this — apps
+              // routing GET forms with multiple submit buttons should
+              // either not opt into this directive or accept the URL
+              // pollution as the cost of explicit routing.
+              const submitter = (e as SubmitEvent).submitter as
+                | HTMLButtonElement
+                | HTMLInputElement
+                | null;
+              if (submitter?.name) {
+                // GET-form URL pollution: only warn when we'd actually
+                // inject a field (named submitter). A GET form whose
+                // current submission has no named submitter writes no
+                // lvt-submitter, so there's nothing to pollute and no
+                // warning to fire.
+                if (element.method === "get" && !this.warnedEmitSubmitterGETForms.has(element)) {
+                  this.logger.warn(
+                    "lvt-form:emit-submitter on a GET form serializes lvt-submitter into the URL query string, polluting browser history and any shared/bookmarked URLs. Use method=\"POST\" or remove the directive if URL pollution is unacceptable.",
+                    element
+                  );
+                  this.warnedEmitSubmitterGETForms.add(element);
+                }
+                // Filter on type="hidden" so we never mutate a developer-
+                // authored visible <input name="lvt-submitter"> that happens
+                // to live in the form for some other purpose.
+                let hiddenInput = element.querySelector<HTMLInputElement>(
+                  'input[type="hidden"][name="lvt-submitter"]'
+                );
+                if (!hiddenInput) {
+                  hiddenInput = document.createElement("input");
+                  hiddenInput.type = "hidden";
+                  hiddenInput.name = "lvt-submitter";
+                  element.appendChild(hiddenInput);
+                }
+                hiddenInput.value = submitter.name;
+              } else {
+                // No named submitter on this submission — clear any stale
+                // hidden input left over from a previous named submit.
+                // Without this, a [name=save] click followed by an unnamed
+                // click would send the stale "save" value to the server
+                // and misroute the action.
+                element
+                  .querySelector<HTMLInputElement>(
+                    'input[type="hidden"][name="lvt-submitter"]'
+                  )
+                  ?.remove();
+              }
             }
           }
 
@@ -355,6 +424,9 @@ export class EventDelegator {
                 const submitter2 = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
                 if (submitter2) {
                   this.extractButtonData(submitter2, message.data);
+                  if (submitter2.name) {
+                    message.submitter = submitter2.name;
+                  }
                   delete (targetElement as any).__lvtSubmitter;
                 }
 
@@ -451,6 +523,9 @@ export class EventDelegator {
                   // sendHTTPMultipart from mutating a caller-supplied
                   // FormData object.
                   tier1FormData.set("lvt-action", action);
+                  if (submitter?.name) {
+                    tier1FormData.set("lvt-submitter", submitter.name);
+                  }
                 }
               }
 
