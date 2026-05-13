@@ -5,6 +5,38 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.9.0] - 2026-05-13
+
+This release aligns the client to the core library's v0.9.0 minor cut
+(see https://github.com/livetemplate/livetemplate/releases/tag/v0.9.0).
+
+### Changes
+
+- feat: emit explicit submitter on the wire (livetemplate#237 Phase 2) (1385a5e)
+
+  Client-side implementation of the explicit-submitter contract documented
+  in livetemplate/livetemplate's `docs/proposals/explicit-submitter.md`.
+  Phase 1 (server-side acceptance) shipped in livetemplate/livetemplate v0.9.0;
+  this client release adds the client-side emission so the server can route
+  the clicked-button action without falling back to the empty-value heuristic.
+
+  - WS action message envelope now includes `submitter: <name>` when
+    `SubmitEvent.submitter.name` is non-empty.
+  - HTTP Tier 1 multipart submissions include an `lvt-submitter` form key
+    alongside `lvt-action`.
+  - New `lvt-form:emit-submitter` directive (opt-in, paired with
+    `lvt-form:no-intercept`) injects a hidden `<input type="hidden"
+    name="lvt-submitter">` into natively-submitted forms before the browser
+    serializes. Wrapper-delegated so DOM swaps preserve it. Logs a one-shot
+    `warn` per form when used on a GET form (URL-pollution caveat).
+
+  `lvt-submitter` is now a reserved form field name (same shape as the
+  existing `lvt-action` reservation). Apps that previously used a field
+  named `lvt-submitter` for user data will see that value routed as the
+  action; rename the field to avoid the collision.
+
+
+
 ## [v0.8.42] - 2026-05-06
 
 ### Changes
