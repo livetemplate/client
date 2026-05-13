@@ -221,6 +221,28 @@ export class EventDelegator {
               if (dialog && element.getAttribute("method")?.toLowerCase() === "dialog") {
                 (element as any).__lvtCloseDialog = dialog;
               }
+            } else if (element.hasAttribute("lvt-form:emit-submitter")) {
+              // Phase 2 of livetemplate#237: for non-intercepted (native HTML)
+              // submissions, inject a hidden <input name="lvt-submitter">
+              // populated from SubmitEvent.submitter.name so the server can
+              // route the action without falling back to the empty-value
+              // heuristic. Updates an existing hidden input on subsequent
+              // submits; creates it on first submit if absent. Pure no-JS
+              // forms cannot use this — they keep relying on the heuristic.
+              const submitter = (e as SubmitEvent).submitter as
+                | HTMLButtonElement
+                | HTMLInputElement
+                | null;
+              let hiddenInput = element.querySelector<HTMLInputElement>(
+                'input[name="lvt-submitter"]'
+              );
+              if (!hiddenInput) {
+                hiddenInput = document.createElement("input");
+                hiddenInput.type = "hidden";
+                hiddenInput.name = "lvt-submitter";
+                element.appendChild(hiddenInput);
+              }
+              hiddenInput.value = submitter?.name ?? "";
             }
           }
 
@@ -355,6 +377,9 @@ export class EventDelegator {
                 const submitter2 = (targetElement as any).__lvtSubmitter as HTMLButtonElement | undefined;
                 if (submitter2) {
                   this.extractButtonData(submitter2, message.data);
+                  if (submitter2.name) {
+                    message.submitter = submitter2.name;
+                  }
                   delete (targetElement as any).__lvtSubmitter;
                 }
 
@@ -451,6 +476,9 @@ export class EventDelegator {
                   // sendHTTPMultipart from mutating a caller-supplied
                   // FormData object.
                   tier1FormData.set("lvt-action", action);
+                  if (submitter?.name) {
+                    tier1FormData.set("lvt-submitter", submitter.name);
+                  }
                 }
               }
 

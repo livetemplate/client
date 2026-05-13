@@ -1427,4 +1427,196 @@ describe("EventDelegator", () => {
       });
     });
   });
+
+  describe("explicit submitter on the wire (livetemplate#237 Phase 2)", () => {
+    const setupForm = (
+      innerHTML: string,
+      wrapperId: string,
+      overrides: Partial<EventDelegationContext> = {}
+    ) => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", wrapperId);
+      wrapper.innerHTML = innerHTML;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper, overrides);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupEventDelegation();
+
+      return { wrapper, context };
+    };
+
+    const dispatchSubmit = (form: HTMLFormElement, submitter: HTMLButtonElement | HTMLInputElement | null) => {
+      const event = new Event("submit", {
+        bubbles: true,
+        cancelable: true,
+      }) as SubmitEvent & { submitter?: HTMLButtonElement | HTMLInputElement | null };
+      event.submitter = submitter;
+      form.dispatchEvent(event);
+    };
+
+    it("WS message includes submitter field when submitter has a name", () => {
+      const { context } = setupForm(
+        `<form id="post-form">
+          <input name="title" value="My Post" />
+          <button type="submit" id="draft-btn" name="draft">Save as Draft</button>
+        </form>`,
+        "wrapper-submitter-ws-named"
+      );
+
+      const form = document.getElementById("post-form") as HTMLFormElement;
+      const draftBtn = document.getElementById("draft-btn") as HTMLButtonElement;
+      dispatchSubmit(form, draftBtn);
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "draft",
+          submitter: "draft",
+        })
+      );
+    });
+
+    it("WS message omits submitter field when submitter has no name", () => {
+      const { context } = setupForm(
+        `<form id="anon-form" lvt-form:action="post">
+          <input name="title" value="My Post" />
+          <button type="submit" id="anon-btn">Post</button>
+        </form>`,
+        "wrapper-submitter-ws-unnamed"
+      );
+
+      const form = document.getElementById("anon-form") as HTMLFormElement;
+      const anonBtn = document.getElementById("anon-btn") as HTMLButtonElement;
+      dispatchSubmit(form, anonBtn);
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      const sent = context.send.mock.calls[0][0];
+      expect(sent.action).toBe("post");
+      expect(sent.submitter).toBeUndefined();
+    });
+
+    it("HTTP Tier 1 multipart sets lvt-submitter when submitter has a name", () => {
+      const { context } = setupForm(
+        `<form id="upload-form">
+          <input type="file" id="file-input" name="avatar" />
+          <button type="submit" id="save-btn" name="save">Save</button>
+        </form>`,
+        "wrapper-submitter-multipart"
+      );
+
+      const form = document.getElementById("upload-form") as HTMLFormElement;
+      const fileInput = document.getElementById("file-input") as HTMLInputElement;
+      const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+
+      // jsdom: stub the FileList so the Tier 1 multipart path triggers.
+      Object.defineProperty(fileInput, "files", {
+        value: [new File(["data"], "avatar.png", { type: "image/png" })],
+        configurable: true,
+      });
+
+      dispatchSubmit(form, saveBtn);
+
+      expect(context.sendHTTPMultipart).toHaveBeenCalledTimes(1);
+      const [, action, formData] = (context.sendHTTPMultipart as jest.Mock).mock.calls[0];
+      expect(action).toBe("save");
+      expect((formData as FormData).get("lvt-action")).toBe("save");
+      expect((formData as FormData).get("lvt-submitter")).toBe("save");
+    });
+
+    it("lvt-form:emit-submitter creates hidden input on first submit (click)", () => {
+      const { context } = setupForm(
+        `<form id="native-form" lvt-form:no-intercept lvt-form:emit-submitter action="/post" method="POST">
+          <input name="title" value="Hello" />
+          <button type="submit" id="draft-btn" name="draft">Save as Draft</button>
+        </form>`,
+        "wrapper-emit-submitter-click"
+      );
+
+      const form = document.getElementById("native-form") as HTMLFormElement;
+      const draftBtn = document.getElementById("draft-btn") as HTMLButtonElement;
+
+      expect(form.querySelector('input[name="lvt-submitter"]')).toBeNull();
+
+      dispatchSubmit(form, draftBtn);
+
+      const hiddenInput = form.querySelector<HTMLInputElement>('input[name="lvt-submitter"]');
+      expect(hiddenInput).not.toBeNull();
+      expect(hiddenInput!.type).toBe("hidden");
+      expect(hiddenInput!.value).toBe("draft");
+      // Non-intercepted form: client did not send a WS message.
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("lvt-form:emit-submitter populates hidden input on keyboard submit (Enter)", () => {
+      // Simulates browser behavior: Enter in a text input selects the form's
+      // default submit button as SubmitEvent.submitter.
+      setupForm(
+        `<form id="search-form" lvt-form:no-intercept lvt-form:emit-submitter action="/q" method="GET">
+          <input type="text" name="q" value="hello" />
+          <button type="submit" id="default-submit" name="go">Go</button>
+        </form>`,
+        "wrapper-emit-submitter-keyboard"
+      );
+
+      const form = document.getElementById("search-form") as HTMLFormElement;
+      const defaultSubmit = document.getElementById("default-submit") as HTMLButtonElement;
+
+      dispatchSubmit(form, defaultSubmit);
+
+      const hiddenInput = form.querySelector<HTMLInputElement>('input[name="lvt-submitter"]');
+      expect(hiddenInput).not.toBeNull();
+      expect(hiddenInput!.value).toBe("go");
+    });
+
+    it("lvt-form:emit-submitter updates existing hidden input on subsequent submits", () => {
+      setupForm(
+        `<form id="multi-btn-form" lvt-form:no-intercept lvt-form:emit-submitter action="/post" method="POST">
+          <input name="title" value="My Post" />
+          <button type="submit" id="save-btn" name="save">Save</button>
+          <button type="submit" id="draft-btn" name="draft">Save as Draft</button>
+        </form>`,
+        "wrapper-emit-submitter-update"
+      );
+
+      const form = document.getElementById("multi-btn-form") as HTMLFormElement;
+      const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+      const draftBtn = document.getElementById("draft-btn") as HTMLButtonElement;
+
+      dispatchSubmit(form, saveBtn);
+      let hiddenInput = form.querySelector<HTMLInputElement>('input[name="lvt-submitter"]');
+      expect(hiddenInput!.value).toBe("save");
+
+      dispatchSubmit(form, draftBtn);
+      hiddenInput = form.querySelector<HTMLInputElement>('input[name="lvt-submitter"]');
+      expect(hiddenInput!.value).toBe("draft");
+      // Exactly one hidden input — not created twice.
+      expect(form.querySelectorAll('input[name="lvt-submitter"]').length).toBe(1);
+    });
+
+    it("lvt-form:emit-submitter does not run when form is auto-intercepted", () => {
+      // Without lvt-form:no-intercept, the auto-intercept path handles the
+      // submitter via __lvtSubmitter / message.submitter — no hidden input
+      // should be injected into the form.
+      const { context } = setupForm(
+        `<form id="intercepted-form" lvt-form:emit-submitter>
+          <input name="title" value="Hello" />
+          <button type="submit" id="save-btn" name="save">Save</button>
+        </form>`,
+        "wrapper-emit-submitter-intercepted"
+      );
+
+      const form = document.getElementById("intercepted-form") as HTMLFormElement;
+      const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+      dispatchSubmit(form, saveBtn);
+
+      expect(form.querySelector('input[name="lvt-submitter"]')).toBeNull();
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "save", submitter: "save" })
+      );
+    });
+  });
 });
