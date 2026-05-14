@@ -268,6 +268,25 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         case "top":
           htmlElement.scrollTo({ top: 0, behavior });
           break;
+        case "into-view": {
+          // Scroll the element itself into view of its nearest scrollable
+          // ancestor. Useful when server-side state needs to focus the
+          // user on a specific element (e.g., a freshly-selected comment).
+          // Honors --lvt-scroll-behavior; defaults to centered placement so
+          // the user has surrounding context.
+          //
+          // One-shot semantics: handleScrollDirectives fires on every render,
+          // but we don't want to re-scroll the user back every time after they
+          // scrolled away. A `data-lvt-iv-done` guard records that this
+          // element has already been scrolled into view; the directive only
+          // fires again if the attribute is removed and re-added (new element
+          // or new value, e.g. jumping to a different comment).
+          if (htmlElement.dataset.lvtIvDone !== "1") {
+            htmlElement.scrollIntoView({ block: "center", inline: "nearest", behavior });
+            htmlElement.dataset.lvtIvDone = "1";
+          }
+          break;
+        }
         case "preserve":
           break;
         default:

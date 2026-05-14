@@ -49,6 +49,49 @@ describe("handleScrollDirectives", () => {
     });
   });
 
+  it("scrolls element into view when lvt-fx:scroll='into-view'", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="into-view"></div>`;
+    const container = document.getElementById("container")!;
+    const scrollIntoViewSpy = jest.fn();
+    container.scrollIntoView = scrollIntoViewSpy;
+
+    handleScrollDirectives(document.body);
+
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+      behavior: "auto",
+    });
+  });
+
+  it("scroll='into-view' honors --lvt-scroll-behavior", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="into-view" style="--lvt-scroll-behavior: smooth;"></div>`;
+    const container = document.getElementById("container")!;
+    const scrollIntoViewSpy = jest.fn();
+    container.scrollIntoView = scrollIntoViewSpy;
+
+    handleScrollDirectives(document.body);
+
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+  });
+
+  it("scroll='into-view' is one-shot per element (won't re-scroll on subsequent renders)", () => {
+    document.body.innerHTML = `<div id="container" lvt-fx:scroll="into-view"></div>`;
+    const container = document.getElementById("container")!;
+    const scrollIntoViewSpy = jest.fn();
+    container.scrollIntoView = scrollIntoViewSpy;
+
+    handleScrollDirectives(document.body);
+    handleScrollDirectives(document.body); // simulate a second render
+    handleScrollDirectives(document.body); // and a third
+
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("respects --lvt-scroll-behavior custom property", () => {
     document.body.innerHTML = `<div id="container" lvt-fx:scroll="top" style="--lvt-scroll-behavior: smooth;"></div>`;
     const container = document.getElementById("container")!;
