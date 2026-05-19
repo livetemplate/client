@@ -96,4 +96,26 @@ describe("handleWebSocketPayload — topic error envelope (V14)", () => {
       updateDOMSpy.mockRestore();
     });
   });
+
+  describe("malformed envelope (defensive — added round 2)", () => {
+    it("drops `{type:'error'}` without a string code (does not dispatch, does not enter diff path)", () => {
+      const updateDOMSpy = jest.spyOn(client as any, "updateDOM");
+      const errored = jest.fn();
+      wrapper.addEventListener("lvt:error", errored);
+      // Logger.warn is wired to console.warn; suppress to keep test output clean
+      // while still observing the drop behavior (no dispatch, no diff path).
+      const warnSpy = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+
+      feed({ type: "error" }); // missing `code`
+      feed({ type: "error", code: 42 }); // non-string `code`
+
+      expect(errored).not.toHaveBeenCalled();
+      expect(updateDOMSpy).not.toHaveBeenCalled(); // critical: must NOT fall through to analyzeStatics(undefined)
+
+      updateDOMSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+  });
 });
