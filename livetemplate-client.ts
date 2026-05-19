@@ -365,6 +365,32 @@ export class LiveTemplateClient {
     response: UpdateResponse,
     event?: MessageEvent<string>
   ): void {
+    // Topic-ACL / connection error envelope (proposal §3 / V14): a distinct
+    // wire message { type:"error", code, topic } — NOT an UpdateResponse (it
+    // carries no `tree`). Surface it as an `lvt:error` CustomEvent on the
+    // wrapper and short-circuit BEFORE the diff path, so analyzeStatics()/
+    // updateDOM() never see a treeless payload. The server keeps the socket
+    // open after emitting this (livetemplate Phase 4 / V14), so there is no
+    // disconnect to handle here.
+    //
+    // NOTE: state/form-lifecycle-manager.ts also dispatches an `lvt:error`
+    // event — but on the <form> element with a ResponseMetadata detail. These
+    // are two distinct, non-bubbling events disambiguated by target (wrapper
+    // vs form) and detail shape; they do not collide. See proposal §6 docs.
+    const errorEnvelope = response as unknown as {
+      type?: string;
+      code?: string;
+      topic?: string;
+    };
+    if (errorEnvelope.type === "error") {
+      this.wrapperElement?.dispatchEvent(
+        new CustomEvent("lvt:error", {
+          detail: { code: errorEnvelope.code, topic: errorEnvelope.topic },
+        })
+      );
+      return;
+    }
+
     // Check if this is an upload-specific message
     const uploadMessage = response as any;
     if (uploadMessage.type === "upload_progress") {
