@@ -365,6 +365,66 @@ export class LiveTemplateClient {
     response: UpdateResponse,
     event?: MessageEvent<string>
   ): void {
+    // Error envelope (proposal §3 / V14): a distinct wire message
+    // { type:"error", code, topic? } — NOT an UpdateResponse (it carries no
+    // `tree`). Surface as an `lvt:error` CustomEvent on the wrapper and
+    // short-circuit BEFORE the diff path, so analyzeStatics()/updateDOM()
+    // never see a treeless payload. The server keeps the socket open after
+    // emitting this (livetemplate Phase 4 / V14), so there is no disconnect
+    // to handle here.
+    //
+    // Contract lock — `type === "error"` is the general envelope discriminator:
+    // every `{type:"error",...}` payload from the server flows through this
+    // single branch and surfaces as `lvt:error`. As of livetemplate Phase 4
+    // the only `code` emitted is `topic_forbidden`, but the contract is
+    // intentionally open-ended: new server-side error codes (e.g. rate-limit,
+    // auth) will reuse this same shape and listener — apps consuming
+    // `lvt:error` should switch on `event.detail.code`. Don't narrow this
+    // check to a `code === "topic_forbidden"` literal: that would silently
+    // drop future codes into `updateDOM` as treeless payloads.
+    //
+    // NOTE: state/form-lifecycle-manager.ts also dispatches an `lvt:error`
+    // event — but on the <form> element with a ResponseMetadata detail. These
+    // are two distinct, non-bubbling events disambiguated by target (wrapper
+    // vs form) and detail shape; they do not collide. See proposal §6 docs.
+    const errorEnvelope = response as unknown as {
+      type?: string;
+      code?: string;
+      topic?: string;
+    };
+    if (errorEnvelope.type === "error") {
+      // Always short-circuit a `type:"error"` payload before the diff path —
+      // it has no `tree`, so analyzeStatics(undefined) would error. A
+      // well-formed envelope carries a string `code` (V14 contract); a bare
+      // `{type:"error"}` without one is malformed and is logged + dropped
+      // (rather than dispatched as an `lvt:error` with no detail, which
+      // would confuse listeners).
+      if (typeof errorEnvelope.code !== "string") {
+        this.logger.warn(
+          "Malformed error envelope (missing string `code`) — dropping",
+          errorEnvelope
+        );
+        return;
+      }
+      if (this.wrapperElement) {
+        this.wrapperElement.dispatchEvent(
+          new CustomEvent("lvt:error", {
+            detail: { code: errorEnvelope.code, topic: errorEnvelope.topic },
+          })
+        );
+      } else {
+        // Reachable only if handleWebSocketPayload runs before connect()
+        // wires up wrapperElement — should never happen on the WS-onMessage
+        // path, but warn rather than silently swallow so it's visible in
+        // production logs.
+        this.logger.warn(
+          "lvt:error envelope arrived before wrapperElement was set; dropping",
+          { code: errorEnvelope.code, topic: errorEnvelope.topic }
+        );
+      }
+      return;
+    }
+
     // Check if this is an upload-specific message
     const uploadMessage = response as any;
     if (uploadMessage.type === "upload_progress") {
