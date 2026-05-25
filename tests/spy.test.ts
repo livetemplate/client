@@ -232,6 +232,66 @@ describe("setupSpy", () => {
     warn.mockRestore();
   });
 
+  it("teardownSpy(wrapper) removes the click handler when no bindings remain", () => {
+    // The framework always calls teardownSpy(this.wrapperElement). If
+    // the click handler is gated on (!wrapper) it survives every
+    // teardown and clicks on stray [lvt-spy-link] elements continue to
+    // re-apply lvt-active — with no scroll-driven reconciliation to
+    // undo it. Gate on the binding count instead so the handler comes
+    // off whenever the last binding is gone.
+    const f = buildFixture();
+    setRect(f.h1, 50);
+    setRect(f.h2, 400);
+    setRect(f.h3, 800);
+    setupSpy(document.body);
+    expect(f.linkA.classList.contains("lvt-active")).toBe(true);
+
+    teardownSpy(f.article);
+    expect(f.linkA.classList.contains("lvt-active")).toBe(false);
+
+    // A click after teardown must NOT re-apply lvt-active. Before the
+    // gate fix, the optimistic click handler survived teardown and
+    // would put lvt-active back on the clicked link forever.
+    f.linkC.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(f.linkC.classList.contains("lvt-active")).toBe(false);
+  });
+
+  it("readMarginPx rejects unsupported units and falls back to 25vh", () => {
+    document.body.innerHTML = `
+      <article id="container" lvt-spy="h2" style="--lvt-spy-margin: 2rem;">
+        <h2 id="h1" style="position: relative; top: 100px;">H1</h2>
+      </article>
+      <a id="L" href="#h1" lvt-spy-link>H1</a>
+    `;
+    const h = document.getElementById("h1")!;
+    const link = document.getElementById("L")!;
+    // 25vh of 768 = 192. Bare px from 2rem (i.e. 2) would treat the
+    // trigger line at 2px, so a heading at top=100 would be BELOW the
+    // line and NOT active. Correct behaviour: fall back to 25vh = 192,
+    // heading at top=100 is above → active.
+    setRect(h, 100);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    setupSpy(document.body);
+
+    expect(warn).toHaveBeenCalled();
+    expect(link.classList.contains("lvt-active")).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("readMarginPx accepts explicit px unit", () => {
+    document.body.innerHTML = `
+      <article id="container" lvt-spy="h2" style="--lvt-spy-margin: 300px;">
+        <h2 id="h2only">Above</h2>
+      </article>
+      <a id="L" href="#h2only" lvt-spy-link>Above</a>
+    `;
+    setRect(document.getElementById("h2only")!, 250);
+    setupSpy(document.body);
+    // 250 < 300 → active.
+    expect(document.getElementById("L")!.classList.contains("lvt-active")).toBe(true);
+  });
+
   it("re-attaches when target set changes (morphdom-style update)", () => {
     const f = buildFixture();
     setRect(f.h1, 50);

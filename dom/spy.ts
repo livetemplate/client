@@ -66,12 +66,19 @@ function readMarginPx(container: Element): number {
   const raw = getComputedStyle(container).getPropertyValue("--lvt-spy-margin").trim();
   const fallback = Math.round(window.innerHeight * 0.25);
   if (!raw) return fallback;
-  if (raw.endsWith("vh")) {
-    const n = parseFloat(raw);
-    return isNaN(n) ? fallback : Math.round((n / 100) * window.innerHeight);
-  }
   const n = parseFloat(raw);
-  return isNaN(n) ? fallback : n;
+  if (isNaN(n)) return fallback;
+  // Supported units: bare px (`200` or `200px`) and vh (`25vh`). Other
+  // CSS units (rem, em, %, etc.) come through `getComputedStyle` as raw
+  // strings, NOT resolved — `parseFloat("2rem")` returns 2 and we'd
+  // silently treat it as 2 px, which is wildly off. Reject explicitly
+  // and warn so the author fixes the declaration.
+  if (raw.endsWith("vh")) return Math.round((n / 100) * window.innerHeight);
+  if (raw.endsWith("px") || raw === String(n)) return n;
+  console.warn(
+    `lvt-spy: unsupported --lvt-spy-margin unit ${JSON.stringify(raw)}; supported units are vh and px (or unitless). Falling back to 25vh.`
+  );
+  return fallback;
 }
 
 function collectTargets(container: Element): Element[] {
@@ -242,7 +249,14 @@ export function teardownSpy(wrapper?: Element): void {
   document.querySelectorAll(`[lvt-spy-link].${ACTIVE_CLASS}`).forEach((el) => {
     el.classList.remove(ACTIVE_CLASS);
   });
-  if (!wrapper) {
+  // Detach the document-level optimistic-click handler when there are
+  // no more live spy bindings. Gating on `activeBindings.length === 0`
+  // (instead of `!wrapper`) covers the common case where the framework
+  // always passes a wrapper to teardown: without this gate the click
+  // handler outlives every binding, and any subsequent [lvt-spy-link]
+  // click silently re-applies lvt-active with no scroll reconciliation
+  // to undo it.
+  if (activeBindings.length === 0) {
     const handler = (document as any)[LINK_HANDLER_KEY];
     if (handler) {
       document.removeEventListener("click", handler);
