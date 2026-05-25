@@ -57,6 +57,14 @@ interface SpyBinding {
   resizeHandler: () => void;
 }
 
+// `activeBindings` is module-level — i.e. shared by every consumer
+// of this client bundle. In single-instance setups (the common case)
+// that's a non-issue. With multiple LiveTemplateClient mounts sharing
+// the same bundle module instance, the per-container `BINDING_KEY`
+// guard keeps each binding isolated and `teardownSpy(wrapper)`
+// touches only the wrapped subset, so the shared list is safe in
+// practice. Listed here so a future audit reading "two clients
+// stomping each other" finds the design intent.
 const activeBindings: SpyBinding[] = [];
 
 // Tracks spy-target elements we've already warned about (missing id).
@@ -72,6 +80,18 @@ function pruneDisconnectedBindings(): void {
     if (b.container.isConnected) continue;
     detach(b);
     activeBindings.splice(i, 1);
+  }
+  // Mirror teardownSpy's click-handler gate so a container removed
+  // outside the framework lifecycle (direct DOM removal that never
+  // calls teardownSpy) still ends with the document-level click
+  // listener unhooked once the last binding is gone — instead of
+  // leaving an orphaned no-op handler bound to the document.
+  if (activeBindings.length === 0) {
+    const handler = (document as any)[LINK_HANDLER_KEY];
+    if (handler) {
+      document.removeEventListener("click", handler);
+      delete (document as any)[LINK_HANDLER_KEY];
+    }
   }
 }
 
@@ -348,7 +368,11 @@ function installLinkClickHandler(): void {
     const owner = findBindingForId(id);
     if (owner) applyActive(owner, id);
   };
-  document.addEventListener("click", handler);
+  // passive: true — we never preventDefault on the click (the native
+  // <a href="#…"> scroll is what we want), so promising passive lets
+  // the browser dispatch without parking the main thread waiting for
+  // a possible cancel.
+  document.addEventListener("click", handler, { passive: true });
   (document as any)[LINK_HANDLER_KEY] = handler;
 }
 
