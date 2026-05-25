@@ -45,6 +45,13 @@ interface SpyBinding {
   // window-resize listener re-computes this whenever the viewport
   // height changes (vh-based values shift).
   marginPx: number;
+  // Pre-filtered list of [lvt-spy-link] elements whose href matches
+  // one of `targets`. Cached so applyActive — called on every rAF
+  // tick — doesn't do a fresh document.querySelectorAll each frame.
+  // Refreshed on attach and on every processContainer pass
+  // (setupSpy runs after each render), so morphdom-driven link
+  // additions/removals are picked up at the next render cycle.
+  links: Element[];
   scrollTarget: HTMLElement | Window;
   scrollHandler: () => void;
   resizeHandler: () => void;
@@ -125,21 +132,39 @@ function collectTargets(container: Element): Element[] {
 // neighbouring spy container's targets) are left untouched. This is
 // what lets multiple LiveTemplateClient mounts coexist on one page
 // without their scroll-spy state stomping each other.
+//
+// Hot path: called from the rAF-throttled scroll handler. Iterates the
+// pre-cached `binding.links` rather than re-querying the DOM each
+// frame; the cache is refreshed by refreshLinks() at attach time and
+// on every processContainer pass.
 function applyActive(binding: SpyBinding, activeId: string | null): void {
-  const ownIds = new Set<string>();
-  for (const t of binding.targets) {
-    if (t.id) ownIds.add(t.id);
-  }
-  document.querySelectorAll("[lvt-spy-link]").forEach((link) => {
+  for (const link of binding.links) {
     const href = link.getAttribute("href") || "";
     const id = href.startsWith("#") ? href.slice(1) : "";
-    if (!ownIds.has(id)) return;
     if (activeId !== null && id === activeId) {
       link.classList.add(ACTIVE_CLASS);
     } else {
       link.classList.remove(ACTIVE_CLASS);
     }
+  }
+}
+
+// refreshLinks rebuilds binding.links to the current set of
+// [lvt-spy-link] elements in the document whose href points to one of
+// the binding's target ids. Called once per render cycle (cheap),
+// never per scroll tick (would defeat the cache).
+function refreshLinks(binding: SpyBinding): void {
+  const ownIds = new Set<string>();
+  for (const t of binding.targets) {
+    if (t.id) ownIds.add(t.id);
+  }
+  const matched: Element[] = [];
+  document.querySelectorAll("[lvt-spy-link]").forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    const id = href.startsWith("#") ? href.slice(1) : "";
+    if (ownIds.has(id)) matched.push(link);
   });
+  binding.links = matched;
 }
 
 // findBindingForId locates the binding that owns the given id, i.e.
@@ -218,12 +243,14 @@ function attach(container: Element): void {
     container,
     targets,
     marginPx: readMarginPx(container),
+    links: [],
     scrollTarget: findScrollTarget(container),
     // scrollHandler/resizeHandler are populated below — declared here so
     // the closures can reference `binding` for the cached margin lookup.
     scrollHandler: () => {},
     resizeHandler: () => {},
   };
+  refreshLinks(binding);
 
   let ticking = false;
   binding.scrollHandler = () => {
@@ -263,6 +290,11 @@ function processContainer(container: Element): void {
       // Also refresh the cached margin in case CSS variables changed
       // between renders.
       existing.marginPx = readMarginPx(container);
+      // Targets stayed put but the link soup may have shifted (morphdom
+      // could have added a TOC entry without touching headings). Refresh
+      // the cached link set every render so the hot-path applyActive
+      // never goes stale.
+      refreshLinks(existing);
       applyActive(existing, pickActive(existing.targets, existing.marginPx));
       return;
     }
