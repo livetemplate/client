@@ -233,8 +233,12 @@ function sameTargets(a: Element[], b: Element[]): boolean {
   return true;
 }
 
-function attach(container: Element): void {
-  const targets = collectTargets(container);
+function attach(container: Element, preCollected?: Element[]): void {
+  // Accept an optional pre-collected target list so processContainer's
+  // re-attach path doesn't pay for collectTargets twice (once for the
+  // diff check, once inside this function). Low-volume code path
+  // (per-render, not per-tick) but easy to dedupe.
+  const targets = preCollected ?? collectTargets(container);
   if (targets.length === 0) return;
 
   // Surface authoring mistakes once-per-element at attach time rather
@@ -317,6 +321,10 @@ function processContainer(container: Element): void {
     detach(existing);
     const idx = activeBindings.indexOf(existing);
     if (idx !== -1) activeBindings.splice(idx, 1);
+    // We already collected `fresh` above for the diff check — hand it
+    // to attach() so it doesn't re-walk the DOM.
+    attach(container, fresh);
+    return;
   }
   attach(container);
 }
