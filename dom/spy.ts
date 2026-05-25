@@ -61,7 +61,16 @@ function pruneDisconnectedBindings(): void {
   }
 }
 
+// detach fully removes a binding's effects from the page: event
+// listeners, the per-container guard, AND any lvt-active classes the
+// binding had applied to its links. Folding the class-clear into detach
+// means every caller (processContainer's re-attach, prune of
+// disconnected containers, teardownSpy) gets the cleanup for free —
+// without it, a stale lvt-active leaked anywhere detach was called but
+// teardownSpy's surviving-id sweep wasn't (e.g. on every morphdom
+// update that removed a target).
 function detach(b: SpyBinding): void {
+  applyActive(b, null);
   b.scrollTarget.removeEventListener(
     "scroll",
     b.scrollHandler as EventListener,
@@ -298,6 +307,9 @@ export function setupSpy(scanRoot: Element): void {
 }
 
 export function teardownSpy(wrapper?: Element): void {
+  // detach() now clears each binding's lvt-active classes as part of
+  // its contract, so there's no separate global sweep here — surviving
+  // bindings keep their highlights, and removed bindings drop theirs.
   for (let i = activeBindings.length - 1; i >= 0; i--) {
     const b = activeBindings[i];
     if (wrapper && b.container.isConnected && !wrapper.contains(b.container)) {
@@ -306,26 +318,6 @@ export function teardownSpy(wrapper?: Element): void {
     detach(b);
     activeBindings.splice(i, 1);
   }
-  // Active classes are applied globally via document.querySelectorAll in
-  // applyActive(), so spy links may sit OUTSIDE the wrapper being torn
-  // down (a common case: nav at the top of the page, spy targets inside
-  // a content wrapper). Clean those leftovers, but ONLY for links whose
-  // target id no longer belongs to any surviving binding — otherwise a
-  // multi-instance setup (two LiveTemplateClient mounts, each with its
-  // own spy) would lose the survivor's highlight every time one peer
-  // tore down, until the next scroll/click reconciled. The survivors'
-  // links keep their lvt-active intact.
-  const survivingIds = new Set<string>();
-  for (const b of activeBindings) {
-    for (const t of b.targets) {
-      if (t.id) survivingIds.add(t.id);
-    }
-  }
-  document.querySelectorAll(`[lvt-spy-link].${ACTIVE_CLASS}`).forEach((el) => {
-    const href = el.getAttribute("href") || "";
-    const id = href.startsWith("#") ? href.slice(1) : "";
-    if (!survivingIds.has(id)) el.classList.remove(ACTIVE_CLASS);
-  });
   // Detach the document-level optimistic-click handler when there are
   // no more live spy bindings. Gating on `activeBindings.length === 0`
   // (instead of `!wrapper`) covers the common case where the framework

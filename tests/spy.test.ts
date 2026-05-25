@@ -392,6 +392,41 @@ describe("setupSpy", () => {
     warn.mockRestore();
   });
 
+  it("clears lvt-active on links whose target is removed in a morphdom update", () => {
+    // The existing 'morphdom re-attaches' case only covers ADDING a
+    // heading. Removing one used to leave the orphaned link with a
+    // stale lvt-active forever, because processContainer's detach()
+    // didn't clear classes. detach() now clears as part of its contract.
+    document.body.innerHTML = `
+      <article lvt-spy="h2">
+        <h2 id="keep">Keep</h2>
+        <h2 id="drop">Drop</h2>
+      </article>
+      <nav>
+        <a id="lKeep" href="#keep" lvt-spy-link>Keep</a>
+        <a id="lDrop" href="#drop" lvt-spy-link>Drop</a>
+      </nav>
+    `;
+    const keep = document.getElementById("keep")!;
+    const drop = document.getElementById("drop")!;
+    setRect(keep, 50);
+    setRect(drop, 80);
+    setupSpy(document.body);
+    // Both above the trigger; drop is last in document order.
+    expect(document.getElementById("lDrop")!.classList.contains("lvt-active")).toBe(true);
+
+    // Morphdom-style removal: the second heading goes away.
+    drop.remove();
+    // setupSpy gets called again on each render — processContainer
+    // detects the new target set and re-attaches.
+    setupSpy(document.body);
+
+    // The orphaned link must lose lvt-active.
+    expect(document.getElementById("lDrop")!.classList.contains("lvt-active")).toBe(false);
+    // Keep should now be the active one.
+    expect(document.getElementById("lKeep")!.classList.contains("lvt-active")).toBe(true);
+  });
+
   it("re-attaches when target set changes (morphdom-style update)", () => {
     const f = buildFixture();
     setRect(f.h1, 50);
