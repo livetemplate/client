@@ -337,6 +337,61 @@ describe("setupSpy", () => {
     expect(document.getElementById("lA")!.classList.contains("lvt-active")).toBe(false);
   });
 
+  it("teardownSpy(wrapper) preserves active class on links of surviving bindings", () => {
+    // Two independent spy containers, each with its own link. Tearing
+    // down one must NOT blank the other's active highlight — only
+    // links pointing to a torn-down target should be cleared. Without
+    // the surviving-id check, multi-instance setups would flicker
+    // every time a peer disconnected.
+    document.body.innerHTML = `
+      <article id="A" lvt-spy="h2">
+        <h2 id="alpha">Alpha</h2>
+      </article>
+      <article id="B" lvt-spy="h2">
+        <h2 id="beta">Beta</h2>
+      </article>
+      <a id="lA" href="#alpha" lvt-spy-link>A</a>
+      <a id="lB" href="#beta" lvt-spy-link>B</a>
+    `;
+    setRect(document.getElementById("alpha")!, 50);
+    setRect(document.getElementById("beta")!, 50);
+    setupSpy(document.body);
+
+    expect(document.getElementById("lA")!.classList.contains("lvt-active")).toBe(true);
+    expect(document.getElementById("lB")!.classList.contains("lvt-active")).toBe(true);
+
+    // Tear down container A only.
+    teardownSpy(document.getElementById("A")!);
+
+    // lA's target was in A — it should lose lvt-active.
+    expect(document.getElementById("lA")!.classList.contains("lvt-active")).toBe(false);
+    // lB points to beta which lives in still-alive B — must keep its highlight.
+    expect(document.getElementById("lB")!.classList.contains("lvt-active")).toBe(true);
+  });
+
+  it("readMarginPx accepts unitless decimal values", () => {
+    // `String(parseFloat("200.0"))` is "200", not "200.0", so the
+    // identity check missed this — the regex grammar fixes it.
+    document.body.innerHTML = `
+      <article id="container" lvt-spy="h2" style="--lvt-spy-margin: 200.0;">
+        <h2 id="h2only">Above</h2>
+      </article>
+      <a id="L" href="#h2only" lvt-spy-link>Above</a>
+    `;
+    setRect(document.getElementById("h2only")!, 150);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    setupSpy(document.body);
+    // 150 < 200 → active. If the regex misfired, the value would fall
+    // back to 25vh = 192, also above 150 — so to actually exercise the
+    // regex we also assert no fallback warning fired.
+    expect(document.getElementById("L")!.classList.contains("lvt-active")).toBe(true);
+    const unitWarns = warn.mock.calls.filter((args) =>
+      String(args[0]).includes("unsupported --lvt-spy-margin unit"),
+    );
+    expect(unitWarns).toHaveLength(0);
+    warn.mockRestore();
+  });
+
   it("re-attaches when target set changes (morphdom-style update)", () => {
     const f = buildFixture();
     setRect(f.h1, 50);

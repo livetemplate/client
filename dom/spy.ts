@@ -82,7 +82,10 @@ function readMarginPx(container: Element): number {
   // silently treat it as 2 px, which is wildly off. Reject explicitly
   // and warn so the author fixes the declaration.
   if (raw.endsWith("vh")) return Math.round((n / 100) * window.innerHeight);
-  if (raw.endsWith("px") || raw === String(n)) return n;
+  // Accept "200" or "200.0" as unitless px (parseFloat strips zeros so
+  // `raw === String(n)` would miss the latter). The regex pins the
+  // entire string to a signed number, matching CSS's <number> grammar.
+  if (raw.endsWith("px") || /^-?\d+(\.\d+)?$/.test(raw)) return n;
   console.warn(
     `lvt-spy: unsupported --lvt-spy-margin unit ${JSON.stringify(raw)}; supported units are vh and px (or unitless). Falling back to 25vh.`
   );
@@ -107,17 +110,40 @@ function collectTargets(container: Element): Element[] {
   return [container];
 }
 
-function applyActive(activeId: string | null): void {
-  const links = document.querySelectorAll("[lvt-spy-link]");
-  links.forEach((link) => {
+// applyActive updates lvt-active state for the links that belong to a
+// single binding. Ownership is decided by href matching one of the
+// binding's target ids — links pointing elsewhere (e.g. to a
+// neighbouring spy container's targets) are left untouched. This is
+// what lets multiple LiveTemplateClient mounts coexist on one page
+// without their scroll-spy state stomping each other.
+function applyActive(binding: SpyBinding, activeId: string | null): void {
+  const ownIds = new Set<string>();
+  for (const t of binding.targets) {
+    if (t.id) ownIds.add(t.id);
+  }
+  document.querySelectorAll("[lvt-spy-link]").forEach((link) => {
     const href = link.getAttribute("href") || "";
     const id = href.startsWith("#") ? href.slice(1) : "";
+    if (!ownIds.has(id)) return;
     if (activeId !== null && id === activeId) {
       link.classList.add(ACTIVE_CLASS);
     } else {
       link.classList.remove(ACTIVE_CLASS);
     }
   });
+}
+
+// findBindingForId locates the binding that owns the given id, i.e.
+// has a target element whose id matches. Used by the optimistic click
+// handler so a click on a link only updates its own binding's scope —
+// other bindings' active links stay put.
+function findBindingForId(id: string): SpyBinding | null {
+  for (const b of activeBindings) {
+    for (const t of b.targets) {
+      if (t.id === id) return b;
+    }
+  }
+  return null;
 }
 
 function pickActive(targets: Element[], marginPx: number): string | null {
@@ -196,7 +222,7 @@ function attach(container: Element): void {
     ticking = true;
     requestAnimationFrame(() => {
       ticking = false;
-      applyActive(pickActive(binding.targets, binding.marginPx));
+      applyActive(binding, pickActive(binding.targets, binding.marginPx));
     });
   };
   binding.resizeHandler = () => {
@@ -204,7 +230,7 @@ function attach(container: Element): void {
     // we need to recompute. Refresh active immediately because resize
     // doesn't fire `scroll`, so the rAF path won't otherwise reconcile.
     binding.marginPx = readMarginPx(binding.container);
-    applyActive(pickActive(binding.targets, binding.marginPx));
+    applyActive(binding, pickActive(binding.targets, binding.marginPx));
   };
 
   binding.scrollTarget.addEventListener("scroll", binding.scrollHandler as EventListener, { passive: true });
@@ -215,7 +241,7 @@ function attach(container: Element): void {
 
   // Initial synchronous pick so the right link is highlighted on first
   // paint, before any scroll event fires.
-  applyActive(pickActive(binding.targets, binding.marginPx));
+  applyActive(binding, pickActive(binding.targets, binding.marginPx));
 }
 
 function processContainer(container: Element): void {
@@ -228,7 +254,7 @@ function processContainer(container: Element): void {
       // Also refresh the cached margin in case CSS variables changed
       // between renders.
       existing.marginPx = readMarginPx(container);
-      applyActive(pickActive(existing.targets, existing.marginPx));
+      applyActive(existing, pickActive(existing.targets, existing.marginPx));
       return;
     }
     detach(existing);
@@ -251,7 +277,11 @@ function installLinkClickHandler(): void {
     const href = link.getAttribute("href") || "";
     const id = href.startsWith("#") ? href.slice(1) : "";
     if (!id) return;
-    applyActive(id);
+    // Route the optimistic flip to the binding that actually owns this
+    // id. Otherwise clicking a link in TOC A would clear TOC B's
+    // active highlight in a multi-instance layout.
+    const owner = findBindingForId(id);
+    if (owner) applyActive(owner, id);
   };
   document.addEventListener("click", handler);
   (document as any)[LINK_HANDLER_KEY] = handler;
@@ -279,12 +309,22 @@ export function teardownSpy(wrapper?: Element): void {
   // Active classes are applied globally via document.querySelectorAll in
   // applyActive(), so spy links may sit OUTSIDE the wrapper being torn
   // down (a common case: nav at the top of the page, spy targets inside
-  // a content wrapper). Clean globally so we never leave a stale
-  // lvt-active behind. If another spy container is still alive, its
-  // next scroll/click event reconciles by re-applying the class to the
-  // right link.
+  // a content wrapper). Clean those leftovers, but ONLY for links whose
+  // target id no longer belongs to any surviving binding — otherwise a
+  // multi-instance setup (two LiveTemplateClient mounts, each with its
+  // own spy) would lose the survivor's highlight every time one peer
+  // tore down, until the next scroll/click reconciled. The survivors'
+  // links keep their lvt-active intact.
+  const survivingIds = new Set<string>();
+  for (const b of activeBindings) {
+    for (const t of b.targets) {
+      if (t.id) survivingIds.add(t.id);
+    }
+  }
   document.querySelectorAll(`[lvt-spy-link].${ACTIVE_CLASS}`).forEach((el) => {
-    el.classList.remove(ACTIVE_CLASS);
+    const href = el.getAttribute("href") || "";
+    const id = href.startsWith("#") ? href.slice(1) : "";
+    if (!survivingIds.has(id)) el.classList.remove(ACTIVE_CLASS);
   });
   // Detach the document-level optimistic-click handler when there are
   // no more live spy bindings. Gating on `activeBindings.length === 0`
