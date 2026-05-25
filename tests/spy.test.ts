@@ -311,6 +311,45 @@ describe("setupSpy", () => {
     warn.mockRestore();
   });
 
+  it("does not re-warn about the same id-less target on re-attach", () => {
+    // A morphdom render that changes the target set triggers
+    // detach+attach. Without per-element dedup, the missing-id warning
+    // would re-fire every render and spam the console for any page
+    // that legitimately has an id-less heading the author hasn't
+    // gotten around to fixing.
+    document.body.innerHTML = `
+      <article lvt-spy="h2">
+        <h2 id="a">A</h2>
+        <h2>No id</h2>
+      </article>
+      <a href="#a" lvt-spy-link>A</a>
+    `;
+    setRect(document.getElementById("a")!, 50);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    setupSpy(document.body);
+    const firstWarnCount = warn.mock.calls.filter((args) =>
+      String(args[0]).includes("without an id"),
+    ).length;
+    expect(firstWarnCount).toBe(1);
+
+    // Simulate a morphdom-style structural update: append a brand-new
+    // heading WITH an id. processContainer detects the target set
+    // changed → detaches the old binding → attaches a new one.
+    const newH = document.createElement("h2");
+    newH.id = "b";
+    document.querySelector("article")!.appendChild(newH);
+    setRect(newH, 80);
+
+    setupSpy(document.body);
+    const secondWarnCount = warn.mock.calls.filter((args) =>
+      String(args[0]).includes("without an id"),
+    ).length;
+    // The id-less target is the SAME element — must not warn again.
+    expect(secondWarnCount).toBe(1);
+    warn.mockRestore();
+  });
+
   it("picks the latest passed target even when targets are visually out of order", () => {
     // A real document-order h2 list, but the second heading is visually
     // shifted ABOVE the first via getBoundingClientRect (simulating

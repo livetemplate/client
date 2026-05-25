@@ -59,6 +59,13 @@ interface SpyBinding {
 
 const activeBindings: SpyBinding[] = [];
 
+// Tracks spy-target elements we've already warned about (missing id).
+// processContainer re-runs detach+attach whenever the target set
+// changes, so without per-element dedup the warning would spam the
+// console on every morphdom render that includes an id-less target.
+// WeakSet so cleared targets eventually get GC'd with the DOM nodes.
+const warnedMissingId = new WeakSet<Element>();
+
 function pruneDisconnectedBindings(): void {
   for (let i = activeBindings.length - 1; i >= 0; i--) {
     const b = activeBindings[i];
@@ -207,7 +214,12 @@ function findScrollTarget(el: Element): HTMLElement | Window {
   let cur: Element | null = el.parentElement;
   while (cur && cur !== document.documentElement) {
     const oy = getComputedStyle(cur).overflowY;
-    if (oy === "auto" || oy === "scroll") return cur as HTMLElement;
+    // 'overlay' is a non-standard Chromium value that behaves like
+    // 'auto' but draws the scrollbar over the content. Apps that opt
+    // into it (a common iOS-feel scrollbar pattern) would otherwise
+    // be walked past and end up scrolling the document — wrong root,
+    // wrong trigger line.
+    if (oy === "auto" || oy === "scroll" || oy === "overlay") return cur as HTMLElement;
     cur = cur.parentElement;
   }
   return window;
@@ -225,18 +237,22 @@ function attach(container: Element): void {
   const targets = collectTargets(container);
   if (targets.length === 0) return;
 
-  // Surface authoring mistakes once at attach time rather than letting
-  // them silently produce a TOC entry that never lights up. A target
-  // matched by the spy selector but missing `id` cannot be the
-  // destination of `<a href="#...">`, so no link can ever activate for
-  // it. Listing the elements (truncated) gives the author enough to
-  // find the omission without spamming the console on every scroll.
-  const missingId = targets.filter((t) => !t.id);
+  // Surface authoring mistakes once-per-element at attach time rather
+  // than letting them silently produce a TOC entry that never lights
+  // up. A target matched by the spy selector but missing `id` cannot
+  // be the destination of `<a href="#...">`, so no link can ever
+  // activate for it. The WeakSet dedup is what keeps re-attach (which
+  // fires on every morphdom render that adds/removes a heading) from
+  // spamming the console — once we've warned about a given element,
+  // we don't warn about it again, but a NEW id-less target on a later
+  // render still gets surfaced.
+  const missingId = targets.filter((t) => !t.id && !warnedMissingId.has(t));
   if (missingId.length > 0) {
     console.warn(
       `lvt-spy: ${missingId.length} target(s) without an id attribute; they cannot be linked from [lvt-spy-link]. Add id="..." or drop them from the selector. First offender:`,
       missingId[0],
     );
+    for (const t of missingId) warnedMissingId.add(t);
   }
 
   const binding: SpyBinding = {
