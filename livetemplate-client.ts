@@ -27,6 +27,7 @@ import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
+import { setupSpy, teardownSpy } from "./dom/spy";
 import { TreeRenderer } from "./state/tree-renderer";
 import {
   RangeDomApplier,
@@ -581,6 +582,7 @@ export class LiveTemplateClient {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
       teardownScrollAway(this.wrapperElement);
+      teardownSpy(this.wrapperElement);
     }
     this.resetSessionState();
   }
@@ -1788,6 +1790,7 @@ export class LiveTemplateClient {
     handleAnimateDirectives(element);
     handleToastDirectives(element);
     setupScrollAway(element);
+    setupSpy(element);
     if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
       setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
       this.eventDelegator.setupDOMEventTriggerDelegation(element);

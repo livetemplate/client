@@ -5,6 +5,22 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.9.3] - 2026-05-25
+
+### Changes
+
+- feat: lvt-spy scroll-spy directive for in-page navigation highlighting
+
+  New client-side directive that highlights `[lvt-spy-link]` anchor elements
+  as the reader scrolls past corresponding `[lvt-spy]` targets in the page.
+  Two modes: container (`lvt-spy="h1, h2, h3"` watches matching descendants)
+  and element (empty attribute — the element itself is the target). Active
+  link receives the `lvt-active` class. Trigger line is configurable via
+  `--lvt-spy-margin` (default 25vh). Pure client-side, no server round-trips
+  per scroll tick. Mirrors the lifecycle shape of `lvt-scroll-away`.
+
+
+
 ## [v0.9.2] - 2026-05-20
 
 ### Changes
