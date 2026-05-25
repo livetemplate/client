@@ -77,7 +77,17 @@ function readMarginPx(container: Element): number {
 function collectTargets(container: Element): Element[] {
   const selector = container.getAttribute("lvt-spy");
   if (selector && selector.trim() !== "") {
-    return Array.from(container.querySelectorAll(selector));
+    // Guard against typos in author-supplied selectors. An invalid
+    // selector (e.g. `lvt-spy="h1, h2,"` — trailing comma) makes
+    // querySelectorAll throw SyntaxError, which would propagate out of
+    // setupSpy and abort directive initialization for the whole scan
+    // root. Warn and treat as empty so the rest of the page still works.
+    try {
+      return Array.from(container.querySelectorAll(selector));
+    } catch (e) {
+      console.warn(`lvt-spy: invalid selector ${JSON.stringify(selector)}:`, e);
+      return [];
+    }
   }
   return [container];
 }
@@ -99,7 +109,14 @@ function pickActive(container: Element, targets: Element[]): string | null {
   const margin = readMarginPx(container);
   let activeId: string | null = null;
   // Document order, accumulate the most recent target whose top is above
-  // the trigger line. Bail early on the first one still below.
+  // the trigger line. Bail early on the first one still below. The early
+  // break assumes targets appear in visual top-to-bottom order — which
+  // holds for the normal document flow that produces this selector list
+  // (querySelectorAll returns elements in document order). It does NOT
+  // hold if the author has reordered targets visually via CSS (sticky
+  // headers with negative top, transform: translateY, flex/grid order,
+  // etc.); in those cases drop the early break in a fork before
+  // suspecting this code.
   for (const t of targets) {
     if (!t.id) continue;
     const top = t.getBoundingClientRect().top;
@@ -215,8 +232,14 @@ export function teardownSpy(wrapper?: Element): void {
     detach(b);
     activeBindings.splice(i, 1);
   }
-  const scope: ParentNode = wrapper ?? document;
-  scope.querySelectorAll(`[lvt-spy-link].${ACTIVE_CLASS}`).forEach((el) => {
+  // Active classes are applied globally via document.querySelectorAll in
+  // applyActive(), so spy links may sit OUTSIDE the wrapper being torn
+  // down (a common case: nav at the top of the page, spy targets inside
+  // a content wrapper). Clean globally so we never leave a stale
+  // lvt-active behind. If another spy container is still alive, its
+  // next scroll/click event reconciles by re-applying the class to the
+  // right link.
+  document.querySelectorAll(`[lvt-spy-link].${ACTIVE_CLASS}`).forEach((el) => {
     el.classList.remove(ACTIVE_CLASS);
   });
   if (!wrapper) {

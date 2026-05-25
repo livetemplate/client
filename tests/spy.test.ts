@@ -178,6 +178,60 @@ describe("setupSpy", () => {
     expect(f.linkB.classList.contains("lvt-active")).toBe(false);
   });
 
+  it("teardownSpy(wrapper) clears active class on links OUTSIDE the wrapper", () => {
+    // Realistic layout: nav at the top of the document, content wrapper
+    // below containing the spy targets. applyActive() queries links
+    // globally, so the nav link picks up lvt-active even though it sits
+    // outside the wrapper. A wrapper-scoped teardown must still scrub
+    // those classes — otherwise disconnecting leaves the nav with a
+    // stale highlight forever.
+    document.body.innerHTML = `
+      <nav id="topnav">
+        <a id="navlink" href="#deep" lvt-spy-link>Deep</a>
+      </nav>
+      <div id="content">
+        <article lvt-spy="h2">
+          <h2 id="deep">Deep</h2>
+        </article>
+      </div>
+    `;
+    const navlink = document.getElementById("navlink")!;
+    const target = document.getElementById("deep")!;
+    const wrapper = document.getElementById("content")!;
+    setRect(target, 50);
+
+    setupSpy(document.body);
+    expect(navlink.classList.contains("lvt-active")).toBe(true);
+
+    // Wrapper-scoped teardown: the content wrapper is what disconnects.
+    teardownSpy(wrapper);
+    expect(navlink.classList.contains("lvt-active")).toBe(false);
+  });
+
+  it("swallows invalid lvt-spy selectors instead of aborting the scan", () => {
+    // Two spy containers — the first has a typo that would throw
+    // SyntaxError from querySelectorAll, the second is well-formed. The
+    // bad container must not prevent the good one from initializing.
+    document.body.innerHTML = `
+      <article id="broken" lvt-spy="h1, h2,">
+        <h1 id="x">X</h1>
+      </article>
+      <article id="ok" lvt-spy="h2">
+        <h2 id="y">Y</h2>
+      </article>
+      <a id="L" href="#y" lvt-spy-link>Y</a>
+    `;
+    const link = document.getElementById("L")!;
+    setRect(document.getElementById("y")!, 50);
+
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    setupSpy(document.body);
+
+    expect(warn).toHaveBeenCalled();
+    expect(link.classList.contains("lvt-active")).toBe(true);
+    warn.mockRestore();
+  });
+
   it("re-attaches when target set changes (morphdom-style update)", () => {
     const f = buildFixture();
     setRect(f.h1, 50);
