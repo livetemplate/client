@@ -39,8 +39,15 @@ const LINK_HANDLER_KEY = "__lvt_spy_link_handler";
 interface SpyBinding {
   container: Element;
   targets: Element[];
+  // Pre-computed trigger-line distance from viewport top, in px.
+  // Cached so the rAF-throttled scroll handler doesn't pay for a
+  // synchronous style recalc (`getComputedStyle`) on every tick. The
+  // window-resize listener re-computes this whenever the viewport
+  // height changes (vh-based values shift).
+  marginPx: number;
   scrollTarget: HTMLElement | Window;
   scrollHandler: () => void;
+  resizeHandler: () => void;
 }
 
 const activeBindings: SpyBinding[] = [];
@@ -59,6 +66,7 @@ function detach(b: SpyBinding): void {
     "scroll",
     b.scrollHandler as EventListener,
   );
+  window.removeEventListener("resize", b.resizeHandler as EventListener);
   delete (b.container as any)[BINDING_KEY];
 }
 
@@ -112,25 +120,20 @@ function applyActive(activeId: string | null): void {
   });
 }
 
-function pickActive(container: Element, targets: Element[]): string | null {
-  const margin = readMarginPx(container);
+function pickActive(targets: Element[], marginPx: number): string | null {
   let activeId: string | null = null;
-  // Document order, accumulate the most recent target whose top is above
-  // the trigger line. Bail early on the first one still below. The early
-  // break assumes targets appear in visual top-to-bottom order — which
-  // holds for the normal document flow that produces this selector list
-  // (querySelectorAll returns elements in document order). It does NOT
-  // hold if the author has reordered targets visually via CSS (sticky
-  // headers with negative top, transform: translateY, flex/grid order,
-  // etc.); in those cases drop the early break in a fork before
-  // suspecting this code.
+  // Walk every target. We deliberately do NOT bail early on the first
+  // one below the trigger line — that optimisation assumes visual
+  // top-to-bottom order (which holds for typical document flow) but
+  // silently produces the wrong active link when targets are reordered
+  // via CSS (sticky headers with negative top, transform: translateY,
+  // flex/grid order). The full walk is O(n) with n = number of TOC
+  // entries — small in practice, dwarfed by the rAF tick itself.
   for (const t of targets) {
     if (!t.id) continue;
     const top = t.getBoundingClientRect().top;
-    if (top <= margin) {
+    if (top <= marginPx) {
       activeId = t.id;
-    } else {
-      break;
     }
   }
   return activeId;
@@ -162,26 +165,57 @@ function attach(container: Element): void {
   const targets = collectTargets(container);
   if (targets.length === 0) return;
 
+  // Surface authoring mistakes once at attach time rather than letting
+  // them silently produce a TOC entry that never lights up. A target
+  // matched by the spy selector but missing `id` cannot be the
+  // destination of `<a href="#...">`, so no link can ever activate for
+  // it. Listing the elements (truncated) gives the author enough to
+  // find the omission without spamming the console on every scroll.
+  const missingId = targets.filter((t) => !t.id);
+  if (missingId.length > 0) {
+    console.warn(
+      `lvt-spy: ${missingId.length} target(s) without an id attribute; they cannot be linked from [lvt-spy-link]. Add id="..." or drop them from the selector. First offender:`,
+      missingId[0],
+    );
+  }
+
+  const binding: SpyBinding = {
+    container,
+    targets,
+    marginPx: readMarginPx(container),
+    scrollTarget: findScrollTarget(container),
+    // scrollHandler/resizeHandler are populated below — declared here so
+    // the closures can reference `binding` for the cached margin lookup.
+    scrollHandler: () => {},
+    resizeHandler: () => {},
+  };
+
   let ticking = false;
-  const scrollHandler = () => {
+  binding.scrollHandler = () => {
     if (ticking) return;
     ticking = true;
     requestAnimationFrame(() => {
       ticking = false;
-      applyActive(pickActive(container, targets));
+      applyActive(pickActive(binding.targets, binding.marginPx));
     });
   };
+  binding.resizeHandler = () => {
+    // The trigger line is vh-relative (or px), so on viewport resize
+    // we need to recompute. Refresh active immediately because resize
+    // doesn't fire `scroll`, so the rAF path won't otherwise reconcile.
+    binding.marginPx = readMarginPx(binding.container);
+    applyActive(pickActive(binding.targets, binding.marginPx));
+  };
 
-  const scrollTarget = findScrollTarget(container);
-  scrollTarget.addEventListener("scroll", scrollHandler as EventListener, { passive: true });
+  binding.scrollTarget.addEventListener("scroll", binding.scrollHandler as EventListener, { passive: true });
+  window.addEventListener("resize", binding.resizeHandler as EventListener, { passive: true });
 
-  const binding: SpyBinding = { container, targets, scrollTarget, scrollHandler };
   (container as any)[BINDING_KEY] = binding;
   activeBindings.push(binding);
 
   // Initial synchronous pick so the right link is highlighted on first
   // paint, before any scroll event fires.
-  applyActive(pickActive(container, targets));
+  applyActive(pickActive(binding.targets, binding.marginPx));
 }
 
 function processContainer(container: Element): void {
@@ -191,7 +225,10 @@ function processContainer(container: Element): void {
     if (sameTargets(existing.targets, fresh)) {
       // No structural change — just re-pick in case scroll position
       // shifted via a non-scroll mechanism (history restore, etc.).
-      applyActive(pickActive(container, existing.targets));
+      // Also refresh the cached margin in case CSS variables changed
+      // between renders.
+      existing.marginPx = readMarginPx(container);
+      applyActive(pickActive(existing.targets, existing.marginPx));
       return;
     }
     detach(existing);

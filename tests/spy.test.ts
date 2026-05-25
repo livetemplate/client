@@ -292,6 +292,51 @@ describe("setupSpy", () => {
     expect(document.getElementById("L")!.classList.contains("lvt-active")).toBe(true);
   });
 
+  it("warns once when a target has no id", () => {
+    document.body.innerHTML = `
+      <article lvt-spy="h2">
+        <h2 id="ok">OK</h2>
+        <h2>No id</h2>
+      </article>
+      <a href="#ok" lvt-spy-link>OK</a>
+    `;
+    setRect(document.getElementById("ok")!, 50);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    setupSpy(document.body);
+
+    expect(warn).toHaveBeenCalled();
+    const calls = warn.mock.calls.map((args) => String(args[0]));
+    expect(calls.some((s) => s.includes("without an id"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("picks the latest passed target even when targets are visually out of order", () => {
+    // A real document-order h2 list, but the second heading is visually
+    // shifted ABOVE the first via getBoundingClientRect (simulating
+    // sticky / transform / flex-order layouts). The early-break
+    // optimisation would have bailed on the first heading and missed
+    // that the second one is actually above the trigger line too.
+    document.body.innerHTML = `
+      <article lvt-spy="h2">
+        <h2 id="alpha">Alpha</h2>
+        <h2 id="beta">Beta</h2>
+      </article>
+      <a id="lA" href="#alpha" lvt-spy-link>Alpha</a>
+      <a id="lB" href="#beta" lvt-spy-link>Beta</a>
+    `;
+    // alpha is visually BELOW the trigger; beta is visually ABOVE it
+    // (think: beta is a sticky header that latched to the top).
+    setRect(document.getElementById("alpha")!, 400);
+    setRect(document.getElementById("beta")!, 50);
+    setupSpy(document.body);
+    // Beta is the last document-order target whose top is above the
+    // trigger, so it wins. With the old early-break this assertion
+    // would have failed (the iteration would have bailed on alpha).
+    expect(document.getElementById("lB")!.classList.contains("lvt-active")).toBe(true);
+    expect(document.getElementById("lA")!.classList.contains("lvt-active")).toBe(false);
+  });
+
   it("re-attaches when target set changes (morphdom-style update)", () => {
     const f = buildFixture();
     setRect(f.h1, 50);
