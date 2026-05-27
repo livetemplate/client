@@ -2,7 +2,9 @@ import {
   handleScrollDirectives,
   handleHighlightDirectives,
   handleAnimateDirectives,
+  handleAutoClickDirectives,
   setupFxDOMEventTriggers,
+  __resetAnimatedElementsForTesting,
 } from "../dom/directives";
 
 describe("handleScrollDirectives", () => {
@@ -194,6 +196,86 @@ describe("handleScrollDirectives", () => {
     handleScrollDirectives(document.body);
 
     expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
+  describe("reset-on:<attr>", () => {
+    it("resets scrollLeft and scrollTop when watched attribute changes", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body); // first paint — establishes prior
+      container.scrollLeft = 200;
+      container.scrollTop = 80;
+
+      handleScrollDirectives(document.body); // same value — no reset
+      expect(container.scrollLeft).toBe(200);
+      expect(container.scrollTop).toBe(80);
+
+      container.setAttribute("data-path", "b.go");
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+      expect(container.scrollTop).toBe(0);
+    });
+
+    it("preserves scroll when watched attribute is unchanged across renders", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body);
+      container.scrollLeft = 50;
+      container.scrollTop = 25;
+
+      for (let i = 0; i < 5; i++) handleScrollDirectives(document.body);
+
+      expect(container.scrollLeft).toBe(50);
+      expect(container.scrollTop).toBe(25);
+    });
+
+    it("treats attribute-absent → present as a change (and vice versa)", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body); // prior=null
+      container.scrollLeft = 100;
+
+      handleScrollDirectives(document.body); // still null → no reset
+      expect(container.scrollLeft).toBe(100);
+
+      container.setAttribute("data-path", "a.go"); // null → "a.go" is a change
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+
+      container.scrollLeft = 150;
+      container.removeAttribute("data-path"); // "a.go" → null is a change
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+    });
+
+    it("warns when no attribute name is supplied (reset-on:)", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:"></div>`;
+      handleScrollDirectives(document.body);
+      expect(console.warn).toHaveBeenCalledWith(
+        `lvt-fx:scroll="reset-on:" requires an attribute name`
+      );
+    });
+
+    it("tracks each element independently", () => {
+      document.body.innerHTML = `
+        <div id="a" lvt-fx:scroll="reset-on:data-path" data-path="x.go"></div>
+        <div id="b" lvt-fx:scroll="reset-on:data-path" data-path="y.go"></div>
+      `;
+      const a = document.getElementById("a")!;
+      const b = document.getElementById("b")!;
+
+      handleScrollDirectives(document.body);
+      a.scrollLeft = 10;
+      b.scrollLeft = 20;
+
+      a.setAttribute("data-path", "z.go"); // only a changes
+      handleScrollDirectives(document.body);
+      expect(a.scrollLeft).toBe(0);
+      expect(b.scrollLeft).toBe(20);
+    });
   });
 });
 
@@ -514,5 +596,133 @@ describe("setupFxDOMEventTriggers", () => {
 
     expect(target.style.backgroundColor).not.toBe("");
     expect(trigger.style.backgroundColor).toBe("");
+  });
+});
+
+describe("handleAutoClickDirectives", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.useFakeTimers();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    __resetAnimatedElementsForTesting();
+  });
+
+  afterEach(() => {
+    __resetAnimatedElementsForTesting();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("fires a click on the named descendant button after the delay", () => {
+    document.body.innerHTML = `
+      <div class="toast" lvt-fx:auto-click="5000:dismissBanner">
+        Saved
+        <button name="dismissBanner">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismissBanner"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(4999);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-arm on subsequent renders with the same spec", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(50);
+    handleAutoClickDirectives(document.body); // re-render mid-wait
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(50);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels timer when the element is removed before firing", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    toast.remove();
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  it("re-arms with new spec when delay or button-name changes", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="1000:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+
+    toast.setAttribute("lvt-fx:auto-click", "200:dismiss");
+    handleAutoClickDirectives(document.body);
+
+    jest.advanceTimersByTime(199);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns on malformed spec", () => {
+    document.body.innerHTML = `<div lvt-fx:auto-click="just-text"></div>`;
+    handleAutoClickDirectives(document.body);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('lvt-fx:auto-click expects')
+    );
+
+    document.body.innerHTML = `<div lvt-fx:auto-click="abc:dismiss"></div>`;
+    handleAutoClickDirectives(document.body);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('lvt-fx:auto-click expects')
+    );
+
+    document.body.innerHTML = `<div lvt-fx:auto-click="100:"></div>`;
+    handleAutoClickDirectives(document.body);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('lvt-fx:auto-click expects')
+    );
+  });
+
+  it("ignores when no descendant matches the named selector", () => {
+    document.body.innerHTML = `<div lvt-fx:auto-click="100:noSuchButton"></div>`;
+    handleAutoClickDirectives(document.body);
+
+    expect(() => jest.advanceTimersByTime(500)).not.toThrow();
   });
 });

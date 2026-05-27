@@ -17,6 +17,22 @@ const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 // want a visible pulse on every update should reach for lvt-fx:highlight.
 let animatedElements = new WeakSet<Element>();
 
+// Tracks the prior value of the watched attribute for each element using
+// `lvt-fx:scroll="reset-on:<attr>"`. We can't stash the prior value as a
+// data-* attribute — morphdom would diff against it and constantly fight
+// the reset. WeakMap auto-cleans when the element is GC'd.
+let scrollResetPriors = new WeakMap<Element, string | null>();
+
+// Active timers for `lvt-fx:auto-click="<delay-ms>:<button-name>"`. Stored
+// keyed by element so we can detect: (a) element re-renders unchanged →
+// don't re-arm, (b) spec changed → cancel + re-arm, (c) element removed →
+// cancel. Strong Map (not WeakMap) so we can iterate for the disconnected-
+// element sweep on each render pass.
+let autoClickTimers = new Map<
+  Element,
+  { timer: ReturnType<typeof setTimeout>; spec: string }
+>();
+
 /**
  * Test-only: reset the module-level animatedElements WeakSet. Required
  * for tests that reuse the same DOM nodes across cases — without this,
@@ -34,6 +50,9 @@ let animatedElements = new WeakSet<Element>();
  */
 export function __resetAnimatedElementsForTesting(): void {
   animatedElements = new WeakSet<Element>();
+  scrollResetPriors = new WeakMap<Element, string | null>();
+  for (const { timer } of autoClickTimers.values()) clearTimeout(timer);
+  autoClickTimers = new Map();
 }
 
 /**
@@ -289,8 +308,30 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         }
         case "preserve":
           break;
-        default:
+        default: {
+          // `reset-on:<attr-name>` — reset scrollLeft/scrollTop to 0
+          // whenever the value of `<attr-name>` differs from the last
+          // render. Use case: an element whose content swaps without the
+          // node itself being replaced (morphdom reuse), where the
+          // previous scroll position is meaningless for the new content.
+          if (mode.startsWith("reset-on:")) {
+            const attrName = mode.slice("reset-on:".length);
+            if (!attrName) {
+              console.warn(`lvt-fx:scroll="reset-on:" requires an attribute name`);
+              break;
+            }
+            const currentValue = htmlElement.getAttribute(attrName);
+            const seen = scrollResetPriors.has(htmlElement);
+            const priorValue = seen ? scrollResetPriors.get(htmlElement)! : null;
+            if (!seen || priorValue !== currentValue) {
+              scrollResetPriors.set(htmlElement, currentValue);
+              htmlElement.scrollLeft = 0;
+              htmlElement.scrollTop = 0;
+            }
+            break;
+          }
           console.warn(`Unknown lvt-fx:scroll mode: ${mode}`);
+        }
       }
       break;
     }
@@ -356,6 +397,71 @@ export function handleScrollDirectives(rootElement: Element): void {
     const mode = element.getAttribute("lvt-fx:scroll");
     if (!mode) return;
     applyFxEffect(element as HTMLElement, "scroll", mode);
+  });
+}
+
+/**
+ * Apply auto-click directives. `lvt-fx:auto-click="<delay-ms>:<button-name>"`
+ * arms a timer when the element is first seen with this spec; on fire, the
+ * directive locates a descendant `[name=<button-name>]` and synthesizes a
+ * click on it — funneling through the existing event-delegation pipeline
+ * so the server-side action runs identically to a user click. Use case:
+ * auto-dismiss a toast/banner after N ms by clicking its existing dismiss
+ * button (which already fires the dismissBanner server action).
+ *
+ * Idempotent across renders: an element that re-appears with the same
+ * spec keeps its existing timer. A spec change cancels and re-arms. An
+ * element that disappears has its timer canceled on the next render's
+ * sweep (and even if the sweep doesn't run first, the fire-time
+ * isConnected check skips the click).
+ */
+export function handleAutoClickDirectives(rootElement: Element): void {
+  // Sweep: cancel timers for elements that have disconnected. Without
+  // this, the Map grows unbounded across renders for removed elements.
+  for (const [element, entry] of Array.from(autoClickTimers)) {
+    if (!element.isConnected) {
+      clearTimeout(entry.timer);
+      autoClickTimers.delete(element);
+    }
+  }
+
+  rootElement.querySelectorAll("[lvt-fx\\:auto-click]").forEach((element) => {
+    const spec = element.getAttribute("lvt-fx:auto-click");
+    if (!spec) return;
+
+    const existing = autoClickTimers.get(element);
+    if (existing && existing.spec === spec) return;
+    if (existing) clearTimeout(existing.timer);
+
+    const colonIdx = spec.indexOf(":");
+    const delayMs = colonIdx > 0 ? parseInt(spec.slice(0, colonIdx), 10) : NaN;
+    const name = colonIdx > 0 ? spec.slice(colonIdx + 1) : "";
+    // Restrict name to a safe identifier so we can interpolate into a CSS
+    // attribute selector without escaping. Authors set this attribute in
+    // their templates, so the constraint is fine in practice and protects
+    // against accidental selector injection.
+    if (
+      !Number.isFinite(delayMs) ||
+      delayMs < 0 ||
+      !name ||
+      !/^[A-Za-z][\w-]*$/.test(name)
+    ) {
+      console.warn(
+        `lvt-fx:auto-click expects "<delay-ms>:<button-name>", got: ${spec}`
+      );
+      autoClickTimers.delete(element);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      autoClickTimers.delete(element);
+      if (!element.isConnected) return;
+      const button = element.querySelector(
+        `[name="${name}"]`
+      ) as HTMLElement | null;
+      if (button) button.click();
+    }, delayMs);
+    autoClickTimers.set(element, { timer, spec });
   });
 }
 

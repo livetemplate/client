@@ -72,5 +72,103 @@ describe("LoadingIndicator", () => {
       const bars = document.body.querySelectorAll("div");
       expect(bars.length).toBe(1);
     });
+
+    it("the bar carries class lvt-loading-bar", () => {
+      indicator.show();
+      const bar = document.body.querySelector("div");
+      expect(bar?.className).toBe("lvt-loading-bar");
+    });
+  });
+
+  describe("enablePerActionIndicator", () => {
+    afterEach(() => {
+      indicator.disablePerActionIndicator();
+      jest.useRealTimers();
+    });
+
+    it("shows after debounce on lvt:pending", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(200);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+
+      jest.advanceTimersByTime(199);
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+
+      jest.advanceTimersByTime(1);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+    });
+
+    it("hides on lvt:updated", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(100);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(100);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+
+      document.dispatchEvent(new CustomEvent("lvt:updated"));
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
+
+    it("cancels timer when lvt:updated arrives before debounce elapses", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(200);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(100);
+      document.dispatchEvent(new CustomEvent("lvt:updated"));
+
+      jest.advanceTimersByTime(500);
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
+
+    it("ignores lvt:pending while a bar is already shown", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(50);
+      expect(document.querySelectorAll(".lvt-loading-bar").length).toBe(1);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(50);
+      expect(document.querySelectorAll(".lvt-loading-bar").length).toBe(1);
+    });
+
+    it("re-arms cleanly across consecutive cycles", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+
+      for (let i = 0; i < 3; i++) {
+        document.dispatchEvent(new CustomEvent("lvt:pending"));
+        jest.advanceTimersByTime(50);
+        expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+        document.dispatchEvent(new CustomEvent("lvt:updated"));
+        expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+      }
+    });
+
+    it("is idempotent — repeat enables don't double-register", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+      indicator.enablePerActionIndicator(50);
+      indicator.enablePerActionIndicator(50);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(50);
+      expect(document.querySelectorAll(".lvt-loading-bar").length).toBe(1);
+    });
+
+    it("disablePerActionIndicator stops further reactions", () => {
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+      indicator.disablePerActionIndicator();
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(500);
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
   });
 });
