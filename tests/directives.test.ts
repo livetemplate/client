@@ -4,6 +4,7 @@ import {
   handleAnimateDirectives,
   handleAutoClickDirectives,
   setupFxDOMEventTriggers,
+  teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
 } from "../dom/directives";
 
@@ -764,6 +765,46 @@ describe("handleAutoClickDirectives", () => {
     handleAutoClickDirectives(document.body);
 
     expect(() => jest.advanceTimersByTime(500)).not.toThrow();
+  });
+
+  it("accepts digit-prefixed button names", () => {
+    // HTML permits names like "1-dismiss". The regex was tightened to
+    // `^[\w-]+$` so this no longer fails.
+    document.body.innerHTML = `
+      <div lvt-fx:auto-click="100:1-dismiss">
+        <button name="1-dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="1-dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(100);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("teardownAutoClickTimers cancels all armed timers", () => {
+    document.body.innerHTML = `
+      <div id="t1" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+      <div id="t2" lvt-fx:auto-click="200:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btns = Array.from(
+      document.querySelectorAll('button[name="dismiss"]')
+    ) as HTMLButtonElement[];
+    const spies = btns.map((b) => jest.spyOn(b, "click"));
+
+    handleAutoClickDirectives(document.body);
+    teardownAutoClickTimers();
+    jest.advanceTimersByTime(500);
+
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
 
   it("does not match non-button elements with the same name", () => {

@@ -13,6 +13,7 @@ import {
   handleHighlightDirectives,
   handleScrollDirectives,
   handleToastDirectives,
+  teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
   teardownFxDOMEventTriggers,
@@ -599,6 +600,8 @@ export class LiveTemplateClient {
     this.teardownVisibilityReconnect();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
+    teardownAutoClickTimers();
+    this.loadingIndicator.disablePerActionIndicator();
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);

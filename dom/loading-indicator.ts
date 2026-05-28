@@ -121,8 +121,16 @@ export class LoadingIndicator {
   }
 
   /**
-   * Teardown for `enablePerActionIndicator`. Primarily for tests — production
-   * callers keep the listeners for the lifetime of the page.
+   * Teardown for `enablePerActionIndicator`. Stops the listeners, cancels
+   * any pending debounce timer, resets the counter, and hides the bar
+   * if it's currently visible. Hiding is part of teardown so a caller
+   * that reconfigures (different debounce → disable + re-enable) doesn't
+   * leave the prior cycle's bar orphaned waiting for an `lvt:updated`
+   * that no listener will receive.
+   *
+   * Production callers reach this path via two routes: an explicit
+   * reconfigure inside `enablePerActionIndicator`, and the LiveTemplate
+   * client's `disconnect()` teardown.
    */
   disablePerActionIndicator(): void {
     if (this.pendingHandler) {
@@ -139,5 +147,6 @@ export class LoadingIndicator {
     }
     this.pendingCount = 0;
     this.currentDebounceMs = null;
+    this.hide();
   }
 }

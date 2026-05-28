@@ -176,6 +176,20 @@ describe("LoadingIndicator", () => {
       expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
     });
 
+    it("hides a visible bar when teardown runs (reconfig mid-cycle)", () => {
+      // If the bar is up when reconfigure happens, leaving it visible
+      // would orphan it (no listener will see the next lvt:updated).
+      // Teardown hides it; the new cycle starts clean.
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(50);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+
+      indicator.enablePerActionIndicator(200); // reconfigure mid-bar
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
+
     it("disablePerActionIndicator stops further reactions", () => {
       jest.useFakeTimers();
       indicator.enablePerActionIndicator(50);

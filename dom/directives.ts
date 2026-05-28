@@ -415,6 +415,17 @@ export function handleScrollDirectives(rootElement: Element): void {
 }
 
 /**
+ * Cancel and forget all active `lvt-fx:auto-click` timers. Called from
+ * the LiveTemplate client's `disconnect()` so per-session timer state
+ * doesn't survive across a session boundary (the next session re-arms
+ * fresh on its first render pass). Safe to call when no timers exist.
+ */
+export function teardownAutoClickTimers(): void {
+  for (const { timer } of autoClickTimers.values()) clearTimeout(timer);
+  autoClickTimers.clear();
+}
+
+/**
  * Apply auto-click directives. `lvt-fx:auto-click="<delay-ms>:<button-name>"`
  * arms a timer when the element is first seen with this spec; on fire, the
  * directive locates a descendant `[name=<button-name>]` and synthesizes a
@@ -473,15 +484,16 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     // for "auto-execute action on render" patterns. Authors who want
     // visible debounce should pass a non-zero value.
     //
-    // Name is restricted to a safe identifier so we can interpolate into
-    // the CSS attribute selector without escaping. Authors set this
-    // attribute in their templates, so the constraint is fine in
-    // practice and protects against accidental selector injection.
+    // Name is restricted to characters that cannot escape the CSS
+    // attribute-selector interpolation below (no quotes, brackets,
+    // whitespace, or backslashes). Word characters and hyphens cover
+    // every valid HTML name attribute we expect to encounter — including
+    // digit-prefixed names — while keeping the selector safe.
     if (
       !Number.isFinite(delayMs) ||
       delayMs < 0 ||
       !name ||
-      !/^[A-Za-z][\w-]*$/.test(name)
+      !/^[\w-]+$/.test(name)
     ) {
       console.warn(
         `lvt-fx:auto-click expects "<delay-ms>:<button-name>", got: ${spec}`
