@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.11.4] - 2026-05-28
+
+### Changes
+
+- chore(changelog): strip v0.11.4 stub so release.sh regenerates it (55508c5)
+- feat: per-action loading bar + lvt-fx:scroll=reset-on + lvt-fx:auto-click (#123) (08b37bb)
+
+
+
 ## [v0.11.3] - 2026-05-25
 
 ### Changes
