@@ -12,6 +12,12 @@
 export class LoadingIndicator {
   private bar: HTMLElement | null = null;
   private actionTimer: ReturnType<typeof setTimeout> | null = null;
+  // Counts in-flight actions so concurrent server roundtrips don't hide
+  // the bar prematurely: the bar stays visible as long as at least one
+  // `lvt:pending` is outstanding. Without this counter, action B
+  // completing first would clear the bar even though action A is still
+  // in flight.
+  private pendingCount = 0;
   private pendingHandler: ((ev: Event) => void) | null = null;
   private updatedHandler: ((ev: Event) => void) | null = null;
 
@@ -65,20 +71,37 @@ export class LoadingIndicator {
    */
   enablePerActionIndicator(debounceMs: number): void {
     if (this.pendingHandler) return;
+    this.pendingCount = 0;
 
     this.pendingHandler = () => {
-      if (this.actionTimer !== null || this.bar !== null) return;
-      this.actionTimer = setTimeout(() => {
-        this.actionTimer = null;
-        this.show();
-      }, debounceMs);
+      this.pendingCount++;
+      // Only arm a debounce timer on the 0→1 transition. Subsequent
+      // concurrent actions don't reset the timer or re-show the bar —
+      // the bar that is or will become visible already represents "at
+      // least one action in flight".
+      if (
+        this.pendingCount === 1 &&
+        this.actionTimer === null &&
+        this.bar === null
+      ) {
+        this.actionTimer = setTimeout(() => {
+          this.actionTimer = null;
+          this.show();
+        }, debounceMs);
+      }
     };
     this.updatedHandler = () => {
-      if (this.actionTimer !== null) {
-        clearTimeout(this.actionTimer);
-        this.actionTimer = null;
+      // Math.max guards against an `lvt:updated` arriving without a
+      // matching `lvt:pending` (e.g. a server push, or an action whose
+      // pending event was dispatched before the listener was attached).
+      this.pendingCount = Math.max(0, this.pendingCount - 1);
+      if (this.pendingCount === 0) {
+        if (this.actionTimer !== null) {
+          clearTimeout(this.actionTimer);
+          this.actionTimer = null;
+        }
+        this.hide();
       }
-      this.hide();
     };
     document.addEventListener("lvt:pending", this.pendingHandler, true);
     document.addEventListener("lvt:updated", this.updatedHandler, true);
@@ -101,5 +124,6 @@ export class LoadingIndicator {
       clearTimeout(this.actionTimer);
       this.actionTimer = null;
     }
+    this.pendingCount = 0;
   }
 }

@@ -170,5 +170,63 @@ describe("LoadingIndicator", () => {
       jest.advanceTimersByTime(500);
       expect(document.querySelector(".lvt-loading-bar")).toBeNull();
     });
+
+    it("keeps the bar visible until ALL concurrent actions complete", () => {
+      // Concurrency repro: A starts → timer arms → bar shows. B starts.
+      // B completes first — the bar must NOT disappear, because A is
+      // still in flight. Bar should only hide once A's lvt:updated also
+      // arrives. Without per-action reference counting, the first
+      // lvt:updated would clear the bar prematurely.
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending")); // A
+      jest.advanceTimersByTime(50);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+
+      document.dispatchEvent(new CustomEvent("lvt:pending")); // B
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // B done
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // A done
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
+
+    it("during debounce: cancels timer only when last pending completes", () => {
+      // Both actions complete before the debounce elapses — bar should
+      // never appear.
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(200);
+
+      document.dispatchEvent(new CustomEvent("lvt:pending")); // A
+      jest.advanceTimersByTime(50);
+      document.dispatchEvent(new CustomEvent("lvt:pending")); // B
+      jest.advanceTimersByTime(50);
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // A done
+      // Timer must still be armed — B is still pending.
+      jest.advanceTimersByTime(150); // total = 250ms since A
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // B done
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
+
+    it("orphan lvt:updated (count already zero) is harmless", () => {
+      // E.g. a server push, or a race where an updated event arrives
+      // before our listener saw the corresponding pending.
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(50);
+
+      expect(() =>
+        document.dispatchEvent(new CustomEvent("lvt:updated"))
+      ).not.toThrow();
+
+      // Subsequent normal cycle still works.
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(50);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+      document.dispatchEvent(new CustomEvent("lvt:updated"));
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+    });
   });
 });

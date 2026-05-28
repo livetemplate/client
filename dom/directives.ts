@@ -432,10 +432,17 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     return;
   }
 
-  // Sweep: cancel timers for elements that have disconnected. Without
-  // this, the Map grows unbounded across renders for removed elements.
+  // Sweep: cancel timers for elements that have disconnected OR whose
+  // attribute was cleared while they remain in the DOM (e.g. the server
+  // resolved the toast's dismiss state without removing the element).
+  // Without this, the Map grows unbounded across renders, and a stale
+  // timer could fire `.click()` on a button whose owning element no
+  // longer wants the auto-action.
   for (const [element, entry] of Array.from(autoClickTimers)) {
-    if (!element.isConnected) {
+    if (
+      !element.isConnected ||
+      !element.hasAttribute("lvt-fx:auto-click")
+    ) {
       clearTimeout(entry.timer);
       autoClickTimers.delete(element);
     }

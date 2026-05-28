@@ -690,6 +690,30 @@ describe("handleAutoClickDirectives", () => {
     expect(clickSpy).not.toHaveBeenCalled();
   });
 
+  it("cancels timer when attribute is removed while element stays connected", () => {
+    // Server resolves the toast's state (e.g. clears DoneWritten) without
+    // removing the wrapper element. Without the attribute sweep, the
+    // pending timer would still fire and click a button on a banner the
+    // server already considers dismissed.
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    toast.removeAttribute("lvt-fx:auto-click"); // server cleared intent
+    handleAutoClickDirectives(document.body); // next render's sweep
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
   it("re-arms with new spec when delay or button-name changes", () => {
     document.body.innerHTML = `
       <div id="toast" lvt-fx:auto-click="1000:dismiss">
