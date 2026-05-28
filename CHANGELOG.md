@@ -5,38 +5,6 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.11.4] - 2026-05-27
-
-### Changes
-
-- feat(loading-indicator): per-action wiring via `data-lvt-loading-debounce-ms`
-
-  Setting `data-lvt-loading-debounce-ms="<N>"` (on the wrapper or directly
-  on `<body>`) opts the page into a loading bar that appears after N ms
-  of any action being in flight (`lvt:pending`), and hides on
-  `lvt:updated`. Reuses the same `LoadingIndicator` already used for
-  initial-connect loading. The bar element now also carries
-  `class="lvt-loading-bar"` so consumers can style/test it.
-
-- feat(directives): `lvt-fx:scroll="reset-on:<attr>"` mode
-
-  Resets `scrollLeft`/`scrollTop` to 0 whenever the value of the watched
-  attribute changes between renders. Use case: an element whose content
-  swaps without the DOM node itself being replaced (morphdom reuse),
-  where the previous scroll position is meaningless for the new content.
-
-- feat(directives): `lvt-fx:auto-click="<delay-ms>:<button-name>"`
-
-  Arms a timer when the element first appears with this spec; on fire,
-  the directive locates a descendant `button[name=<button-name>]` and
-  clicks it — funneling through the existing event-delegation pipeline
-  so the server-side action runs identically to a user click. Selector
-  is scoped to `<button>` so a stray same-named checkbox/input can't be
-  mis-clicked. Use case: auto-dismiss a toast/banner after N ms by
-  clicking its existing dismiss button. Idempotent across renders;
-  cancels cleanly if the element disconnects, or if its directive
-  attribute is removed in place.
-
 ## [v0.11.3] - 2026-05-25
 
 ### Changes
