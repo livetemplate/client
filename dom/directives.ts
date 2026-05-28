@@ -420,12 +420,18 @@ export function handleScrollDirectives(rootElement: Element): void {
  * doesn't survive across a session boundary (the next session re-arms
  * fresh on its first render pass). Safe to call when no timers exist.
  *
- * Scope: the timer Map is module-level, so this teardown clears timers
- * for every `LiveTemplateClient` instance on the page. Callers that
- * coexist with another client must coordinate teardown timing, or the
- * surviving client will need its next render pass to re-arm. This
- * matches the pre-existing pattern for `animatedElements` and
- * `scrollResetPriors`.
+ * Multi-client scope warning: the timer Map is module-level (matching
+ * the existing `animatedElements` / `scrollResetPriors` pattern), so
+ * this teardown cancels timers across every `LiveTemplateClient`
+ * instance on the page. If two clients coexist (e.g. a layout client
+ * and a widget client), disconnect order matters — the surviving
+ * client's pending auto-clicks are cancelled along with the
+ * disconnecting client's. Surviving clients re-arm on their next
+ * render pass, but any auto-click that was about to fire mid-window
+ * is lost. Per-instance scoping would solve this but is a larger
+ * refactor (the existing two singletons would need the same
+ * treatment) and is deferred until a real multi-client use case
+ * appears.
  */
 export function teardownAutoClickTimers(): void {
   for (const { timer } of autoClickTimers.values()) clearTimeout(timer);
@@ -499,7 +505,10 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     // attribute-selector interpolation below (no quotes, brackets,
     // whitespace, or backslashes). Word characters and hyphens cover
     // every valid HTML name attribute we expect to encounter — including
-    // digit-prefixed names — while keeping the selector safe.
+    // digit-prefixed names — while keeping the selector safe. JavaScript
+    // `\w` is ASCII-only (`[A-Za-z0-9_]`), so a Unicode button name
+    // would warn here; revisit if i18n button naming becomes a real
+    // requirement.
     if (
       !Number.isFinite(delayMs) ||
       delayMs < 0 ||
