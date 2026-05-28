@@ -419,6 +419,13 @@ export function handleScrollDirectives(rootElement: Element): void {
  * the LiveTemplate client's `disconnect()` so per-session timer state
  * doesn't survive across a session boundary (the next session re-arms
  * fresh on its first render pass). Safe to call when no timers exist.
+ *
+ * Scope: the timer Map is module-level, so this teardown clears timers
+ * for every `LiveTemplateClient` instance on the page. Callers that
+ * coexist with another client must coordinate teardown timing, or the
+ * surviving client will need its next render pass to re-arm. This
+ * matches the pre-existing pattern for `animatedElements` and
+ * `scrollResetPriors`.
  */
 export function teardownAutoClickTimers(): void {
   for (const { timer } of autoClickTimers.values()) clearTimeout(timer);

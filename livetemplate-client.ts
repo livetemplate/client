@@ -362,7 +362,22 @@ export class LiveTemplateClient {
         if (debounceAttr !== null && /^\d+$/.test(debounceAttr)) {
           const debounceMs = parseInt(debounceAttr, 10);
           if (Number.isFinite(debounceMs) && debounceMs >= 0) {
-            client.loadingIndicator.enablePerActionIndicator(debounceMs);
+            // Defer wiring until after the first `lvt:updated`. If we
+            // wired it now and `data-lvt-loading="true"` is also set,
+            // the initial-connect bar would be up when the first
+            // user-initiated `lvt:pending` fires (no debounce armed,
+            // since `bar !== null`), and the very next `lvt:updated` —
+            // which is the initial payload, not the action response —
+            // would decrement the count to zero and consume the
+            // action's pending credit. Waiting one render makes the
+            // per-action machinery start in steady state.
+            wrapper.addEventListener(
+              "lvt:updated",
+              () => {
+                client.loadingIndicator.enablePerActionIndicator(debounceMs);
+              },
+              { once: true, capture: true }
+            );
           }
         }
 
