@@ -217,6 +217,22 @@ describe("handleScrollDirectives", () => {
       expect(container.scrollTop).toBe(0);
     });
 
+    it("preserves scroll on first paint (does not clobber pre-existing position)", () => {
+      // Caller might have restored scroll from a session, deep link, or
+      // anchor jump before the first directive sweep. The directive's
+      // semantic is "reset on *change*" — establishing the prior on the
+      // very first observation must not itself trigger a reset.
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+      container.scrollLeft = 120;
+      container.scrollTop = 40;
+
+      handleScrollDirectives(document.body); // first paint
+
+      expect(container.scrollLeft).toBe(120);
+      expect(container.scrollTop).toBe(40);
+    });
+
     it("preserves scroll when watched attribute is unchanged across renders", () => {
       document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
       const container = document.getElementById("container")!;

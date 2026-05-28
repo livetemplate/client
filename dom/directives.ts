@@ -322,8 +322,13 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
             }
             const currentValue = htmlElement.getAttribute(attrName);
             const seen = scrollResetPriors.has(htmlElement);
-            const priorValue = seen ? scrollResetPriors.get(htmlElement)! : null;
-            if (!seen || priorValue !== currentValue) {
+            if (!seen) {
+              // First paint — establish the prior, don't reset. The
+              // directive's semantic is "reset on *change*"; if a caller
+              // has set scroll programmatically before our first sweep
+              // (session restore, deep link, etc.), we must not clobber it.
+              scrollResetPriors.set(htmlElement, currentValue);
+            } else if (scrollResetPriors.get(htmlElement) !== currentValue) {
               scrollResetPriors.set(htmlElement, currentValue);
               htmlElement.scrollLeft = 0;
               htmlElement.scrollTop = 0;
@@ -416,6 +421,17 @@ export function handleScrollDirectives(rootElement: Element): void {
  * isConnected check skips the click).
  */
 export function handleAutoClickDirectives(rootElement: Element): void {
+  // Fast path: nothing armed and no matching elements → no work to do.
+  // `querySelector` returns on the first hit, so this is cheaper than
+  // the `querySelectorAll` below when there are no matches at all
+  // (the common case for pages that don't use this directive).
+  if (
+    autoClickTimers.size === 0 &&
+    rootElement.querySelector("[lvt-fx\\:auto-click]") === null
+  ) {
+    return;
+  }
+
   // Sweep: cancel timers for elements that have disconnected. Without
   // this, the Map grows unbounded across renders for removed elements.
   for (const [element, entry] of Array.from(autoClickTimers)) {
