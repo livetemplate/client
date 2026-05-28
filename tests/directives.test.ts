@@ -672,6 +672,33 @@ describe("handleAutoClickDirectives", () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("does not re-fire when element stays in DOM after timer fires", () => {
+    // Race: timer fires (sends action via .click()), but the server
+    // hasn't yet removed the toast element. A render pass landing
+    // before the response would re-arm a fresh timer if the post-fire
+    // map entry were cleared, causing a second .click() — silently
+    // double-firing the action. Map entry must persist past fire.
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(100); // fires
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    // Server hasn't responded yet — re-render passes happen.
+    handleAutoClickDirectives(document.body);
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels timer when the element is removed before firing", () => {
     document.body.innerHTML = `
       <div id="toast" lvt-fx:auto-click="100:dismiss">

@@ -507,7 +507,14 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     }
 
     const timer = setTimeout(() => {
-      autoClickTimers.delete(element);
+      // Intentionally NOT deleting the map entry here. Doing so would
+      // make the next render pass see "no entry, attribute still set"
+      // and re-arm a fresh timer, firing `.click()` a second time —
+      // reachable whenever a render lands between fire and the server
+      // removing the element. Leave the entry in place; the next
+      // sweep cleans it up when the element disconnects or the
+      // attribute is cleared. The fired timeout itself is now a no-op
+      // (clearTimeout on a fired handle is harmless).
       if (!element.isConnected) return;
       // Scoped to <button>: clicking an arbitrary [name=…] match (e.g.
       // a checkbox, a text input) would have surprising side effects
