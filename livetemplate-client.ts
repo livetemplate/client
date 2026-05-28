@@ -9,9 +9,11 @@ import morphdom from "morphdom";
 import { FocusManager } from "./dom/focus-manager";
 import {
   handleAnimateDirectives,
+  handleAutoClickDirectives,
   handleHighlightDirectives,
   handleScrollDirectives,
   handleToastDirectives,
+  teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
   teardownFxDOMEventTriggers,
@@ -342,6 +344,43 @@ export class LiveTemplateClient {
           client.formDisabler.disable(client.wrapperElement);
         }
 
+        // Per-action loading indicator: opt-in via the
+        // `data-lvt-loading-debounce-ms="<N>"` attribute. Read from the
+        // wrapper first (server-set), then fall back to `<body>` —
+        // because the wrapper is auto-injected by the framework, template
+        // authors typically place the attribute on body themselves. The
+        // attribute arms a timer on every `lvt:pending` and shows the
+        // loading bar if it fires before `lvt:updated` arrives — used to
+        // mask round-trip latency without flashing a bar on instant
+        // responses.
+        const debounceAttr =
+          wrapper.getAttribute("data-lvt-loading-debounce-ms") ??
+          document.body?.getAttribute("data-lvt-loading-debounce-ms") ??
+          null;
+        // Pre-validate as a pure integer string: parseInt is lenient
+        // and would accept "200abc" as 200, silently masking a typo.
+        if (debounceAttr !== null && /^\d+$/.test(debounceAttr)) {
+          const debounceMs = parseInt(debounceAttr, 10);
+          if (Number.isFinite(debounceMs) && debounceMs >= 0) {
+            // Defer wiring until after the first `lvt:updated`. If we
+            // wired it now and `data-lvt-loading="true"` is also set,
+            // the initial-connect bar would be up when the first
+            // user-initiated `lvt:pending` fires (no debounce armed,
+            // since `bar !== null`), and the very next `lvt:updated` —
+            // which is the initial payload, not the action response —
+            // would decrement the count to zero and consume the
+            // action's pending credit. Waiting one render makes the
+            // per-action machinery start in steady state.
+            wrapper.addEventListener(
+              "lvt:updated",
+              () => {
+                client.loadingIndicator.enablePerActionIndicator(debounceMs);
+              },
+              { once: true, capture: true }
+            );
+          }
+        }
+
         client.connect().catch((error) => {
           autoInitLogger.error("Auto-initialization connect failed:", error);
         });
@@ -578,6 +617,8 @@ export class LiveTemplateClient {
     this.teardownVisibilityReconnect();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
+    teardownAutoClickTimers();
+    this.loadingIndicator.disablePerActionIndicator();
     if (this.wrapperElement) {
       teardownFxDOMEventTriggers(this.wrapperElement);
       teardownFxLifecycleListeners(this.wrapperElement);
@@ -1789,6 +1830,7 @@ export class LiveTemplateClient {
     handleHighlightDirectives(element);
     handleAnimateDirectives(element);
     handleToastDirectives(element);
+    handleAutoClickDirectives(element);
     setupScrollAway(element);
     setupSpy(element);
     if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {

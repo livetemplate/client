@@ -2,7 +2,10 @@ import {
   handleScrollDirectives,
   handleHighlightDirectives,
   handleAnimateDirectives,
+  handleAutoClickDirectives,
   setupFxDOMEventTriggers,
+  teardownAutoClickTimers,
+  __resetAnimatedElementsForTesting,
 } from "../dom/directives";
 
 describe("handleScrollDirectives", () => {
@@ -194,6 +197,102 @@ describe("handleScrollDirectives", () => {
     handleScrollDirectives(document.body);
 
     expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
+  describe("reset-on:<attr>", () => {
+    it("resets scrollLeft and scrollTop when watched attribute changes", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body); // first paint — establishes prior
+      container.scrollLeft = 200;
+      container.scrollTop = 80;
+
+      handleScrollDirectives(document.body); // same value — no reset
+      expect(container.scrollLeft).toBe(200);
+      expect(container.scrollTop).toBe(80);
+
+      container.setAttribute("data-path", "b.go");
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+      expect(container.scrollTop).toBe(0);
+    });
+
+    it("preserves scroll on first paint (does not clobber pre-existing position)", () => {
+      // Caller might have restored scroll from a session, deep link, or
+      // anchor jump before the first directive sweep. The directive's
+      // semantic is "reset on *change*" — establishing the prior on the
+      // very first observation must not itself trigger a reset.
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+      container.scrollLeft = 120;
+      container.scrollTop = 40;
+
+      handleScrollDirectives(document.body); // first paint
+
+      expect(container.scrollLeft).toBe(120);
+      expect(container.scrollTop).toBe(40);
+    });
+
+    it("preserves scroll when watched attribute is unchanged across renders", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path" data-path="a.go"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body);
+      container.scrollLeft = 50;
+      container.scrollTop = 25;
+
+      for (let i = 0; i < 5; i++) handleScrollDirectives(document.body);
+
+      expect(container.scrollLeft).toBe(50);
+      expect(container.scrollTop).toBe(25);
+    });
+
+    it("treats attribute-absent → present as a change (and vice versa)", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:data-path"></div>`;
+      const container = document.getElementById("container")!;
+
+      handleScrollDirectives(document.body); // prior=null
+      container.scrollLeft = 100;
+
+      handleScrollDirectives(document.body); // still null → no reset
+      expect(container.scrollLeft).toBe(100);
+
+      container.setAttribute("data-path", "a.go"); // null → "a.go" is a change
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+
+      container.scrollLeft = 150;
+      container.removeAttribute("data-path"); // "a.go" → null is a change
+      handleScrollDirectives(document.body);
+      expect(container.scrollLeft).toBe(0);
+    });
+
+    it("warns when no attribute name is supplied (reset-on:)", () => {
+      document.body.innerHTML = `<div id="container" lvt-fx:scroll="reset-on:"></div>`;
+      handleScrollDirectives(document.body);
+      expect(console.warn).toHaveBeenCalledWith(
+        `lvt-fx:scroll="reset-on:" requires an attribute name`
+      );
+    });
+
+    it("tracks each element independently", () => {
+      document.body.innerHTML = `
+        <div id="a" lvt-fx:scroll="reset-on:data-path" data-path="x.go"></div>
+        <div id="b" lvt-fx:scroll="reset-on:data-path" data-path="y.go"></div>
+      `;
+      const a = document.getElementById("a")!;
+      const b = document.getElementById("b")!;
+
+      handleScrollDirectives(document.body);
+      a.scrollLeft = 10;
+      b.scrollLeft = 20;
+
+      a.setAttribute("data-path", "z.go"); // only a changes
+      handleScrollDirectives(document.body);
+      expect(a.scrollLeft).toBe(0);
+      expect(b.scrollLeft).toBe(20);
+    });
   });
 });
 
@@ -514,5 +613,244 @@ describe("setupFxDOMEventTriggers", () => {
 
     expect(target.style.backgroundColor).not.toBe("");
     expect(trigger.style.backgroundColor).toBe("");
+  });
+});
+
+describe("handleAutoClickDirectives", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.useFakeTimers();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    __resetAnimatedElementsForTesting();
+  });
+
+  afterEach(() => {
+    __resetAnimatedElementsForTesting();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("fires a click on the named descendant button after the delay", () => {
+    document.body.innerHTML = `
+      <div class="toast" lvt-fx:auto-click="5000:dismissBanner">
+        Saved
+        <button name="dismissBanner">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismissBanner"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(4999);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-arm on subsequent renders with the same spec", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(50);
+    handleAutoClickDirectives(document.body); // re-render mid-wait
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(50);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-fire when element stays in DOM after timer fires", () => {
+    // Race: timer fires (sends action via .click()), but the server
+    // hasn't yet removed the toast element. A render pass landing
+    // before the response would re-arm a fresh timer if the post-fire
+    // map entry were cleared, causing a second .click() — silently
+    // double-firing the action. Map entry must persist past fire.
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(100); // fires
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    // Server hasn't responded yet — re-render passes happen.
+    handleAutoClickDirectives(document.body);
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels timer when the element is removed before firing", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    toast.remove();
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  it("cancels timer when attribute is removed while element stays connected", () => {
+    // Server resolves the toast's state (e.g. clears DoneWritten) without
+    // removing the wrapper element. Without the attribute sweep, the
+    // pending timer would still fire and click a button on a banner the
+    // server already considers dismissed.
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    toast.removeAttribute("lvt-fx:auto-click"); // server cleared intent
+    handleAutoClickDirectives(document.body); // next render's sweep
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  it("re-arms with new spec when delay or button-name changes", () => {
+    document.body.innerHTML = `
+      <div id="toast" lvt-fx:auto-click="1000:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const toast = document.getElementById("toast")!;
+    const btn = toast.querySelector(
+      'button[name="dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+
+    toast.setAttribute("lvt-fx:auto-click", "200:dismiss");
+    handleAutoClickDirectives(document.body);
+
+    jest.advanceTimersByTime(199);
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns on malformed spec", () => {
+    const malformed = [
+      "just-text",       // no colon
+      "abc:dismiss",     // non-numeric delay
+      "100:",            // empty name
+      "200abc:dismiss",  // trailing junk on delay — parseInt would lenient-accept 200
+      "12.5:dismiss",    // float — \d+ rejects the dot
+      "-100:dismiss",    // negative — \d+ rejects the sign
+    ];
+    for (const spec of malformed) {
+      (console.warn as jest.Mock).mockClear();
+      document.body.innerHTML = `<div lvt-fx:auto-click="${spec}"></div>`;
+      handleAutoClickDirectives(document.body);
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining("lvt-fx:auto-click expects")
+      );
+    }
+  });
+
+  it("ignores when no descendant matches the named selector", () => {
+    document.body.innerHTML = `<div lvt-fx:auto-click="100:noSuchButton"></div>`;
+    handleAutoClickDirectives(document.body);
+
+    expect(() => jest.advanceTimersByTime(500)).not.toThrow();
+  });
+
+  it("accepts digit-prefixed button names", () => {
+    // HTML permits names like "1-dismiss". The regex was tightened to
+    // `^[\w-]+$` so this no longer fails.
+    document.body.innerHTML = `
+      <div lvt-fx:auto-click="100:1-dismiss">
+        <button name="1-dismiss">×</button>
+      </div>
+    `;
+    const btn = document.querySelector(
+      'button[name="1-dismiss"]'
+    )! as HTMLButtonElement;
+    const clickSpy = jest.spyOn(btn, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(100);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("teardownAutoClickTimers cancels all armed timers", () => {
+    document.body.innerHTML = `
+      <div id="t1" lvt-fx:auto-click="100:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+      <div id="t2" lvt-fx:auto-click="200:dismiss">
+        <button name="dismiss">×</button>
+      </div>
+    `;
+    const btns = Array.from(
+      document.querySelectorAll('button[name="dismiss"]')
+    ) as HTMLButtonElement[];
+    const spies = btns.map((b) => jest.spyOn(b, "click"));
+
+    handleAutoClickDirectives(document.body);
+    teardownAutoClickTimers();
+    jest.advanceTimersByTime(500);
+
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("does not match non-button elements with the same name", () => {
+    // The selector is scoped to `button[name=...]` — a checkbox or text
+    // input with the same name would otherwise get .click()ed with
+    // surprising side effects (toggle / focus) unrelated to the
+    // action-submission semantic the directive promises.
+    document.body.innerHTML = `
+      <div lvt-fx:auto-click="100:dismiss">
+        <input type="checkbox" name="dismiss">
+      </div>
+    `;
+    const cb = document.querySelector(
+      'input[name="dismiss"]'
+    )! as HTMLInputElement;
+    const clickSpy = jest.spyOn(cb, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,31 @@ const FX_LIFECYCLE_SET = new Set(["pending", "success", "error", "done"]);
 // want a visible pulse on every update should reach for lvt-fx:highlight.
 let animatedElements = new WeakSet<Element>();
 
+// Tracks the prior value of the watched attribute for each element using
+// `lvt-fx:scroll="reset-on:<attr>"`. We can't stash the prior value as a
+// data-* attribute — morphdom would diff against it and constantly fight
+// the reset. WeakMap auto-cleans when the element is GC'd.
+let scrollResetPriors = new WeakMap<Element, string | null>();
+
+// Active timers for `lvt-fx:auto-click="<delay-ms>:<button-name>"`. Stored
+// keyed by element so we can detect: (a) element re-renders unchanged →
+// don't re-arm, (b) spec changed → cancel + re-arm, (c) element removed →
+// cancel. Strong Map (not WeakMap) so we can iterate for the disconnected-
+// element sweep on each render pass.
+//
+// Leak management: cleanup of stale entries depends on render continuity —
+// `handleAutoClickDirectives` runs the sweep on every render pass, so an
+// element removed between renders is collected on the next one. If the
+// page stops rendering entirely (e.g. websocket dies and is never
+// reconnected) while elements still have timers, those entries hold
+// strong refs until tear-down. In practice the timer's own fire-time
+// `isConnected` guard makes any leftover harmless — it would skip the
+// `.click()` for a disconnected node — but the Map itself remains.
+let autoClickTimers = new Map<
+  Element,
+  { timer: ReturnType<typeof setTimeout>; spec: string }
+>();
+
 /**
  * Test-only: reset the module-level animatedElements WeakSet. Required
  * for tests that reuse the same DOM nodes across cases — without this,
@@ -34,6 +59,9 @@ let animatedElements = new WeakSet<Element>();
  */
 export function __resetAnimatedElementsForTesting(): void {
   animatedElements = new WeakSet<Element>();
+  scrollResetPriors = new WeakMap<Element, string | null>();
+  for (const { timer } of autoClickTimers.values()) clearTimeout(timer);
+  autoClickTimers = new Map();
 }
 
 /**
@@ -289,8 +317,35 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
         }
         case "preserve":
           break;
-        default:
+        default: {
+          // `reset-on:<attr-name>` — reset scrollLeft/scrollTop to 0
+          // whenever the value of `<attr-name>` differs from the last
+          // render. Use case: an element whose content swaps without the
+          // node itself being replaced (morphdom reuse), where the
+          // previous scroll position is meaningless for the new content.
+          if (mode.startsWith("reset-on:")) {
+            const attrName = mode.slice("reset-on:".length);
+            if (!attrName) {
+              console.warn(`lvt-fx:scroll="reset-on:" requires an attribute name`);
+              break;
+            }
+            const currentValue = htmlElement.getAttribute(attrName);
+            const seen = scrollResetPriors.has(htmlElement);
+            if (!seen) {
+              // First paint — establish the prior, don't reset. The
+              // directive's semantic is "reset on *change*"; if a caller
+              // has set scroll programmatically before our first sweep
+              // (session restore, deep link, etc.), we must not clobber it.
+              scrollResetPriors.set(htmlElement, currentValue);
+            } else if (scrollResetPriors.get(htmlElement) !== currentValue) {
+              scrollResetPriors.set(htmlElement, currentValue);
+              htmlElement.scrollLeft = 0;
+              htmlElement.scrollTop = 0;
+            }
+            break;
+          }
           console.warn(`Unknown lvt-fx:scroll mode: ${mode}`);
+        }
       }
       break;
     }
@@ -356,6 +411,141 @@ export function handleScrollDirectives(rootElement: Element): void {
     const mode = element.getAttribute("lvt-fx:scroll");
     if (!mode) return;
     applyFxEffect(element as HTMLElement, "scroll", mode);
+  });
+}
+
+/**
+ * Cancel and forget all active `lvt-fx:auto-click` timers. Called from
+ * the LiveTemplate client's `disconnect()` so per-session timer state
+ * doesn't survive across a session boundary (the next session re-arms
+ * fresh on its first render pass). Safe to call when no timers exist.
+ *
+ * Multi-client scope warning: the timer Map is module-level (matching
+ * the existing `animatedElements` / `scrollResetPriors` pattern), so
+ * this teardown cancels timers across every `LiveTemplateClient`
+ * instance on the page. If two clients coexist (e.g. a layout client
+ * and a widget client), disconnect order matters — the surviving
+ * client's pending auto-clicks are cancelled along with the
+ * disconnecting client's. Surviving clients re-arm on their next
+ * render pass, but any auto-click that was about to fire mid-window
+ * is lost. Per-instance scoping would solve this but is a larger
+ * refactor (the existing two singletons would need the same
+ * treatment) and is deferred until a real multi-client use case
+ * appears.
+ */
+export function teardownAutoClickTimers(): void {
+  for (const { timer } of autoClickTimers.values()) clearTimeout(timer);
+  autoClickTimers.clear();
+}
+
+/**
+ * Apply auto-click directives. `lvt-fx:auto-click="<delay-ms>:<button-name>"`
+ * arms a timer when the element is first seen with this spec; on fire, the
+ * directive locates a descendant `[name=<button-name>]` and synthesizes a
+ * click on it — funneling through the existing event-delegation pipeline
+ * so the server-side action runs identically to a user click. Use case:
+ * auto-dismiss a toast/banner after N ms by clicking its existing dismiss
+ * button (which already fires the dismissBanner server action).
+ *
+ * Idempotent across renders: an element that re-appears with the same
+ * spec keeps its existing timer. A spec change cancels and re-arms. An
+ * element that disappears has its timer canceled on the next render's
+ * sweep (and even if the sweep doesn't run first, the fire-time
+ * isConnected check skips the click).
+ */
+export function handleAutoClickDirectives(rootElement: Element): void {
+  // Fast path: nothing armed and no matching elements → no work to do.
+  // `querySelector` returns on the first hit, so this is cheaper than
+  // the `querySelectorAll` below when there are no matches at all
+  // (the common case for pages that don't use this directive).
+  if (
+    autoClickTimers.size === 0 &&
+    rootElement.querySelector("[lvt-fx\\:auto-click]") === null
+  ) {
+    return;
+  }
+
+  // Sweep: cancel timers for elements that have disconnected OR whose
+  // attribute was cleared while they remain in the DOM (e.g. the server
+  // resolved the toast's dismiss state without removing the element).
+  // Without this, the Map grows unbounded across renders, and a stale
+  // timer could fire `.click()` on a button whose owning element no
+  // longer wants the auto-action.
+  for (const [element, entry] of Array.from(autoClickTimers)) {
+    if (
+      !element.isConnected ||
+      !element.hasAttribute("lvt-fx:auto-click")
+    ) {
+      clearTimeout(entry.timer);
+      autoClickTimers.delete(element);
+    }
+  }
+
+  rootElement.querySelectorAll("[lvt-fx\\:auto-click]").forEach((element) => {
+    const spec = element.getAttribute("lvt-fx:auto-click");
+    if (!spec) return;
+
+    const existing = autoClickTimers.get(element);
+    if (existing && existing.spec === spec) return;
+    if (existing) clearTimeout(existing.timer);
+
+    const colonIdx = spec.indexOf(":");
+    const delayStr = colonIdx > 0 ? spec.slice(0, colonIdx) : "";
+    // Pre-validate as a pure integer string: parseInt is lenient and
+    // would accept "200abc" as 200, silently masking a typo in the
+    // attribute. Authors expect "<delay>:<name>" — anything else warns.
+    const delayMs = /^\d+$/.test(delayStr) ? parseInt(delayStr, 10) : NaN;
+    const name = colonIdx > 0 ? spec.slice(colonIdx + 1) : "";
+    // `delayMs === 0` is intentionally allowed: it means "click on the
+    // next tick after this element first appears" — a useful primitive
+    // for "auto-execute action on render" patterns. Authors who want
+    // visible debounce should pass a non-zero value.
+    //
+    // Name is restricted to characters that cannot escape the CSS
+    // attribute-selector interpolation below (no quotes, brackets,
+    // whitespace, or backslashes). Word characters and hyphens cover
+    // every valid HTML name attribute we expect to encounter — including
+    // digit-prefixed names — while keeping the selector safe. JavaScript
+    // `\w` is ASCII-only (`[A-Za-z0-9_]`), so a Unicode button name
+    // would warn here; revisit if i18n button naming becomes a real
+    // requirement.
+    if (
+      !Number.isFinite(delayMs) ||
+      delayMs < 0 ||
+      !name ||
+      !/^[\w-]+$/.test(name)
+    ) {
+      console.warn(
+        `lvt-fx:auto-click expects "<delay-ms>:<button-name>", got: ${spec}`
+      );
+      // Reached when an element's spec changes from valid to malformed
+      // mid-life. The valid-spec branch above already cleared its
+      // existing timer; this delete removes the now-stale map entry so
+      // the next render doesn't see a phantom prior spec.
+      autoClickTimers.delete(element);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      // Intentionally NOT deleting the map entry here. Doing so would
+      // make the next render pass see "no entry, attribute still set"
+      // and re-arm a fresh timer, firing `.click()` a second time —
+      // reachable whenever a render lands between fire and the server
+      // removing the element. Leave the entry in place; the next
+      // sweep cleans it up when the element disconnects or the
+      // attribute is cleared. The fired timeout itself is now a no-op
+      // (clearTimeout on a fired handle is harmless).
+      if (!element.isConnected) return;
+      // Scoped to <button>: clicking an arbitrary [name=…] match (e.g.
+      // a checkbox, a text input) would have surprising side effects
+      // unrelated to the action-submission semantic this directive
+      // promises. Buttons are the only correct target.
+      const button = element.querySelector(
+        `button[name="${name}"]`
+      ) as HTMLElement | null;
+      if (button) button.click();
+    }, delayMs);
+    autoClickTimers.set(element, { timer, spec });
   });
 }
 
