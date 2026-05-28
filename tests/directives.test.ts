@@ -741,23 +741,22 @@ describe("handleAutoClickDirectives", () => {
   });
 
   it("warns on malformed spec", () => {
-    document.body.innerHTML = `<div lvt-fx:auto-click="just-text"></div>`;
-    handleAutoClickDirectives(document.body);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('lvt-fx:auto-click expects')
-    );
-
-    document.body.innerHTML = `<div lvt-fx:auto-click="abc:dismiss"></div>`;
-    handleAutoClickDirectives(document.body);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('lvt-fx:auto-click expects')
-    );
-
-    document.body.innerHTML = `<div lvt-fx:auto-click="100:"></div>`;
-    handleAutoClickDirectives(document.body);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('lvt-fx:auto-click expects')
-    );
+    const malformed = [
+      "just-text",       // no colon
+      "abc:dismiss",     // non-numeric delay
+      "100:",            // empty name
+      "200abc:dismiss",  // trailing junk on delay — parseInt would lenient-accept 200
+      "12.5:dismiss",    // float — \d+ rejects the dot
+      "-100:dismiss",    // negative — \d+ rejects the sign
+    ];
+    for (const spec of malformed) {
+      (console.warn as jest.Mock).mockClear();
+      document.body.innerHTML = `<div lvt-fx:auto-click="${spec}"></div>`;
+      handleAutoClickDirectives(document.body);
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining("lvt-fx:auto-click expects")
+      );
+    }
   });
 
   it("ignores when no descendant matches the named selector", () => {

@@ -357,7 +357,9 @@ export class LiveTemplateClient {
           wrapper.getAttribute("data-lvt-loading-debounce-ms") ??
           document.body?.getAttribute("data-lvt-loading-debounce-ms") ??
           null;
-        if (debounceAttr !== null) {
+        // Pre-validate as a pure integer string: parseInt is lenient
+        // and would accept "200abc" as 200, silently masking a typo.
+        if (debounceAttr !== null && /^\d+$/.test(debounceAttr)) {
           const debounceMs = parseInt(debounceAttr, 10);
           if (Number.isFinite(debounceMs) && debounceMs >= 0) {
             client.loadingIndicator.enablePerActionIndicator(debounceMs);

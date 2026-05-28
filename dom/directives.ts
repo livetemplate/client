@@ -477,7 +477,11 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     if (existing) clearTimeout(existing.timer);
 
     const colonIdx = spec.indexOf(":");
-    const delayMs = colonIdx > 0 ? parseInt(spec.slice(0, colonIdx), 10) : NaN;
+    const delayStr = colonIdx > 0 ? spec.slice(0, colonIdx) : "";
+    // Pre-validate as a pure integer string: parseInt is lenient and
+    // would accept "200abc" as 200, silently masking a typo in the
+    // attribute. Authors expect "<delay>:<name>" — anything else warns.
+    const delayMs = /^\d+$/.test(delayStr) ? parseInt(delayStr, 10) : NaN;
     const name = colonIdx > 0 ? spec.slice(colonIdx + 1) : "";
     // `delayMs === 0` is intentionally allowed: it means "click on the
     // next tick after this element first appears" — a useful primitive
