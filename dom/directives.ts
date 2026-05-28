@@ -502,6 +502,10 @@ export function handleAutoClickDirectives(rootElement: Element): void {
       console.warn(
         `lvt-fx:auto-click expects "<delay-ms>:<button-name>", got: ${spec}`
       );
+      // Reached when an element's spec changes from valid to malformed
+      // mid-life. The valid-spec branch above already cleared its
+      // existing timer; this delete removes the now-stale map entry so
+      // the next render doesn't see a phantom prior spec.
       autoClickTimers.delete(element);
       return;
     }

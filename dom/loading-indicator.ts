@@ -99,7 +99,12 @@ export class LoadingIndicator {
       ) {
         this.actionTimer = setTimeout(() => {
           this.actionTimer = null;
-          this.show();
+          // Re-check pendingCount at fire time. In single-threaded JS
+          // `updatedHandler` would have called `clearTimeout` before the
+          // count could reach zero, so this guard is defensive: it
+          // documents the invariant and protects against any future
+          // reordering of teardown vs. show.
+          if (this.pendingCount > 0) this.show();
         }, debounceMs);
       }
     };
