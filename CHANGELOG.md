@@ -28,12 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - feat(directives): `lvt-fx:auto-click="<delay-ms>:<button-name>"`
 
   Arms a timer when the element first appears with this spec; on fire,
-  the directive locates a descendant `[name=<button-name>]` and clicks
-  it — funneling through the existing event-delegation pipeline so the
-  server-side action runs identically to a user click. Use case: auto-
-  dismiss a toast/banner after N ms by clicking its existing dismiss
-  button. Idempotent across renders; cancels cleanly if the element
-  disappears before firing.
+  the directive locates a descendant `button[name=<button-name>]` and
+  clicks it — funneling through the existing event-delegation pipeline
+  so the server-side action runs identically to a user click. Selector
+  is scoped to `<button>` so a stray same-named checkbox/input can't be
+  mis-clicked. Use case: auto-dismiss a toast/banner after N ms by
+  clicking its existing dismiss button. Idempotent across renders;
+  cancels cleanly if the element disconnects, or if its directive
+  attribute is removed in place.
 
 ## [v0.11.3] - 2026-05-25
 

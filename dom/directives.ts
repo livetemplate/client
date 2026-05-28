@@ -479,8 +479,12 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     const timer = setTimeout(() => {
       autoClickTimers.delete(element);
       if (!element.isConnected) return;
+      // Scoped to <button>: clicking an arbitrary [name=…] match (e.g.
+      // a checkbox, a text input) would have surprising side effects
+      // unrelated to the action-submission semantic this directive
+      // promises. Buttons are the only correct target.
       const button = element.querySelector(
-        `[name="${name}"]`
+        `button[name="${name}"]`
       ) as HTMLElement | null;
       if (button) button.click();
     }, delayMs);

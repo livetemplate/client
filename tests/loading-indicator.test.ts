@@ -192,9 +192,11 @@ describe("LoadingIndicator", () => {
       expect(document.querySelector(".lvt-loading-bar")).toBeNull();
     });
 
-    it("during debounce: cancels timer only when last pending completes", () => {
-      // Both actions complete before the debounce elapses — bar should
-      // never appear.
+    it("B still pending when A's debounce fires — bar appears, stays until B completes", () => {
+      // A starts → timer arms. B starts mid-debounce. A completes
+      // before the debounce expires; counter goes from 2 to 1, so the
+      // timer is NOT cancelled and the bar shows when the debounce
+      // elapses. The bar then stays visible until B also completes.
       jest.useFakeTimers();
       indicator.enablePerActionIndicator(200);
 
@@ -202,12 +204,12 @@ describe("LoadingIndicator", () => {
       jest.advanceTimersByTime(50);
       document.dispatchEvent(new CustomEvent("lvt:pending")); // B
       jest.advanceTimersByTime(50);
-      document.dispatchEvent(new CustomEvent("lvt:updated")); // A done
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // A done — count is now 1, not 0
       // Timer must still be armed — B is still pending.
       jest.advanceTimersByTime(150); // total = 250ms since A
       expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
 
-      document.dispatchEvent(new CustomEvent("lvt:updated")); // B done
+      document.dispatchEvent(new CustomEvent("lvt:updated")); // B done — count back to 0
       expect(document.querySelector(".lvt-loading-bar")).toBeNull();
     });
 

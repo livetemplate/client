@@ -765,4 +765,25 @@ describe("handleAutoClickDirectives", () => {
 
     expect(() => jest.advanceTimersByTime(500)).not.toThrow();
   });
+
+  it("does not match non-button elements with the same name", () => {
+    // The selector is scoped to `button[name=...]` — a checkbox or text
+    // input with the same name would otherwise get .click()ed with
+    // surprising side effects (toggle / focus) unrelated to the
+    // action-submission semantic the directive promises.
+    document.body.innerHTML = `
+      <div lvt-fx:auto-click="100:dismiss">
+        <input type="checkbox" name="dismiss">
+      </div>
+    `;
+    const cb = document.querySelector(
+      'input[name="dismiss"]'
+    )! as HTMLInputElement;
+    const clickSpy = jest.spyOn(cb, "click");
+
+    handleAutoClickDirectives(document.body);
+    jest.advanceTimersByTime(500);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
 });
