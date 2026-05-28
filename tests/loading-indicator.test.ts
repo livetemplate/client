@@ -161,6 +161,21 @@ describe("LoadingIndicator", () => {
       expect(document.querySelectorAll(".lvt-loading-bar").length).toBe(1);
     });
 
+    it("reconfigures when called with a different debounce value", () => {
+      // A caller that re-reads the attribute (after config change /
+      // page reattach) expects the new debounce to take effect, not
+      // silently inherit the prior one.
+      jest.useFakeTimers();
+      indicator.enablePerActionIndicator(500);
+      indicator.enablePerActionIndicator(50); // new value should win
+
+      document.dispatchEvent(new CustomEvent("lvt:pending"));
+      jest.advanceTimersByTime(49);
+      expect(document.querySelector(".lvt-loading-bar")).toBeNull();
+      jest.advanceTimersByTime(1);
+      expect(document.querySelector(".lvt-loading-bar")).not.toBeNull();
+    });
+
     it("disablePerActionIndicator stops further reactions", () => {
       jest.useFakeTimers();
       indicator.enablePerActionIndicator(50);

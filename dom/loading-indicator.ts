@@ -20,6 +20,10 @@ export class LoadingIndicator {
   private pendingCount = 0;
   private pendingHandler: ((ev: Event) => void) | null = null;
   private updatedHandler: ((ev: Event) => void) | null = null;
+  // Current per-action debounce — tracked so a follow-up enable call
+  // with a different value reconfigures cleanly instead of silently
+  // dropping the new value.
+  private currentDebounceMs: number | null = null;
 
   show(): void {
     if (this.bar) return;
@@ -70,8 +74,17 @@ export class LoadingIndicator {
    * than once — repeat calls are no-ops.
    */
   enablePerActionIndicator(debounceMs: number): void {
-    if (this.pendingHandler) return;
+    // Same value as already enabled → no-op (idempotent).
+    // Different value → tear down and re-register cleanly. This
+    // matters for callers that re-read the debounce attribute after
+    // a config change; without it, the second call would silently
+    // discard the new value.
+    if (this.pendingHandler) {
+      if (this.currentDebounceMs === debounceMs) return;
+      this.disablePerActionIndicator();
+    }
     this.pendingCount = 0;
+    this.currentDebounceMs = debounceMs;
 
     this.pendingHandler = () => {
       this.pendingCount++;
@@ -125,5 +138,6 @@ export class LoadingIndicator {
       this.actionTimer = null;
     }
     this.pendingCount = 0;
+    this.currentDebounceMs = null;
   }
 }

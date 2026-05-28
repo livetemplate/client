@@ -28,6 +28,15 @@ let scrollResetPriors = new WeakMap<Element, string | null>();
 // don't re-arm, (b) spec changed → cancel + re-arm, (c) element removed →
 // cancel. Strong Map (not WeakMap) so we can iterate for the disconnected-
 // element sweep on each render pass.
+//
+// Leak management: cleanup of stale entries depends on render continuity —
+// `handleAutoClickDirectives` runs the sweep on every render pass, so an
+// element removed between renders is collected on the next one. If the
+// page stops rendering entirely (e.g. websocket dies and is never
+// reconnected) while elements still have timers, those entries hold
+// strong refs until tear-down. In practice the timer's own fire-time
+// `isConnected` guard makes any leftover harmless — it would skip the
+// `.click()` for a disconnected node — but the Map itself remains.
 let autoClickTimers = new Map<
   Element,
   { timer: ReturnType<typeof setTimeout>; spec: string }
@@ -459,10 +468,15 @@ export function handleAutoClickDirectives(rootElement: Element): void {
     const colonIdx = spec.indexOf(":");
     const delayMs = colonIdx > 0 ? parseInt(spec.slice(0, colonIdx), 10) : NaN;
     const name = colonIdx > 0 ? spec.slice(colonIdx + 1) : "";
-    // Restrict name to a safe identifier so we can interpolate into a CSS
-    // attribute selector without escaping. Authors set this attribute in
-    // their templates, so the constraint is fine in practice and protects
-    // against accidental selector injection.
+    // `delayMs === 0` is intentionally allowed: it means "click on the
+    // next tick after this element first appears" — a useful primitive
+    // for "auto-execute action on render" patterns. Authors who want
+    // visible debounce should pass a non-zero value.
+    //
+    // Name is restricted to a safe identifier so we can interpolate into
+    // the CSS attribute selector without escaping. Authors set this
+    // attribute in their templates, so the constraint is fine in
+    // practice and protects against accidental selector injection.
     if (
       !Number.isFinite(delayMs) ||
       delayMs < 0 ||
