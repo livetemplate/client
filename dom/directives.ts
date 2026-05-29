@@ -989,6 +989,23 @@ const MIN_AREA_FRACTION = 0.02;
  * and the first client's send() is orphaned. Single-client use is
  * unaffected.
  */
+/**
+ * Cancel area-select listeners for every armed element under root.
+ * Mirrors teardownAutoClickTimers: meant for the client's disconnect /
+ * destroy lifecycle so the module-level singleton doesn't outlive a
+ * client that was torn down without a subsequent
+ * handleAreaSelectDirectives call (e.g. network error closed the
+ * socket while an element was armed). Without this, a SPA that mounts
+ * + tears down livetemplate trees would leak listeners across mounts.
+ */
+export function teardownAreaSelectForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(areaSelectArmed)) {
+    if (rootElement === element || rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
 export function handleAreaSelectDirectives(
   rootElement: Element,
   send: (message: { action: string; data: Record<string, unknown> }) => void
@@ -1097,6 +1114,13 @@ function attachAreaSelect(
     const w = (x1 - x0) / rect.width;
     const h = (y1 - y0) / rect.height;
     removeOverlay();
+    // Reject zero-area rectangles outright. The MIN_AREA_FRACTION
+    // check below uses `&&` (drop only when BOTH dims are small) so
+    // a wide-but-thin selection is preserved — but a literal
+    // 60%×0 (or 0×60%) collapses to no region, can't be rendered
+    // sensibly, and would divide by zero in any pixel-space
+    // conversion downstream. Drop independently of the threshold.
+    if (w <= 0 || h <= 0) return;
     // Drop when BOTH dimensions are below the threshold (intentional
     // `&&` — NOT `||`). A wide-but-thin drag (e.g. an underline across
     // an annotated row) or a tall-but-thin drag (e.g. a vertical
@@ -1236,14 +1260,18 @@ function attachAreaSelect(
     if (e.pointerId !== pointerId) return;
     finalize(e, false);
   };
+  // lostpointercapture handles the rare case where the platform yanks
+  // capture (OS gesture, another setPointerCapture call). Don't go
+  // through onPointerCancel — that variant reads e.pointerId, which
+  // for a lost-capture event may not match our tracked pointerId
+  // (e.g. capture was lost between gestures). Just always cancel.
+  const onLostCapture = () => finalize(null, false);
 
   el.addEventListener("pointerdown", onPointerDown);
   el.addEventListener("pointermove", onPointerMove);
   el.addEventListener("pointerup", onPointerUp);
   el.addEventListener("pointercancel", onPointerCancel);
-  // lostpointercapture handles the rare case where the platform yanks
-  // capture (e.g. another element calls setPointerCapture, OS gesture).
-  el.addEventListener("lostpointercapture", onPointerCancel);
+  el.addEventListener("lostpointercapture", onLostCapture);
   el.addEventListener("dragstart", onDragStart);
 
   const cleanup = () => {
@@ -1251,7 +1279,7 @@ function attachAreaSelect(
     el.removeEventListener("pointermove", onPointerMove);
     el.removeEventListener("pointerup", onPointerUp);
     el.removeEventListener("pointercancel", onPointerCancel);
-    el.removeEventListener("lostpointercapture", onPointerCancel);
+    el.removeEventListener("lostpointercapture", onLostCapture);
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
     el.removeEventListener("dragstart", onDragStart);
     finalize(null, false);

@@ -6,6 +6,7 @@ import {
   handleAutoClickDirectives,
   handleShadowRootHydration,
   setupFxDOMEventTriggers,
+  teardownAreaSelectForRoot,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
 } from "../dom/directives";
@@ -1476,6 +1477,77 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.top).toBe("50px");
     expect(overlay.style.width).toBe("40px");
     expect(overlay.style.height).toBe("40px");
+  });
+
+  it("rejects zero-area rectangles even if the threshold check would pass", () => {
+    // The MIN_AREA_FRACTION check uses && so a wide-but-thin drag is
+    // a legit selection — but a literal 60% × 0% drag has no area,
+    // can't render sensibly, and would divide by zero downstream.
+    // Drop it independently of the threshold.
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag from (40,100) to (160,100) — w=60% of 200, h=0%.
+    dispatchPointer(target, "pointerdown", 40, 100);
+    dispatchPointer(target, "pointermove", 160, 100);
+    dispatchPointer(target, "pointerup", 160, 100);
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("teardownAreaSelectForRoot cancels armed elements under root", () => {
+    // For the disconnect / destroy lifecycle: if a client tears down
+    // without a subsequent handleAreaSelectDirectives call, the
+    // module-level singleton would otherwise leak listeners.
+    document.body.innerHTML = `
+      <div id="root">
+        <div id="parent" style="position:relative;">
+          <img id="target" lvt-fx:area-select="selectImageArea">
+        </div>
+      </div>
+      <div id="outside-parent" style="position:relative;">
+        <img id="outside-target" lvt-fx:area-select="otherAction">
+      </div>
+    `;
+    const root = document.getElementById("root")!;
+    const target = document.getElementById("target")! as HTMLImageElement;
+    const outside = document.getElementById("outside-target")! as HTMLImageElement;
+    for (const el of [target, outside]) {
+      el.getBoundingClientRect = jest.fn(() => ({
+        x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+        width: 200, height: 200, toJSON: () => ({}),
+      } as DOMRect));
+      el.parentElement!.getBoundingClientRect = jest.fn(() => ({
+        x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+        width: 200, height: 200, toJSON: () => ({}),
+      } as DOMRect));
+      (el as any).setPointerCapture = jest.fn();
+      (el as any).releasePointerCapture = jest.fn();
+    }
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    teardownAreaSelectForRoot(root);
+
+    // The target inside root must NOT dispatch after teardown.
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 100, 100);
+    dispatchPointer(target, "pointerup", 100, 100);
+    expect(send).not.toHaveBeenCalled();
+
+    // The target outside root must still work.
+    dispatchPointer(outside, "pointerdown", 10, 10);
+    dispatchPointer(outside, "pointermove", 100, 100);
+    dispatchPointer(outside, "pointerup", 100, 100);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].action).toBe("otherAction");
+
+    teardownAreaSelectForRoot(document.body); // clean up for next test
   });
 
   it("does not preventDefault on pointerdown — clicks still bubble", () => {

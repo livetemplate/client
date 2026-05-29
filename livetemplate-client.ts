@@ -15,6 +15,7 @@ import {
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
+  teardownAreaSelectForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
@@ -626,6 +627,7 @@ export class LiveTemplateClient {
       teardownFxLifecycleListeners(this.wrapperElement);
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
+      teardownAreaSelectForRoot(this.wrapperElement);
     }
     this.resetSessionState();
   }
