@@ -2,6 +2,7 @@ import {
   handleScrollDirectives,
   handleHighlightDirectives,
   handleAnimateDirectives,
+  handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleShadowRootHydration,
   setupFxDOMEventTriggers,
@@ -1159,5 +1160,247 @@ describe("handleShadowRootHydration", () => {
       clonable: false,
       serializable: false,
     });
+  });
+});
+
+describe("handleAreaSelectDirectives", () => {
+  // jsdom-friendly helper: configure the target element so it has a
+  // non-trivial bounding rect (jsdom returns zeros by default) and a
+  // positioned parent so the overlay has somewhere to land. Returns
+  // [target, parent] for the assertions.
+  function mountTarget(
+    targetTag: "img" | "div",
+    attrs: Record<string, string>,
+    rect: { left: number; top: number; width: number; height: number }
+  ): [HTMLElement, HTMLElement] {
+    document.body.innerHTML = `
+      <div id="parent" style="position:relative;">
+        <${targetTag} id="target"></${targetTag}>
+      </div>
+    `;
+    const target = document.getElementById("target") as HTMLElement;
+    const parent = document.getElementById("parent") as HTMLElement;
+    for (const [k, v] of Object.entries(attrs)) target.setAttribute(k, v);
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: rect.left,
+      y: rect.top,
+      left: rect.left,
+      top: rect.top,
+      right: rect.left + rect.width,
+      bottom: rect.top + rect.height,
+      width: rect.width,
+      height: rect.height,
+      toJSON: () => ({}),
+    }));
+    parent.getBoundingClientRect = jest.fn(() => ({
+      x: rect.left,
+      y: rect.top,
+      left: rect.left,
+      top: rect.top,
+      right: rect.left + rect.width,
+      bottom: rect.top + rect.height,
+      width: rect.width,
+      height: rect.height,
+      toJSON: () => ({}),
+    }));
+    // jsdom doesn't implement pointer-capture; stub so the directive's
+    // try/catch around it doesn't matter, but the test still asserts
+    // the contract.
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    return [target, parent];
+  }
+
+  function dispatchPointer(
+    el: HTMLElement,
+    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+    clientX: number,
+    clientY: number,
+    pointerId = 1
+  ): void {
+    const e = new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true });
+    // PointerEvent isn't fully supported in jsdom but the directive
+    // only reads pointerId / isPrimary / button / clientX / clientY.
+    Object.defineProperty(e, "pointerId", { value: pointerId });
+    Object.defineProperty(e, "isPrimary", { value: true });
+    el.dispatchEvent(e);
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("dispatches the action with 0..1 fraction coords on pointerup", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 100, top: 50, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag from (120, 80) → (220, 150) inside the rect.
+    // x = (120 - 100) / 200 = 0.10
+    // y = (80 - 50)   / 200 = 0.15
+    // w = (220 - 120) / 200 = 0.50
+    // h = (150 - 80)  / 200 = 0.35
+    dispatchPointer(target, "pointerdown", 120, 80);
+    dispatchPointer(target, "pointermove", 220, 150);
+    dispatchPointer(target, "pointerup", 220, 150);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const msg = send.mock.calls[0][0];
+    expect(msg.action).toBe("selectImageArea");
+    expect(msg.data.x).toBeCloseTo(0.10, 5);
+    expect(msg.data.y).toBeCloseTo(0.15, 5);
+    expect(msg.data.w).toBeCloseTo(0.50, 5);
+    expect(msg.data.h).toBeCloseTo(0.35, 5);
+  });
+
+  it("filters drags smaller than the min-fraction threshold", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 1000, height: 1000 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag is 10×10 px on a 1000×1000 rect → 1% fraction in both dims.
+    // 1% < MIN_AREA_FRACTION (2%) → must drop.
+    dispatchPointer(target, "pointerdown", 100, 100);
+    dispatchPointer(target, "pointermove", 110, 110);
+    dispatchPointer(target, "pointerup", 110, 110);
+
+    expect(send).not.toHaveBeenCalled();
+    // Overlay should have been cleaned up after the failed drag.
+    expect(document.querySelectorAll(".lvt-area-select-overlay").length).toBe(0);
+  });
+
+  it("paints an overlay during the drag and removes it on release", () => {
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    expect(parent.querySelector(".lvt-area-select-overlay")).not.toBeNull();
+
+    dispatchPointer(target, "pointermove", 60, 70);
+    const overlay = parent.querySelector(".lvt-area-select-overlay") as HTMLDivElement;
+    expect(overlay.style.width).toBe("50px");
+    expect(overlay.style.height).toBe("60px");
+
+    dispatchPointer(target, "pointerup", 60, 70);
+    expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
+  });
+
+  it("pointercancel removes the overlay and does NOT dispatch", () => {
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 60, 60);
+    dispatchPointer(target, "pointercancel", 60, 60);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
+  });
+
+  it("is idempotent across renders for the same action", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+
+    handleAreaSelectDirectives(document.body, send);
+    handleAreaSelectDirectives(document.body, send);
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 100, 100);
+    dispatchPointer(target, "pointerup", 100, 100);
+
+    // Listeners must NOT have been duplicated by repeated calls.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-arms with new action when the attribute value changes", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "first" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+    target.setAttribute("lvt-fx:area-select", "second");
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 100, 100);
+    dispatchPointer(target, "pointerup", 100, 100);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].action).toBe("second");
+  });
+
+  it("warns and skips when the attribute value is empty", () => {
+    const warn = console.warn as jest.Mock;
+    mountTarget(
+      "img",
+      { "lvt-fx:area-select": "" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("requires an action name")
+    );
+  });
+
+  it("clamps coords to 0..1 when the drag escapes the element rect", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 100, top: 100, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag starts inside but ends far below-right of the rect.
+    dispatchPointer(target, "pointerdown", 150, 150);
+    dispatchPointer(target, "pointerup", 10000, 10000);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const data = send.mock.calls[0][0].data as Record<string, number>;
+    expect(data.x).toBeGreaterThanOrEqual(0);
+    expect(data.x).toBeLessThanOrEqual(1);
+    expect(data.x + data.w).toBeLessThanOrEqual(1);
+    expect(data.y + data.h).toBeLessThanOrEqual(1);
+  });
+
+  it("fast-path returns when no matching elements", () => {
+    document.body.innerHTML = `<div><p>nothing here</p></div>`;
+    const send = jest.fn();
+    // Should not throw, should not dispatch.
+    expect(() => handleAreaSelectDirectives(document.body, send)).not.toThrow();
+    expect(send).not.toHaveBeenCalled();
   });
 });

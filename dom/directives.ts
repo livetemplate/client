@@ -901,3 +901,235 @@ export function handleShadowRootHydration(rootElement: Element): void {
     tpl.remove();
   }
 }
+
+// areaSelectArmed tracks the cleanup callback for every element that
+// currently has a `lvt-fx:area-select` handler attached. WeakMap keys
+// are garbage-collected with their elements, so detached elements
+// don't leak; the cleanup callback removes listeners + the on-screen
+// overlay if a drag is mid-flight.
+const areaSelectArmed = new WeakMap<Element, AreaSelectEntry>();
+
+interface AreaSelectEntry {
+  action: string;
+  cleanup: () => void;
+}
+
+// MIN_AREA_FRACTION filters accidental click-style gestures where the
+// user meant to click, not drag. 2% of the element's rendered size is
+// big enough to be intentional on touch + mouse but small enough that
+// anyone seriously trying to annotate a tiny region can still do it.
+const MIN_AREA_FRACTION = 0.02;
+
+/**
+ * Apply area-select directives. `lvt-fx:area-select="<actionName>"` on
+ * an element (typically an `<img>` inside a positioned parent) lets
+ * the user drag a rectangle locally — a `<div>` overlay tracks the
+ * gesture in real time without a server round-trip — and on
+ * `pointerup` dispatches a single livetemplate action with the final
+ * `{x, y, w, h}` as 0..1 fractions of the element's rendered bounding
+ * rect. The image's intrinsic dimensions don't matter for the
+ * fractions: any uniform scale (zoom, responsive layout) preserves
+ * the fraction. The consumer scales to pixels using the natural size
+ * if it needs them.
+ *
+ * Contract:
+ *  - Host's `parentElement` must establish a positioning context
+ *    (`position: relative` / `absolute` / `fixed`). The overlay is
+ *    `position: absolute` inside that parent so it follows the host
+ *    on scroll / reflow.
+ *  - Consumers usually pair this with `touch-action: none` on the
+ *    host so iOS Safari doesn't interpret the drag as a pinch/scroll.
+ *  - On pointer-cancel (e.g. system gesture, app switch), the overlay
+ *    is removed and no action is dispatched — same effect as cancelling
+ *    a click on `mouseleave`.
+ *  - Drags smaller than `MIN_AREA_FRACTION` in BOTH dimensions are
+ *    dropped — a click on the image still bubbles for normal handlers.
+ *
+ * Idempotent across renders: an element re-armed with the same action
+ * keeps its existing listeners. A different action causes a tear-down
+ * and re-arm. Disconnected elements have their listeners cleaned up
+ * implicitly via WeakMap GC + pointerup happening only while the
+ * element is still in the DOM.
+ */
+export function handleAreaSelectDirectives(
+  rootElement: Element,
+  send: (message: { action: string; data: Record<string, unknown> }) => void
+): void {
+  const matches = rootElement.querySelectorAll<HTMLElement>(
+    "[lvt-fx\\:area-select]"
+  );
+  if (matches.length === 0) return;
+
+  for (const el of matches) {
+    const action = el.getAttribute("lvt-fx:area-select");
+    // Empty attribute → consumer almost certainly typoed; warn and
+    // skip rather than dispatching to a blank action name.
+    if (!action) {
+      console.warn(
+        `lvt-fx:area-select requires an action name, got: ${JSON.stringify(action)}`
+      );
+      continue;
+    }
+    const existing = areaSelectArmed.get(el);
+    if (existing && existing.action === action) continue;
+    if (existing) existing.cleanup();
+    areaSelectArmed.set(el, attachAreaSelect(el, action, send));
+  }
+}
+
+function attachAreaSelect(
+  el: HTMLElement,
+  action: string,
+  send: (message: { action: string; data: Record<string, unknown> }) => void
+): AreaSelectEntry {
+  let overlay: HTMLDivElement | null = null;
+  let startClientX = 0;
+  let startClientY = 0;
+  let pointerId = -1;
+
+  const removeOverlay = () => {
+    if (overlay && overlay.parentElement) {
+      overlay.parentElement.removeChild(overlay);
+    }
+    overlay = null;
+  };
+
+  const finalize = (e: PointerEvent | null, dispatch: boolean) => {
+    if (pointerId === -1) return;
+    try {
+      el.releasePointerCapture(pointerId);
+    } catch {
+      // Capture may already be gone (e.g. pointercancel) — ignore.
+    }
+    pointerId = -1;
+    if (!dispatch || !e) {
+      removeOverlay();
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      removeOverlay();
+      return;
+    }
+    // Clamp the two corners to the rect BEFORE computing fractions so
+    // a drag that escapes the element still yields a rectangle inside
+    // it (x ∈ [0,1], w ∈ [0,1-x]). Otherwise a far-off-rect endpoint
+    // would push w past 1 even with x already > 0.
+    const rectRight = rect.left + rect.width;
+    const rectBottom = rect.top + rect.height;
+    const x0 = clampRange(Math.min(startClientX, e.clientX), rect.left, rectRight);
+    const y0 = clampRange(Math.min(startClientY, e.clientY), rect.top, rectBottom);
+    const x1 = clampRange(Math.max(startClientX, e.clientX), rect.left, rectRight);
+    const y1 = clampRange(Math.max(startClientY, e.clientY), rect.top, rectBottom);
+    const x = (x0 - rect.left) / rect.width;
+    const y = (y0 - rect.top) / rect.height;
+    const w = (x1 - x0) / rect.width;
+    const h = (y1 - y0) / rect.height;
+    removeOverlay();
+    if (w < MIN_AREA_FRACTION && h < MIN_AREA_FRACTION) {
+      // Treat as a click, not a drag. Don't dispatch; let normal click
+      // handlers (if any) run via the platform.
+      return;
+    }
+    send({ action, data: { x, y, w, h } });
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    // Only primary button (left mouse / single touch / pen tip). Modifier
+    // keys passed through so the server-side handler can decide what to
+    // do with them via subsequent renders.
+    if (!e.isPrimary || e.button !== 0) return;
+    const parent = el.parentElement;
+    if (!parent) return; // overlay needs a positioned container
+    startClientX = e.clientX;
+    startClientY = e.clientY;
+    pointerId = e.pointerId;
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      // Capture failure is non-fatal — without it, leaving the element
+      // mid-drag will lose pointermove. Better to attempt and continue.
+    }
+    overlay = document.createElement("div");
+    overlay.className = "lvt-area-select-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    // Inline styles so the directive doesn't depend on a CSS class
+    // shipped by the consumer. Consumers can override via the class
+    // selector if they want a different look.
+    overlay.style.cssText =
+      "position:absolute;pointer-events:none;border:2px solid var(--lvt-area-select-color,#4cc2ff);" +
+      "background:var(--lvt-area-select-fill,rgba(76,194,255,0.18));box-sizing:border-box;z-index:9999;";
+    parent.appendChild(overlay);
+    updateOverlay(e);
+    e.preventDefault();
+  };
+
+  const updateOverlay = (e: PointerEvent) => {
+    if (!overlay) return;
+    const parent = el.parentElement;
+    if (!parent) return;
+    const elRect = el.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    // Position the overlay relative to the parent's content box so it
+    // tracks with `position: absolute` correctly.
+    const left = Math.min(startClientX, e.clientX) - parentRect.left;
+    const top = Math.min(startClientY, e.clientY) - parentRect.top;
+    const width = Math.abs(e.clientX - startClientX);
+    const height = Math.abs(e.clientY - startClientY);
+    // Clamp to the host's rendered rect so a drag that runs off the
+    // edge doesn't paint outside the image.
+    const minLeft = elRect.left - parentRect.left;
+    const minTop = elRect.top - parentRect.top;
+    const maxRight = minLeft + elRect.width;
+    const maxBottom = minTop + elRect.height;
+    const clampedLeft = Math.max(minLeft, Math.min(left, maxRight));
+    const clampedTop = Math.max(minTop, Math.min(top, maxBottom));
+    const clampedRight = Math.max(minLeft, Math.min(left + width, maxRight));
+    const clampedBottom = Math.max(minTop, Math.min(top + height, maxBottom));
+    overlay.style.left = `${clampedLeft}px`;
+    overlay.style.top = `${clampedTop}px`;
+    overlay.style.width = `${Math.max(0, clampedRight - clampedLeft)}px`;
+    overlay.style.height = `${Math.max(0, clampedBottom - clampedTop)}px`;
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    updateOverlay(e);
+  };
+
+  const onPointerUp = (e: PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    finalize(e, true);
+  };
+
+  const onPointerCancel = (e: PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    finalize(e, false);
+  };
+
+  el.addEventListener("pointerdown", onPointerDown);
+  el.addEventListener("pointermove", onPointerMove);
+  el.addEventListener("pointerup", onPointerUp);
+  el.addEventListener("pointercancel", onPointerCancel);
+  // lostpointercapture handles the rare case where the platform yanks
+  // capture (e.g. another element calls setPointerCapture, OS gesture).
+  el.addEventListener("lostpointercapture", onPointerCancel);
+
+  const cleanup = () => {
+    el.removeEventListener("pointerdown", onPointerDown);
+    el.removeEventListener("pointermove", onPointerMove);
+    el.removeEventListener("pointerup", onPointerUp);
+    el.removeEventListener("pointercancel", onPointerCancel);
+    el.removeEventListener("lostpointercapture", onPointerCancel);
+    finalize(null, false);
+    areaSelectArmed.delete(el);
+  };
+
+  return { action, cleanup };
+}
+
+function clampRange(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n) || n < lo) return lo;
+  if (n > hi) return hi;
+  return n;
+}
