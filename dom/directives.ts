@@ -798,7 +798,11 @@ export function handleShadowRootHydration(rootElement: Element): void {
   // templates are present. NodeList from querySelectorAll is static
   // (not live), so removing templates inside the loop doesn't disturb
   // iteration; no Array.from copy needed.
-  const templates = rootElement.querySelectorAll("template[shadowrootmode]");
+  // The selector guarantees <template> elements, so the typed qsa
+  // overload removes the `as HTMLTemplateElement` cast inside the loop.
+  const templates = rootElement.querySelectorAll<HTMLTemplateElement>(
+    "template[shadowrootmode]"
+  );
   if (templates.length === 0) return;
   for (const tpl of templates) {
     // qsa on an Element always returns descendants with a parentElement,
@@ -855,13 +859,21 @@ export function handleShadowRootHydration(rootElement: Element): void {
         // attachShadow throws DOMException for hosts that can't accept
         // one (void elements, <input>, <textarea>, custom elements that
         // declared a different mode, etc.). Drop the template so it
-        // doesn't keep tripping this hook on every render.
+        // doesn't keep tripping this hook on every render, AND warn so
+        // a developer accidentally putting shadow content on an invalid
+        // host gets a console signal rather than a mysteriously empty
+        // preview.
         //
         // Anything OTHER than a DOMException is a real bug (typo in the
         // options object, runtime fault); re-raise so it surfaces in the
         // console instead of getting silently masked as "unsupported
         // host".
         if (!(e instanceof DOMException)) throw e;
+        console.warn(
+          `livetemplate: attachShadow rejected on <${parent.tagName.toLowerCase()}> ` +
+            `(${e.name}: ${e.message}). Template removed.`,
+          parent
+        );
         tpl.remove();
         continue;
       }
@@ -871,7 +883,7 @@ export function handleShadowRootHydration(rootElement: Element): void {
     // children into the shadow root in one atomic platform call. Avoids
     // both the spread (which could hit call-stack argument limits on
     // very large NodeLists) and the intermediate Array.from allocation.
-    shadow.replaceChildren((tpl as HTMLTemplateElement).content);
+    shadow.replaceChildren(tpl.content);
     tpl.remove();
   }
 }

@@ -995,6 +995,31 @@ describe("handleShadowRootHydration", () => {
     host.remove();
   });
 
+  it("warns when attachShadow rejects the host (DOMException path)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const host = document.createElement("div");
+    host.id = "warn-host";
+    document.body.appendChild(host);
+    const tpl = document.createElement("template");
+    tpl.setAttribute("shadowrootmode", "open");
+    host.appendChild(tpl);
+    host.attachShadow = () => {
+      throw new DOMException(
+        "Operation is not supported",
+        "NotSupportedError"
+      );
+    };
+
+    handleShadowRootHydration(document.body);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("attachShadow rejected"),
+      host
+    );
+    warn.mockRestore();
+    host.remove();
+  });
+
   it("removes templates with an unrecognised shadowrootmode and warns", () => {
     // The HTML parser doesn't activate a `<template shadowrootmode>`
     // with an unknown mode value. The directive removes the template
@@ -1066,6 +1091,51 @@ describe("handleShadowRootHydration", () => {
       clonable: true,
       serializable: true,
     });
+  });
+
+  // Documented limitations — kept as it.skip so a future PR that
+  // closes either gap can flip the skip and have an instant test.
+
+  it.skip("mode mismatch on re-render is silently ignored (one-shot attach)", () => {
+    // First render: shadowrootmode="open" → open root attached.
+    // Second render: shadowrootmode="closed" → ignored, root stays open.
+    // The docblock calls this a known limitation; this skipped test pins
+    // the contract so a future "fix" gets the right test coverage.
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>first</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    host.innerHTML = `<template shadowrootmode="closed"><span>second</span></template>`;
+    handleShadowRootHydration(document.body);
+    // Today: open root persists because attachShadow is only called on
+    // first attach. If this test ever passes, see the JSDoc — the new
+    // behaviour needs documenting.
+    expect(host.shadowRoot).toBeNull();
+  });
+
+  it.skip("nested DSD across re-renders is left inert (qsa stops at shadow boundary)", () => {
+    // Outer shadow root hydrated. Server re-renders the outer host with
+    // a new inner `<template shadowrootmode>`. qsa from rootElement
+    // won't cross into the existing shadow root to find it.
+    document.body.innerHTML = `
+      <div id="outer">
+        <template shadowrootmode="open">
+          <div id="inner"></div>
+        </template>
+      </div>
+    `;
+    handleShadowRootHydration(document.body);
+    const outer = document.getElementById("outer")!;
+    // Simulate the server re-rendering the inner host with nested DSD.
+    outer.shadowRoot!.getElementById("inner")!.innerHTML = `
+      <template shadowrootmode="open"><span>nested</span></template>
+    `;
+    handleShadowRootHydration(document.body);
+    const inner = outer.shadowRoot!.getElementById("inner")!;
+    expect(inner.shadowRoot).toBeNull();
   });
 
   it("defaults all extended options to false when attrs are absent", () => {
