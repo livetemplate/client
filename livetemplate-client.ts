@@ -1836,16 +1836,16 @@ export class LiveTemplateClient {
     // morphdom inserted via DOM APIs (which don't auto-activate them).
     // Cheap when no templates are present (one querySelectorAll).
     //
-    // Ordering note: this runs AFTER the directive sweeps above, so
-    // livetemplate directives nested INSIDE shadow content (e.g.
-    // lvt-on:click on an element inside a `<template shadowrootmode>`)
-    // are inert on the render that first hydrates them — those sweeps
-    // already finished by the time the shadow root exists. Today's
-    // consumer (prereview's HTML preview) wraps sanitised user HTML in
-    // shadow DOM for style isolation, no livetemplate directives
-    // inside. If a future consumer needs directives inside shadow
-    // content, they should fire setupFxDOMEventTriggers etc. against
-    // the new shadowRoot from within the hydration loop.
+    // Hard limitation: livetemplate directives placed INSIDE shadow
+    // content (e.g. lvt-on:click on an element inside a `<template
+    // shadowrootmode>`) NEVER register, on any render. The directive
+    // sweeps above (setupFxDOMEventTriggers, eventDelegator) walk via
+    // querySelectorAll which stops at shadow boundaries, and the
+    // hydration that follows doesn't run them against the new shadow
+    // root either. Treat shadow DOM as a style/structure isolation
+    // primitive only — keep directives in light DOM. Today's consumer
+    // (prereview's HTML preview) wraps sanitised user HTML in shadow
+    // DOM purely for style isolation; no directives go in.
     handleShadowRootHydration(element);
     setupScrollAway(element);
     setupSpy(element);

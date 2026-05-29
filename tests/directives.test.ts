@@ -961,28 +961,19 @@ describe("handleShadowRootHydration", () => {
   });
 
   it("silently drops the template when the host can't accept a shadow root", () => {
-    // <input> can't host a shadow root. attachShadow throws; the hook
-    // must catch and remove the template instead of leaving a re-trigger
-    // ticking on every render.
-    document.body.innerHTML = `
-      <input id="bad" />
-    `;
-    const input = document.getElementById("bad")! as HTMLInputElement;
-    // Manually insert the template under <input>'s parent so the
-    // template's parentElement is the <input>'s container — but we want
-    // to test the actual fail-and-recover. Use a <div> we manually
-    // force to reject:
+    // Real-world hosts that can't accept a shadow root (void elements,
+    // <input>, <textarea>, custom-element mode conflicts) make
+    // attachShadow throw a DOMException. The hook must catch and
+    // remove the template instead of leaving a re-trigger ticking on
+    // every render. Drive the failure path via a stub on a regular
+    // <div> so this test doesn't depend on jsdom's <input>-as-host
+    // behaviour, which varies across versions.
     const host = document.createElement("div");
     host.id = "host";
     document.body.appendChild(host);
     const tpl = document.createElement("template");
     tpl.setAttribute("shadowrootmode", "open");
     host.appendChild(tpl);
-    // Force attachShadow to throw the same DOMException the platform
-    // would for an unsupported host. Plain Errors are deliberately NOT
-    // caught (a typo in the options object should surface, not silently
-    // drop content) — see the "rethrows non-DOMException errors" test
-    // below.
     const orig = host.attachShadow.bind(host);
     host.attachShadow = () => {
       throw new DOMException(
@@ -997,8 +988,25 @@ describe("handleShadowRootHydration", () => {
     expect(host.shadowRoot).toBeNull();
 
     host.attachShadow = orig;
-    input.remove();
     host.remove();
+  });
+
+  it("skips templates with an unrecognised shadowrootmode (parser parity)", () => {
+    // The HTML parser doesn't activate a `<template shadowrootmode>`
+    // with an unknown mode value — it leaves the template inert. The
+    // directive should match that behaviour rather than silently
+    // coercing "opne" / "openn" / typos to "open".
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="opne"><span>typo</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot).toBeNull();
+    // The template is left in place so the author can spot the typo on
+    // inspection rather than the content silently disappearing.
+    expect(host.querySelector("template")).not.toBeNull();
   });
 
   it("rethrows non-DOMException errors so real bugs surface", () => {

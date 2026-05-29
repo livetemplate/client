@@ -799,7 +799,14 @@ export function handleShadowRootHydration(rootElement: Element): void {
       continue;
     }
     const modeAttr = tpl.getAttribute("shadowrootmode");
-    const mode: ShadowRootMode = modeAttr === "closed" ? "closed" : "open";
+    // Align with the HTML parser: only "open" and "closed" trigger
+    // activation. A typo like shadowrootmode="opne" should be left as
+    // an inert template (matching what initial parse would do) rather
+    // than silently coerced to open with no warning to the author.
+    if (modeAttr !== "open" && modeAttr !== "closed") {
+      continue;
+    }
+    const mode: ShadowRootMode = modeAttr;
 
     // For open roots, parent.shadowRoot is the reachable handle. For
     // closed roots, the platform returns null on purpose — consult the
