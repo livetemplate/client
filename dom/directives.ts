@@ -837,6 +837,17 @@ export function handleShadowRootHydration(rootElement: Element): void {
     // closed roots, the platform returns null on purpose — consult the
     // WeakMap that we populated when we first attached the root.
     let shadow = parent.shadowRoot ?? closedShadowRoots.get(parent);
+    // If the server flips shadowrootmode on a re-render (e.g. open →
+    // closed), attachShadow can't be called a second time — the existing
+    // mode silently wins. Warn so the author notices the mistake instead
+    // of debugging mysterious focus/encapsulation behaviour later.
+    if (shadow && shadow.mode !== modeAttr) {
+      console.warn(
+        `livetemplate: shadowrootmode changed from "${shadow.mode}" to "${modeAttr}" ` +
+          `on re-render — mode is fixed at first attach and cannot be changed.`,
+        parent
+      );
+    }
     if (!shadow) {
       try {
         // Forward all Declarative Shadow DOM attributes so the hydrated

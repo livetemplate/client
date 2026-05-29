@@ -1096,11 +1096,8 @@ describe("handleShadowRootHydration", () => {
   // Documented limitations — kept as it.skip so a future PR that
   // closes either gap can flip the skip and have an instant test.
 
-  it.skip("mode mismatch on re-render is silently ignored (one-shot attach)", () => {
-    // First render: shadowrootmode="open" → open root attached.
-    // Second render: shadowrootmode="closed" → ignored, root stays open.
-    // The docblock calls this a known limitation; this skipped test pins
-    // the contract so a future "fix" gets the right test coverage.
+  it("warns when shadowrootmode is changed on re-render (mode is one-shot)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     document.body.innerHTML = `
       <div id="host">
         <template shadowrootmode="open"><span>first</span></template>
@@ -1108,12 +1105,18 @@ describe("handleShadowRootHydration", () => {
     `;
     const host = document.getElementById("host")!;
     handleShadowRootHydration(document.body);
+    // Server flips the mode on the next render — surfacing the mismatch
+    // is the contract.
     host.innerHTML = `<template shadowrootmode="closed"><span>second</span></template>`;
     handleShadowRootHydration(document.body);
-    // Today: open root persists because attachShadow is only called on
-    // first attach. If this test ever passes, see the JSDoc — the new
-    // behaviour needs documenting.
-    expect(host.shadowRoot).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("shadowrootmode changed"),
+      host
+    );
+    // The pre-existing open root persists (attachShadow can't be re-
+    // called); content still updates inside it.
+    expect(host.shadowRoot?.querySelector("span")?.textContent).toBe("second");
+    warn.mockRestore();
   });
 
   it.skip("nested DSD across re-renders is left inert (qsa stops at shadow boundary)", () => {
