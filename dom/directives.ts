@@ -903,11 +903,13 @@ export function handleShadowRootHydration(rootElement: Element): void {
 }
 
 // areaSelectArmed tracks the cleanup callback for every element that
-// currently has a `lvt-fx:area-select` handler attached. WeakMap keys
-// are garbage-collected with their elements, so detached elements
-// don't leak; the cleanup callback removes listeners + the on-screen
-// overlay if a drag is mid-flight.
-const areaSelectArmed = new WeakMap<Element, AreaSelectEntry>();
+// currently has a `lvt-fx:area-select` handler attached. Map (not
+// WeakMap) because the sweep needs to iterate to detect elements whose
+// attribute was removed by a server diff — without iteration those
+// elements would keep their listeners and silently dispatch the old
+// action on subsequent drags. Detached elements are cleaned up via
+// the same sweep (isConnected check).
+const areaSelectArmed = new Map<Element, AreaSelectEntry>();
 
 interface AreaSelectEntry {
   action: string;
@@ -955,6 +957,19 @@ export function handleAreaSelectDirectives(
   rootElement: Element,
   send: (message: { action: string; data: Record<string, unknown> }) => void
 ): void {
+  // Sweep stale entries before processing the current match set:
+  // disconnected elements AND elements where the attribute was
+  // removed by a server diff. Without this, a previously-armed
+  // element whose lvt-fx:area-select was cleared would keep its
+  // listeners and silently dispatch the old action on subsequent
+  // drags. Iterate via Array.from so cleanup()'s delete() doesn't
+  // disturb the iterator.
+  for (const [element, entry] of Array.from(areaSelectArmed)) {
+    if (!element.isConnected || !element.hasAttribute("lvt-fx:area-select")) {
+      entry.cleanup();
+    }
+  }
+
   const matches = rootElement.querySelectorAll<HTMLElement>(
     "[lvt-fx\\:area-select]"
   );
@@ -1026,6 +1041,13 @@ function attachAreaSelect(
     const w = (x1 - x0) / rect.width;
     const h = (y1 - y0) / rect.height;
     removeOverlay();
+    // Drop when BOTH dimensions are below the threshold (intentional
+    // `&&` — NOT `||`). A wide-but-thin drag (e.g. an underline across
+    // an annotated row) or a tall-but-thin drag (e.g. a vertical
+    // highlight) is a real selection in this directive's contract,
+    // not an accidental click. `||` would drop those legitimate
+    // gestures. The click-vs-drag boundary lives in "the rect has
+    // basically no area" — that's both dims below the threshold.
     if (w < MIN_AREA_FRACTION && h < MIN_AREA_FRACTION) {
       // Treat as a click, not a drag. Don't dispatch; let normal click
       // handlers (if any) run via the platform.
@@ -1091,16 +1113,22 @@ function attachAreaSelect(
     if (!parent) return;
     const elRect = el.getBoundingClientRect();
     const parentRect = parent.getBoundingClientRect();
-    // Position the overlay relative to the parent's content box so it
-    // tracks with `position: absolute` correctly.
-    const left = Math.min(startClientX, e.clientX) - parentRect.left;
-    const top = Math.min(startClientY, e.clientY) - parentRect.top;
+    // position:absolute offsets from the parent's PADDING box, not its
+    // border box. getBoundingClientRect returns the border box, so a
+    // parent with a non-zero CSS border would shift the overlay by the
+    // border width. Subtract clientLeft / clientTop to convert from
+    // border-box to padding-box offset.
+    const borderL = parent.clientLeft;
+    const borderT = parent.clientTop;
+    const left = Math.min(startClientX, e.clientX) - parentRect.left - borderL;
+    const top = Math.min(startClientY, e.clientY) - parentRect.top - borderT;
     const width = Math.abs(e.clientX - startClientX);
     const height = Math.abs(e.clientY - startClientY);
     // Clamp to the host's rendered rect so a drag that runs off the
-    // edge doesn't paint outside the image.
-    const minLeft = elRect.left - parentRect.left;
-    const minTop = elRect.top - parentRect.top;
+    // edge doesn't paint outside the image. Same border-box-to-
+    // padding-box conversion as above.
+    const minLeft = elRect.left - parentRect.left - borderL;
+    const minTop = elRect.top - parentRect.top - borderT;
     const maxRight = minLeft + elRect.width;
     const maxBottom = minTop + elRect.height;
     const clampedLeft = Math.max(minLeft, Math.min(left, maxRight));

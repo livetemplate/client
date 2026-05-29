@@ -1426,6 +1426,29 @@ describe("handleAreaSelectDirectives", () => {
     expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
   });
 
+  it("cleans up armed elements whose attribute was removed by a server diff", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Server diff removes the attribute. The element stays in the DOM
+    // (host alive, but no longer wants area-select). The next
+    // handleAreaSelectDirectives pass MUST cancel the listeners — a
+    // subsequent drag must not dispatch the old action.
+    target.removeAttribute("lvt-fx:area-select");
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 100, 100);
+    dispatchPointer(target, "pointerup", 100, 100);
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("recovers from a stuck drag on the next pointerdown (re-entrancy guard)", () => {
     const [target] = mountTarget(
       "img",
