@@ -1834,7 +1834,18 @@ export class LiveTemplateClient {
     handleAutoClickDirectives(element);
     // Hydrate any server-emitted Declarative Shadow DOM templates that
     // morphdom inserted via DOM APIs (which don't auto-activate them).
-    // Cheap when no templates are present (one querySelector check).
+    // Cheap when no templates are present (one querySelectorAll).
+    //
+    // Ordering note: this runs AFTER the directive sweeps above, so
+    // livetemplate directives nested INSIDE shadow content (e.g.
+    // lvt-on:click on an element inside a `<template shadowrootmode>`)
+    // are inert on the render that first hydrates them — those sweeps
+    // already finished by the time the shadow root exists. Today's
+    // consumer (prereview's HTML preview) wraps sanitised user HTML in
+    // shadow DOM for style isolation, no livetemplate directives
+    // inside. If a future consumer needs directives inside shadow
+    // content, they should fire setupFxDOMEventTriggers etc. against
+    // the new shadowRoot from within the hydration loop.
     handleShadowRootHydration(element);
     setupScrollAway(element);
     setupSpy(element);

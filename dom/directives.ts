@@ -785,12 +785,12 @@ const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
  * new shadow root would close that gap.
  */
 export function handleShadowRootHydration(rootElement: Element): void {
-  // Single qsa for both the empty-fast-path and the actual work — querySelector
-  // followed by querySelectorAll would double-walk the tree when templates
-  // are present, defeating the optimisation we wanted there.
-  const templates = Array.from(
-    rootElement.querySelectorAll("template[shadowrootmode]")
-  );
+  // Single qsa for both the empty-fast-path and the actual work — a
+  // leading querySelector check would double-walk the tree when
+  // templates are present. NodeList from querySelectorAll is static
+  // (not live), so removing templates inside the loop doesn't disturb
+  // iteration; no Array.from copy needed.
+  const templates = rootElement.querySelectorAll("template[shadowrootmode]");
   if (templates.length === 0) return;
   for (const tpl of templates) {
     const parent = tpl.parentElement;
