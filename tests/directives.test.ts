@@ -1478,6 +1478,30 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.height).toBe("40px");
   });
 
+  it("idempotent re-arm picks up the latest send callback (no stale closure)", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const firstSend = jest.fn();
+    const secondSend = jest.fn();
+
+    handleAreaSelectDirectives(document.body, firstSend);
+    // A subsequent render passes a different send (e.g. after a WS
+    // reconnect rebuilt the transport). The idempotent path keeps
+    // the listeners but MUST swap the captured send so the next
+    // drag dispatches through the latest callback.
+    handleAreaSelectDirectives(document.body, secondSend);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 100, 100);
+    dispatchPointer(target, "pointerup", 100, 100);
+
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(secondSend).toHaveBeenCalledTimes(1);
+  });
+
   it("lostpointercapture cancels the drag without dispatching", () => {
     const [, parent] = mountTarget(
       "img",

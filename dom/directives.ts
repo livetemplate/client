@@ -914,7 +914,16 @@ const areaSelectArmed = new Map<Element, AreaSelectEntry>();
 interface AreaSelectEntry {
   action: string;
   cleanup: () => void;
+  // updateSend lets the idempotent re-arm path swap the captured
+  // send callback without tearing down + rebuilding listeners. The
+  // listeners close over a mutable `send` variable inside
+  // attachAreaSelect; updateSend reassigns it.
+  updateSend: (send: AreaSelectSendFn) => void;
 }
+
+type AreaSelectSendFn = (
+  message: { action: string; data: Record<string, unknown> }
+) => void;
 
 // MIN_AREA_FRACTION filters accidental click-style gestures where the
 // user meant to click, not drag. 2% of the element's rendered size is
@@ -939,13 +948,27 @@ const MIN_AREA_FRACTION = 0.02;
  *    (`position: relative` / `absolute` / `fixed`). The overlay is
  *    `position: absolute` inside that parent so it follows the host
  *    on scroll / reflow.
+ *  - The parent should NOT use `overflow: hidden` — the in-progress
+ *    overlay can briefly extend outside the host's rect while the
+ *    drag is in flight (before the clamp settles on a frame), and
+ *    overflow:hidden would clip it. The saved area persisted by
+ *    the consumer will fit inside the host's rect; only the live
+ *    drag-paint can briefly overshoot.
  *  - Consumers usually pair this with `touch-action: none` on the
  *    host so iOS Safari doesn't interpret the drag as a pinch/scroll.
+ *  - `<img>` and other natively-draggable hosts work automatically:
+ *    the directive calls `preventDefault()` on `dragstart` so the
+ *    browser's native drag (which would otherwise steal the gesture)
+ *    is suppressed.
  *  - On pointer-cancel (e.g. system gesture, app switch), the overlay
  *    is removed and no action is dispatched — same effect as cancelling
  *    a click on `mouseleave`.
  *  - Drags smaller than `MIN_AREA_FRACTION` in BOTH dimensions are
  *    dropped — a click on the image still bubbles for normal handlers.
+ *  - **No keyboard equivalent.** Pointer-only by design (a keyboard-
+ *    selected rectangle requires a different UX — focus + arrow keys
+ *    to position + arrow keys to size). Consumers needing a11y for
+ *    area selection should provide a parallel form-based affordance.
  *
  * Idempotent across renders: an element re-armed with the same action
  * keeps its existing listeners. A different action causes a tear-down
@@ -993,28 +1016,33 @@ export function handleAreaSelectDirectives(
       continue;
     }
     const existing = areaSelectArmed.get(el);
-    if (existing && existing.action === action) continue;
+    if (existing && existing.action === action) {
+      // Idempotent re-arm: keep the listeners + WeakMap entry, but
+      // update the captured send so a subsequent drag dispatches
+      // through the latest callback (e.g. after a WebSocket
+      // reconnect rebuilt the transport).
+      existing.updateSend(send);
+      continue;
+    }
     if (existing) existing.cleanup();
     areaSelectArmed.set(el, attachAreaSelect(el, action, send));
   }
 }
 
-// attachAreaSelect captures `send` in a closure for the lifetime of
-// the armed listeners. When the same element is re-encountered with
-// the same action (the idempotent path), the existing entry is reused
-// and the new `send` argument is NOT applied — drags will dispatch
-// through the FIRST call's `send`. Today's call site
-// (handleAreaSelectDirectives in livetemplate-client.ts) always passes
-// a fresh arrow over the same `this.send` method, so the captured
-// behaviour is equivalent; if a future caller passes a fundamentally
-// different send (e.g. a different LiveTemplateClient instance arming
-// the same element), the attribute-change re-arm path is the only way
-// to update the captured send.
+// attachAreaSelect captures `send` in a mutable local so the
+// idempotent re-arm path (same element, same action) can swap it via
+// the returned `updateSend` callback without tearing down + rebuilding
+// listeners. Listeners reference the closure-captured `send` variable
+// directly, so reassigning it propagates instantly. This guards
+// against the stale-closure trap a caller would hit if their `send`
+// reference changed across renders — e.g. a reconnect rebuilt the
+// transport.
 function attachAreaSelect(
   el: HTMLElement,
   action: string,
-  send: (message: { action: string; data: Record<string, unknown> }) => void
+  initialSend: AreaSelectSendFn
 ): AreaSelectEntry {
+  let send = initialSend;
   let overlay: HTMLDivElement | null = null;
   let startClientX = 0;
   let startClientY = 0;
@@ -1214,7 +1242,13 @@ function attachAreaSelect(
     areaSelectArmed.delete(el);
   };
 
-  return { action, cleanup };
+  return {
+    action,
+    cleanup,
+    updateSend: (s) => {
+      send = s;
+    },
+  };
 }
 
 function clampRange(n: number, lo: number, hi: number): number {
