@@ -1403,4 +1403,61 @@ describe("handleAreaSelectDirectives", () => {
     expect(() => handleAreaSelectDirectives(document.body, send)).not.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("removes the overlay when the host is detached mid-drag", () => {
+    const [target, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    expect(parent.querySelector(".lvt-area-select-overlay")).not.toBeNull();
+
+    // Simulate a server diff replacing the host element.
+    target.remove();
+
+    // A late pointermove (jsdom dispatches to the detached element)
+    // must clean up the overlay rather than leave it orphaned under
+    // the parent.
+    dispatchPointer(target, "pointermove", 60, 70);
+    expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
+  });
+
+  it("recovers from a stuck drag on the next pointerdown (re-entrancy guard)", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // First drag: pointerdown but no pointerup (simulates a captured
+    // pointer that never released — what happens when capture silently
+    // fails and pointer leaves the element).
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 60, 60);
+    // No pointerup. The drag is "stuck".
+
+    // Second drag starts. Without the re-entrancy guard, the first
+    // overlay would be orphaned. With the guard, the directive cancels
+    // the stuck drag before starting the new one, and the new drag
+    // completes normally.
+    dispatchPointer(target, "pointerdown", 100, 100);
+    dispatchPointer(target, "pointermove", 150, 150);
+    dispatchPointer(target, "pointerup", 150, 150);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    // The dispatched coords must come from the SECOND drag, not the
+    // first. (Start=100, End=150 → x=0.5, w=0.25 on the 200-wide rect.)
+    const data = send.mock.calls[0][0].data as Record<string, number>;
+    expect(data.x).toBeCloseTo(0.50, 5);
+    expect(data.w).toBeCloseTo(0.25, 5);
+    // Exactly one overlay at most over the whole sequence (the second
+    // drag's) — never two.
+    expect(document.querySelectorAll(".lvt-area-select-overlay").length).toBe(0);
+  });
 });

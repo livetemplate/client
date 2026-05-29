@@ -1034,21 +1034,41 @@ function attachAreaSelect(
     send({ action, data: { x, y, w, h } });
   };
 
+  const onPointerLeaveCancel = () => {
+    // Fallback for the rare case where setPointerCapture failed: without
+    // capture, pointermove + pointerup stop arriving once the pointer
+    // leaves the host, freezing the overlay. Treating pointerleave as
+    // a cancel keeps the overlay from getting stuck on screen.
+    finalize(null, false);
+  };
+
   const onPointerDown = (e: PointerEvent) => {
     // Only primary button (left mouse / single touch / pen tip). Modifier
     // keys passed through so the server-side handler can decide what to
     // do with them via subsequent renders.
     if (!e.isPrimary || e.button !== 0) return;
+    // Re-entrancy guard: if a prior drag never finished (e.g. capture
+    // failed silently, then pointer left the element with no pointerup
+    // ever delivered), the WeakMap entry would still hold pointerId.
+    // Cancel the prior drag — removing its overlay and listeners —
+    // before starting a fresh one.
+    if (pointerId !== -1) finalize(null, false);
     const parent = el.parentElement;
     if (!parent) return; // overlay needs a positioned container
     startClientX = e.clientX;
     startClientY = e.clientY;
     pointerId = e.pointerId;
+    let captureOk = false;
     try {
       el.setPointerCapture(pointerId);
+      captureOk = true;
     } catch {
       // Capture failure is non-fatal — without it, leaving the element
-      // mid-drag will lose pointermove. Better to attempt and continue.
+      // mid-drag will lose pointermove. Fall back to pointerleave as
+      // the cancel signal so the overlay can't get stuck.
+    }
+    if (!captureOk) {
+      el.addEventListener("pointerleave", onPointerLeaveCancel, { once: true });
     }
     overlay = document.createElement("div");
     overlay.className = "lvt-area-select-overlay";
@@ -1058,7 +1078,8 @@ function attachAreaSelect(
     // selector if they want a different look.
     overlay.style.cssText =
       "position:absolute;pointer-events:none;border:2px solid var(--lvt-area-select-color,#4cc2ff);" +
-      "background:var(--lvt-area-select-fill,rgba(76,194,255,0.18));box-sizing:border-box;z-index:9999;";
+      "background:var(--lvt-area-select-fill,rgba(76,194,255,0.18));box-sizing:border-box;" +
+      "z-index:var(--lvt-area-select-z-index,9999);";
     parent.appendChild(overlay);
     updateOverlay(e);
     e.preventDefault();
@@ -1094,11 +1115,22 @@ function attachAreaSelect(
 
   const onPointerMove = (e: PointerEvent) => {
     if (e.pointerId !== pointerId) return;
+    // Host removed from the DOM mid-drag (e.g. server diff replaced it).
+    // Without this, the overlay would be left orphaned under the parent
+    // because the host's cleanup never runs.
+    if (!el.isConnected) {
+      finalize(null, false);
+      return;
+    }
     updateOverlay(e);
   };
 
   const onPointerUp = (e: PointerEvent) => {
     if (e.pointerId !== pointerId) return;
+    if (!el.isConnected) {
+      finalize(null, false);
+      return;
+    }
     finalize(e, true);
   };
 
@@ -1121,6 +1153,7 @@ function attachAreaSelect(
     el.removeEventListener("pointerup", onPointerUp);
     el.removeEventListener("pointercancel", onPointerCancel);
     el.removeEventListener("lostpointercapture", onPointerCancel);
+    el.removeEventListener("pointerleave", onPointerLeaveCancel);
     finalize(null, false);
     areaSelectArmed.delete(el);
   };
