@@ -964,7 +964,13 @@ const MIN_AREA_FRACTION = 0.02;
  *    is removed and no action is dispatched — same effect as cancelling
  *    a click on `mouseleave`.
  *  - Drags smaller than `MIN_AREA_FRACTION` in BOTH dimensions are
- *    dropped — a click on the image still bubbles for normal handlers.
+ *    dropped — a click on the host still fires normal `click`
+ *    handlers via the compatibility mouse events.
+ *  - For text-bearing hosts, set `user-select: none` (the directive
+ *    deliberately does NOT call `preventDefault()` on `pointerdown`
+ *    so click handlers still receive the gesture; that means the
+ *    browser's default text-selection-on-drag behaviour also fires
+ *    unless the host opts out via CSS).
  *  - **No keyboard equivalent.** Pointer-only by design (a keyboard-
  *    selected rectangle requires a different UX — focus + arrow keys
  *    to position + arrow keys to size). Consumers needing a11y for
@@ -1062,6 +1068,10 @@ function attachAreaSelect(
     } catch {
       // Capture may already be gone (e.g. pointercancel) — ignore.
     }
+    // Remove the per-gesture pointerleave fallback so a NEXT drag
+    // doesn't inherit a stale listener from this one. {once: true}
+    // only auto-removes if it fires; a stuck drag never fired it.
+    el.removeEventListener("pointerleave", onPointerLeaveCancel);
     pointerId = -1;
     if (!dispatch || !e) {
       removeOverlay();
@@ -1158,7 +1168,13 @@ function attachAreaSelect(
       "z-index:var(--lvt-area-select-z-index,9999);";
     parent.appendChild(overlay);
     updateOverlay(e);
-    e.preventDefault();
+    // NOT calling e.preventDefault() here: doing so on pointerdown
+    // suppresses the compatibility mouse events (mousedown → mouseup
+    // → click), so a small-rect drag (which finalize() treats as a
+    // click) would never reach the host's click handlers. The
+    // directive's contract promises clicks still bubble. Text-
+    // selection during drag is the consumer's responsibility — set
+    // `user-select: none` on the host (the contract docs this).
   };
 
   const updateOverlay = (e: PointerEvent) => {

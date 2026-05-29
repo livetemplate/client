@@ -1478,6 +1478,79 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.height).toBe("40px");
   });
 
+  it("does not preventDefault on pointerdown — clicks still bubble", () => {
+    // The contract promises a small-rect drag (treated as a click)
+    // still reaches the host's click handlers. Calling
+    // preventDefault on pointerdown would suppress the compatibility
+    // mouse events that fire click — so the directive must NOT do
+    // that.
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    const down = new MouseEvent("pointerdown", {
+      clientX: 50, clientY: 50, button: 0, bubbles: true, cancelable: true,
+    });
+    Object.defineProperty(down, "pointerId", { value: 1 });
+    Object.defineProperty(down, "isPrimary", { value: true });
+    target.dispatchEvent(down);
+
+    expect(down.defaultPrevented).toBe(false);
+  });
+
+  it("stale pointerleave listener does not survive into the next gesture", () => {
+    // The bug Claude flagged: when setPointerCapture fails on drag N,
+    // the directive registers a pointerleave fallback. If drag N
+    // gets stuck (pointer never leaves so the fallback never fires
+    // and no pointerup arrives), and the user starts drag N+1, the
+    // re-entrancy guard finalizes drag N but the STALE pointerleave
+    // listener from N would still be attached. If capture SUCCEEDS
+    // on drag N+1 (no new pointerleave registered), the stale one
+    // from N would still fire if the pointer ever leaves — and
+    // incorrectly cancel drag N+1. finalize() must remove the
+    // pointerleave listener so it can't outlive its own gesture.
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    // Capture FAILS only on the first call (drag N), succeeds after.
+    let captureCalls = 0;
+    (target as any).setPointerCapture = jest.fn(() => {
+      captureCalls++;
+      if (captureCalls === 1) {
+        throw new DOMException("no capture", "InvalidStateError");
+      }
+    });
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag N: pointerdown attaches the pointerleave fallback, but
+    // user starts drag and never releases (simulates a "stuck"
+    // drag). Do NOT pointerup.
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 80, 80);
+
+    // Drag N+1 starts. Re-entrancy guard finalizes drag N. WITHOUT
+    // the fix, drag N's pointerleave listener stays attached.
+    // Capture succeeds this time so no NEW pointerleave is attached.
+    dispatchPointer(target, "pointerdown", 20, 20);
+    dispatchPointer(target, "pointermove", 100, 100);
+
+    // Fire pointerleave. With the fix, no pointerleave handler is
+    // attached → no-op, drag N+1 continues. WITHOUT the fix, the
+    // stale listener from N would call finalize and cancel.
+    target.dispatchEvent(new MouseEvent("pointerleave", { bubbles: false }));
+    dispatchPointer(target, "pointerup", 100, 100);
+
+    // Drag N+1 should have dispatched normally — the stale listener
+    // must NOT have cancelled it.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("idempotent re-arm picks up the latest send callback (no stale closure)", () => {
     const [target] = mountTarget(
       "img",
