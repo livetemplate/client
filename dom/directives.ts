@@ -812,10 +812,19 @@ export function handleShadowRootHydration(rootElement: Element): void {
     }
     const modeAttr = tpl.getAttribute("shadowrootmode");
     // Align with the HTML parser: only "open" and "closed" trigger
-    // activation. A typo like shadowrootmode="opne" should be left as
-    // an inert template (matching what initial parse would do) rather
-    // than silently coerced to open with no warning to the author.
+    // activation. A typo like shadowrootmode="opne" was previously
+    // left in place "so the author can inspect" — but on every
+    // subsequent render the qsa would re-find it, defeating the
+    // fast-path advertised in the docblock. Remove it AND log a
+    // console.warn so authors actually see the typo (the next morphdom
+    // pass would overwrite it anyway).
     if (modeAttr !== "open" && modeAttr !== "closed") {
+      console.warn(
+        `livetemplate: invalid shadowrootmode=${JSON.stringify(modeAttr)}; ` +
+          `expected "open" or "closed". Template removed.`,
+        tpl
+      );
+      tpl.remove();
       continue;
     }
     const mode: ShadowRootMode = modeAttr;

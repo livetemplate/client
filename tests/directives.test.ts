@@ -995,11 +995,13 @@ describe("handleShadowRootHydration", () => {
     host.remove();
   });
 
-  it("skips templates with an unrecognised shadowrootmode (parser parity)", () => {
+  it("removes templates with an unrecognised shadowrootmode and warns", () => {
     // The HTML parser doesn't activate a `<template shadowrootmode>`
-    // with an unknown mode value — it leaves the template inert. The
-    // directive should match that behaviour rather than silently
-    // coercing "opne" / "openn" / typos to "open".
+    // with an unknown mode value. The directive removes the template
+    // outright (so the fast-path advertised in the docblock isn't
+    // defeated by a persistent typo that the qsa keeps re-finding) and
+    // logs a console.warn so authors actually see the mistake.
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     document.body.innerHTML = `
       <div id="host">
         <template shadowrootmode="opne"><span>typo</span></template>
@@ -1008,9 +1010,12 @@ describe("handleShadowRootHydration", () => {
     const host = document.getElementById("host")!;
     handleShadowRootHydration(document.body);
     expect(host.shadowRoot).toBeNull();
-    // The template is left in place so the author can spot the typo on
-    // inspection rather than the content silently disappearing.
-    expect(host.querySelector("template")).not.toBeNull();
+    expect(host.querySelector("template")).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("invalid shadowrootmode"),
+      expect.anything()
+    );
+    warn.mockRestore();
   });
 
   it("rethrows non-DOMException errors so real bugs surface", () => {
