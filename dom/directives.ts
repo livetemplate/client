@@ -775,14 +775,22 @@ const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
  * Idempotent: a re-run with no remaining templates is one qsa walk and
  * an early return (sub-millisecond on hundreds-of-rows pages).
  *
- * Known limitation: nested DSD templates are activated only when the
- * outer template is processed and its children are still in the light
- * DOM at qsa time. Once a `<template shadowrootmode>` has been moved
- * into a shadow root by a prior call, subsequent calls can't see its
- * descendants (qsa stops at shadow boundaries) — a re-render that
- * regenerates only the outer host would leave inner DSD inert. If
- * nested DSD across re-renders is ever needed, a recursive sweep per
- * new shadow root would close that gap.
+ * Known limitations:
+ *
+ * - Nested DSD templates are activated only when the outer template is
+ *   processed and its children are still in the light DOM at qsa time.
+ *   Once a `<template shadowrootmode>` has been moved into a shadow root
+ *   by a prior call, subsequent calls can't see its descendants (qsa
+ *   stops at shadow boundaries) — a re-render that regenerates only the
+ *   outer host would leave inner DSD inert.
+ *
+ * - Shadow-root options (`delegatesFocus`, `clonable`, `serializable`,
+ *   even `mode`) are fixed at first attach. A re-render that toggles
+ *   `shadowrootdelegatesfocus` on a host that already has a shadow root
+ *   won't change the existing root's focus behaviour — re-attach isn't
+ *   possible. Matches the HTML parser, which would have made the same
+ *   one-shot decision; if the server needs to flip these flags, it
+ *   needs to swap the host element entirely.
  */
 export function handleShadowRootHydration(rootElement: Element): void {
   // Single qsa for both the empty-fast-path and the actual work — a
@@ -793,6 +801,10 @@ export function handleShadowRootHydration(rootElement: Element): void {
   const templates = rootElement.querySelectorAll("template[shadowrootmode]");
   if (templates.length === 0) return;
   for (const tpl of templates) {
+    // qsa on an Element always returns descendants with a parentElement,
+    // so !parent should be unreachable today. Kept as a defensive guard
+    // in case a future caller passes a DocumentFragment-rooted tree
+    // where the matched template could be a fragment's direct child.
     const parent = tpl.parentElement;
     if (!parent) {
       tpl.remove();

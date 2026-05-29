@@ -917,13 +917,17 @@ describe("handleShadowRootHydration", () => {
     handleShadowRootHydration(document.body);
     expect(host.shadowRoot).toBeNull(); // closed — spec confirms
 
-    // The directive's WeakMap holds the closed root; we can't observe its
-    // content via host.shadowRoot, but we CAN verify the re-render path
-    // doesn't throw and doesn't drop the template, which is the exact
-    // failure mode pre-fix.
+    // The directive's WeakMap holds the closed root; we can't observe
+    // its content via host.shadowRoot, but we CAN verify (a) the
+    // re-render path doesn't throw, (b) the template gets consumed,
+    // and (c) the template's content left the light DOM — together,
+    // strong evidence the content moved into the cached shadow root
+    // rather than vanishing or staying parked as an inert template
+    // (the exact failure mode pre-fix).
     host.innerHTML = `<template shadowrootmode="closed"><span class="round">2</span></template>`;
     expect(() => handleShadowRootHydration(document.body)).not.toThrow();
     expect(host.querySelector("template")).toBeNull();
+    expect(host.children.length).toBe(0); // content lives in shadow, not light DOM
   });
 
   it("replaces existing shadow content on re-hydration (server re-render)", () => {
