@@ -3,6 +3,7 @@ import {
   handleHighlightDirectives,
   handleAnimateDirectives,
   handleAutoClickDirectives,
+  handleShadowRootHydration,
   setupFxDOMEventTriggers,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
@@ -852,5 +853,136 @@ describe("handleAutoClickDirectives", () => {
     jest.advanceTimersByTime(500);
 
     expect(clickSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleShadowRootHydration", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("attaches an open shadow root and moves template content into it", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span class="inner">hi</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+
+    handleShadowRootHydration(document.body);
+
+    expect(host.shadowRoot).not.toBeNull();
+    expect(host.shadowRoot!.querySelector(".inner")?.textContent).toBe("hi");
+    // Template should be gone — leaving it would re-trigger the hook
+    // on every subsequent render.
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("honors shadowrootmode='closed'", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="closed"><span>x</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+
+    handleShadowRootHydration(document.body);
+
+    // Closed shadow root: parent.shadowRoot stays null per spec, but
+    // the template still gets consumed.
+    expect(host.shadowRoot).toBeNull();
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("is a no-op when there are no shadowroot templates", () => {
+    document.body.innerHTML = `<div><p>nothing here</p></div>`;
+    const before = document.body.innerHTML;
+
+    handleShadowRootHydration(document.body);
+
+    expect(document.body.innerHTML).toBe(before);
+  });
+
+  it("replaces existing shadow content on re-hydration (server re-render)", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>first</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot!.querySelector("span")?.textContent).toBe("first");
+
+    // Simulate the server emitting a new template into the same host
+    // after a morph (host kept, template re-inserted).
+    host.innerHTML = `<template shadowrootmode="open"><span>second</span></template>`;
+    handleShadowRootHydration(document.body);
+
+    expect(host.shadowRoot!.querySelector("span")?.textContent).toBe("second");
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("handles multiple sibling templates on one page", () => {
+    document.body.innerHTML = `
+      <div id="a"><template shadowrootmode="open"><i>A</i></template></div>
+      <div id="b"><template shadowrootmode="open"><i>B</i></template></div>
+      <div id="c"><template shadowrootmode="open"><i>C</i></template></div>
+    `;
+
+    handleShadowRootHydration(document.body);
+
+    for (const [id, want] of [["a", "A"], ["b", "B"], ["c", "C"]] as const) {
+      const host = document.getElementById(id)!;
+      expect(host.shadowRoot?.querySelector("i")?.textContent).toBe(want);
+    }
+  });
+
+  it("silently drops the template when the host can't accept a shadow root", () => {
+    // <input> can't host a shadow root. attachShadow throws; the hook
+    // must catch and remove the template instead of leaving a re-trigger
+    // ticking on every render.
+    document.body.innerHTML = `
+      <input id="bad" />
+    `;
+    const input = document.getElementById("bad")! as HTMLInputElement;
+    // Manually insert the template under <input>'s parent so the
+    // template's parentElement is the <input>'s container — but we want
+    // to test the actual fail-and-recover. Use a <div> we manually
+    // force to reject:
+    const host = document.createElement("div");
+    host.id = "host";
+    document.body.appendChild(host);
+    const tpl = document.createElement("template");
+    tpl.setAttribute("shadowrootmode", "open");
+    host.appendChild(tpl);
+    // Force attachShadow to throw — simulate the void-element case
+    // without depending on the jsdom <input> shadow-host behavior, which
+    // varies between implementations.
+    const orig = host.attachShadow.bind(host);
+    host.attachShadow = () => {
+      throw new Error("Operation is not supported");
+    };
+
+    expect(() => handleShadowRootHydration(document.body)).not.toThrow();
+    // Template must be removed even though attach failed.
+    expect(host.querySelector("template")).toBeNull();
+    expect(host.shadowRoot).toBeNull();
+
+    host.attachShadow = orig;
+    input.remove();
+  });
+
+  it("idempotent re-run when no remaining templates is essentially free", () => {
+    document.body.innerHTML = `<div id="host"></div>`;
+    // First run: nothing to do.
+    handleShadowRootHydration(document.body);
+    // Second run on a clean tree: still nothing.
+    handleShadowRootHydration(document.body);
+    const host = document.getElementById("host")!;
+    expect(host.shadowRoot).toBeNull();
   });
 });

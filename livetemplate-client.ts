@@ -12,6 +12,7 @@ import {
   handleAutoClickDirectives,
   handleHighlightDirectives,
   handleScrollDirectives,
+  handleShadowRootHydration,
   handleToastDirectives,
   teardownAutoClickTimers,
   setupToastClickOutside,
@@ -1831,6 +1832,10 @@ export class LiveTemplateClient {
     handleAnimateDirectives(element);
     handleToastDirectives(element);
     handleAutoClickDirectives(element);
+    // Hydrate any server-emitted Declarative Shadow DOM templates that
+    // morphdom inserted via DOM APIs (which don't auto-activate them).
+    // Cheap when no templates are present (one querySelector check).
+    handleShadowRootHydration(element);
     setupScrollAway(element);
     setupSpy(element);
     if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {

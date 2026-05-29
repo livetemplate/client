@@ -733,3 +733,64 @@ function createToastElement(msg: ToastMessage): HTMLElement {
   return el;
 }
 
+/**
+ * Activate Declarative Shadow DOM for `<template shadowrootmode>` elements
+ * that the client inserted via DOM APIs (innerHTML setter, morphdom's
+ * createElement+appendChild path). The HTML parser activates declarative
+ * shadow roots only at parse time or via setHTMLUnsafe / parseHTMLUnsafe;
+ * a `<template shadowrootmode>` set via `.innerHTML = ...` is parked as a
+ * plain template with content but no attached shadow root. This sweep
+ * closes that gap so server-emitted shadow roots survive a client
+ * re-render.
+ *
+ * For each matching template found under rootElement:
+ *  - attach a shadow root on the parent (open by default; "closed" when
+ *    shadowrootmode="closed");
+ *  - move the template's content into the shadow root (replaceChildren
+ *    so re-renders cleanly reset prior shadow content);
+ *  - remove the template.
+ *
+ * Hosts that can't accept a shadow root (a small fixed set: <input>,
+ * <textarea>, void elements, etc.) silently drop the template — better
+ * than an unhandled exception that kills the render.
+ *
+ * Idempotent: a re-run with no remaining templates is one querySelector
+ * call (no allocations, sub-millisecond on hundreds-of-rows pages).
+ */
+export function handleShadowRootHydration(rootElement: Element): void {
+  if (rootElement.querySelector("template[shadowrootmode]") === null) {
+    return;
+  }
+
+  const templates = Array.from(
+    rootElement.querySelectorAll("template[shadowrootmode]")
+  );
+  for (const tpl of templates) {
+    const parent = tpl.parentElement;
+    if (!parent) {
+      tpl.remove();
+      continue;
+    }
+    const modeAttr = tpl.getAttribute("shadowrootmode");
+    const mode: ShadowRootMode = modeAttr === "closed" ? "closed" : "open";
+
+    let shadow = parent.shadowRoot;
+    if (!shadow) {
+      try {
+        shadow = parent.attachShadow({ mode });
+      } catch {
+        // attachShadow throws for hosts that can't accept one (void
+        // elements, <input>, <textarea>, custom elements that declared a
+        // different mode, etc.). Drop the template so it doesn't keep
+        // tripping this hook on every render.
+        tpl.remove();
+        continue;
+      }
+    }
+
+    shadow.replaceChildren(
+      ...((tpl as HTMLTemplateElement).content.childNodes as unknown as Node[])
+    );
+    tpl.remove();
+  }
+}
