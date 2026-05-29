@@ -758,13 +758,13 @@ function createToastElement(msg: ToastMessage): HTMLElement {
  * call (no allocations, sub-millisecond on hundreds-of-rows pages).
  */
 export function handleShadowRootHydration(rootElement: Element): void {
-  if (rootElement.querySelector("template[shadowrootmode]") === null) {
-    return;
-  }
-
+  // Single qsa for both the empty-fast-path and the actual work — querySelector
+  // followed by querySelectorAll would double-walk the tree when templates
+  // are present, defeating the optimisation we wanted there.
   const templates = Array.from(
     rootElement.querySelectorAll("template[shadowrootmode]")
   );
+  if (templates.length === 0) return;
   for (const tpl of templates) {
     const parent = tpl.parentElement;
     if (!parent) {
@@ -800,9 +800,11 @@ export function handleShadowRootHydration(rootElement: Element): void {
       }
     }
 
-    shadow.replaceChildren(
-      ...Array.from((tpl as HTMLTemplateElement).content.childNodes)
-    );
+    // Pass the DocumentFragment directly — replaceChildren moves its
+    // children into the shadow root in one atomic platform call. Avoids
+    // both the spread (which could hit call-stack argument limits on
+    // very large NodeLists) and the intermediate Array.from allocation.
+    shadow.replaceChildren((tpl as HTMLTemplateElement).content);
     tpl.remove();
   }
 }
