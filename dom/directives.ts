@@ -777,7 +777,19 @@ export function handleShadowRootHydration(rootElement: Element): void {
     let shadow = parent.shadowRoot;
     if (!shadow) {
       try {
-        shadow = parent.attachShadow({ mode });
+        // Forward all Declarative Shadow DOM attributes so the hydrated
+        // root matches the one the HTML parser would build natively:
+        // - shadowrootdelegatesfocus  → delegatesFocus
+        // - shadowrootclonable        → clonable        (Chrome 124+)
+        // - shadowrootserializable    → serializable    (Chrome 125+)
+        // Unknown flags from older runtimes are silently ignored by
+        // attachShadow, so we don't need a feature-detect.
+        shadow = parent.attachShadow({
+          mode,
+          delegatesFocus: tpl.hasAttribute("shadowrootdelegatesfocus"),
+          clonable: tpl.hasAttribute("shadowrootclonable"),
+          serializable: tpl.hasAttribute("shadowrootserializable"),
+        });
       } catch {
         // attachShadow throws for hosts that can't accept one (void
         // elements, <input>, <textarea>, custom elements that declared a
@@ -789,7 +801,7 @@ export function handleShadowRootHydration(rootElement: Element): void {
     }
 
     shadow.replaceChildren(
-      ...((tpl as HTMLTemplateElement).content.childNodes as unknown as Node[])
+      ...Array.from((tpl as HTMLTemplateElement).content.childNodes)
     );
     tpl.remove();
   }

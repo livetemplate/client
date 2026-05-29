@@ -859,10 +859,6 @@ describe("handleAutoClickDirectives", () => {
 describe("handleShadowRootHydration", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
-    jest.spyOn(console, "warn").mockImplementation(() => {});
-  });
-  afterEach(() => {
-    jest.restoreAllMocks();
   });
 
   it("attaches an open shadow root and moves template content into it", () => {
@@ -984,5 +980,49 @@ describe("handleShadowRootHydration", () => {
     handleShadowRootHydration(document.body);
     const host = document.getElementById("host")!;
     expect(host.shadowRoot).toBeNull();
+  });
+
+  it("forwards shadowrootdelegatesfocus / clonable / serializable to attachShadow", () => {
+    // Use a spy because jsdom doesn't expose the options on the resulting
+    // ShadowRoot in a stable way across versions — checking the call args
+    // is what we actually want to assert ("the directive forwards
+    // attributes faithfully to the platform call").
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open" shadowrootdelegatesfocus shadowrootclonable shadowrootserializable>
+          <span>focus me</span>
+        </template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    const spy = jest.spyOn(host, "attachShadow");
+
+    handleShadowRootHydration(document.body);
+
+    expect(spy).toHaveBeenCalledWith({
+      mode: "open",
+      delegatesFocus: true,
+      clonable: true,
+      serializable: true,
+    });
+  });
+
+  it("defaults all extended options to false when attrs are absent", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>x</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    const spy = jest.spyOn(host, "attachShadow");
+
+    handleShadowRootHydration(document.body);
+
+    expect(spy).toHaveBeenCalledWith({
+      mode: "open",
+      delegatesFocus: false,
+      clonable: false,
+      serializable: false,
+    });
   });
 });
