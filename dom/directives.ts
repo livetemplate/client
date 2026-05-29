@@ -999,6 +999,17 @@ export function handleAreaSelectDirectives(
   }
 }
 
+// attachAreaSelect captures `send` in a closure for the lifetime of
+// the armed listeners. When the same element is re-encountered with
+// the same action (the idempotent path), the existing entry is reused
+// and the new `send` argument is NOT applied — drags will dispatch
+// through the FIRST call's `send`. Today's call site
+// (handleAreaSelectDirectives in livetemplate-client.ts) always passes
+// a fresh arrow over the same `this.send` method, so the captured
+// behaviour is equivalent; if a future caller passes a fundamentally
+// different send (e.g. a different LiveTemplateClient instance arming
+// the same element), the attribute-change re-arm path is the only way
+// to update the captured send.
 function attachAreaSelect(
   el: HTMLElement,
   action: string,
@@ -1086,9 +1097,9 @@ function attachAreaSelect(
     if (!e.isPrimary || e.button !== 0) return;
     // Re-entrancy guard: if a prior drag never finished (e.g. capture
     // failed silently, then pointer left the element with no pointerup
-    // ever delivered), the WeakMap entry would still hold pointerId.
-    // Cancel the prior drag — removing its overlay and listeners —
-    // before starting a fresh one.
+    // ever delivered), the closed-over pointerId variable would still
+    // hold the stale id. Cancel the prior drag — removing its overlay
+    // and listeners — before starting a fresh one.
     if (pointerId !== -1) finalize(null, false);
     const parent = el.parentElement;
     if (!parent) return; // overlay needs a positioned container

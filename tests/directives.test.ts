@@ -1213,7 +1213,7 @@ describe("handleAreaSelectDirectives", () => {
 
   function dispatchPointer(
     el: HTMLElement,
-    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel" | "lostpointercapture",
     clientX: number,
     clientY: number,
     pointerId = 1
@@ -1476,6 +1476,27 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.top).toBe("50px");
     expect(overlay.style.width).toBe("40px");
     expect(overlay.style.height).toBe("40px");
+  });
+
+  it("lostpointercapture cancels the drag without dispatching", () => {
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 80, 80);
+    // Platform yanks capture (OS gesture, another setPointerCapture
+    // call elsewhere). lostpointercapture should cancel like
+    // pointercancel — overlay removed, no action dispatched.
+    dispatchPointer(target, "lostpointercapture", 80, 80);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
   });
 
   it("cleans up armed elements whose attribute was removed by a server diff", () => {
