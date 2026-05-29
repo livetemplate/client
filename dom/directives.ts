@@ -741,6 +741,10 @@ function createToastElement(msg: ToastMessage): HTMLElement {
 // NotSupportedError, hit the catch, and silently drop the new content.
 // Open roots are reachable via parent.shadowRoot, so they don't need
 // the map.
+//
+// Module-scoped on purpose: WeakMap keys are garbage-collected with
+// their hosts, so detached elements don't leak. A function-scoped map
+// would forget closed roots across renders and the bug would return.
 const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
 
 /**
@@ -771,12 +775,14 @@ const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
  * Idempotent: a re-run with no remaining templates is one qsa walk and
  * an early return (sub-millisecond on hundreds-of-rows pages).
  *
- * Known limitation: nested DSD templates inside an already-hydrated
- * shadow root are not activated. querySelectorAll only walks the light
- * DOM, so once a `<template shadowrootmode>` has been moved into a
- * shadow root its children are out of reach. Mirrors the native parser
- * behaviour for HTML parsed via innerHTML; if nested DSD is ever
- * needed, a recursive sweep per new shadow root would close that gap.
+ * Known limitation: nested DSD templates are activated only when the
+ * outer template is processed and its children are still in the light
+ * DOM at qsa time. Once a `<template shadowrootmode>` has been moved
+ * into a shadow root by a prior call, subsequent calls can't see its
+ * descendants (qsa stops at shadow boundaries) — a re-render that
+ * regenerates only the outer host would leave inner DSD inert. If
+ * nested DSD across re-renders is ever needed, a recursive sweep per
+ * new shadow root would close that gap.
  */
 export function handleShadowRootHydration(rootElement: Element): void {
   // Single qsa for both the empty-fast-path and the actual work — querySelector
@@ -817,11 +823,17 @@ export function handleShadowRootHydration(rootElement: Element): void {
         if (mode === "closed") {
           closedShadowRoots.set(parent, shadow);
         }
-      } catch {
-        // attachShadow throws for hosts that can't accept one (void
-        // elements, <input>, <textarea>, custom elements that declared a
-        // different mode, etc.). Drop the template so it doesn't keep
-        // tripping this hook on every render.
+      } catch (e) {
+        // attachShadow throws DOMException for hosts that can't accept
+        // one (void elements, <input>, <textarea>, custom elements that
+        // declared a different mode, etc.). Drop the template so it
+        // doesn't keep tripping this hook on every render.
+        //
+        // Anything OTHER than a DOMException is a real bug (typo in the
+        // options object, runtime fault); re-raise so it surfaces in the
+        // console instead of getting silently masked as "unsupported
+        // host".
+        if (!(e instanceof DOMException)) throw e;
         tpl.remove();
         continue;
       }

@@ -978,12 +978,17 @@ describe("handleShadowRootHydration", () => {
     const tpl = document.createElement("template");
     tpl.setAttribute("shadowrootmode", "open");
     host.appendChild(tpl);
-    // Force attachShadow to throw — simulate the void-element case
-    // without depending on the jsdom <input> shadow-host behavior, which
-    // varies between implementations.
+    // Force attachShadow to throw the same DOMException the platform
+    // would for an unsupported host. Plain Errors are deliberately NOT
+    // caught (a typo in the options object should surface, not silently
+    // drop content) — see the "rethrows non-DOMException errors" test
+    // below.
     const orig = host.attachShadow.bind(host);
     host.attachShadow = () => {
-      throw new Error("Operation is not supported");
+      throw new DOMException(
+        "Operation is not supported",
+        "NotSupportedError"
+      );
     };
 
     expect(() => handleShadowRootHydration(document.body)).not.toThrow();
@@ -993,6 +998,22 @@ describe("handleShadowRootHydration", () => {
 
     host.attachShadow = orig;
     input.remove();
+    host.remove();
+  });
+
+  it("rethrows non-DOMException errors so real bugs surface", () => {
+    document.body.innerHTML = `
+      <div id="host"><template shadowrootmode="open"><span>x</span></template></div>
+    `;
+    const host = document.getElementById("host")!;
+    host.attachShadow = () => {
+      throw new Error("typo in options or runtime bug");
+    };
+
+    // A bare catch would have hidden this; the narrow guard surfaces it.
+    expect(() => handleShadowRootHydration(document.body)).toThrow(
+      "typo in options or runtime bug"
+    );
   });
 
   it("idempotent re-run when no remaining templates is essentially free", () => {
