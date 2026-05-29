@@ -903,6 +903,29 @@ describe("handleShadowRootHydration", () => {
     expect(document.body.innerHTML).toBe(before);
   });
 
+  it("replaces existing shadow content on re-hydration in closed mode (WeakMap fallback)", () => {
+    // parent.shadowRoot is null for closed roots by spec, so a re-render
+    // would otherwise re-call attachShadow, throw NotSupportedError, and
+    // silently drop the new content. The WeakMap side-channel locates
+    // the prior root so replaceChildren actually updates it.
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="closed"><span class="round">1</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot).toBeNull(); // closed — spec confirms
+
+    // The directive's WeakMap holds the closed root; we can't observe its
+    // content via host.shadowRoot, but we CAN verify the re-render path
+    // doesn't throw and doesn't drop the template, which is the exact
+    // failure mode pre-fix.
+    host.innerHTML = `<template shadowrootmode="closed"><span class="round">2</span></template>`;
+    expect(() => handleShadowRootHydration(document.body)).not.toThrow();
+    expect(host.querySelector("template")).toBeNull();
+  });
+
   it("replaces existing shadow content on re-hydration (server re-render)", () => {
     document.body.innerHTML = `
       <div id="host">

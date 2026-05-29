@@ -733,6 +733,16 @@ function createToastElement(msg: ToastMessage): HTMLElement {
   return el;
 }
 
+// closedShadowRoots tracks shadow roots created in "closed" mode. The
+// platform makes them unreachable via `parent.shadowRoot` (it returns
+// null) — closed mode's whole point is that the host's normal DOM API
+// can't see them. On a re-render, without this side channel, the code
+// would call attachShadow a second time on the same host, throw
+// NotSupportedError, hit the catch, and silently drop the new content.
+// Open roots are reachable via parent.shadowRoot, so they don't need
+// the map.
+const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
+
 /**
  * Activate Declarative Shadow DOM for `<template shadowrootmode>` elements
  * that the client inserted via DOM APIs (innerHTML setter, morphdom's
@@ -747,6 +757,7 @@ function createToastElement(msg: ToastMessage): HTMLElement {
  *  - attach a shadow root on the parent (open by default; "closed" when
  *    shadowrootmode="closed");
  *  - move the template's content into the shadow root (replaceChildren
+ *    accepts a DocumentFragment and re-parents its children atomically,
  *    so re-renders cleanly reset prior shadow content);
  *  - remove the template.
  *
@@ -754,8 +765,18 @@ function createToastElement(msg: ToastMessage): HTMLElement {
  * <textarea>, void elements, etc.) silently drop the template — better
  * than an unhandled exception that kills the render.
  *
- * Idempotent: a re-run with no remaining templates is one querySelector
- * call (no allocations, sub-millisecond on hundreds-of-rows pages).
+ * Closed-mode roots are tracked in a module-level WeakMap so re-renders
+ * can locate them (parent.shadowRoot returns null for closed roots).
+ *
+ * Idempotent: a re-run with no remaining templates is one qsa walk and
+ * an early return (sub-millisecond on hundreds-of-rows pages).
+ *
+ * Known limitation: nested DSD templates inside an already-hydrated
+ * shadow root are not activated. querySelectorAll only walks the light
+ * DOM, so once a `<template shadowrootmode>` has been moved into a
+ * shadow root its children are out of reach. Mirrors the native parser
+ * behaviour for HTML parsed via innerHTML; if nested DSD is ever
+ * needed, a recursive sweep per new shadow root would close that gap.
  */
 export function handleShadowRootHydration(rootElement: Element): void {
   // Single qsa for both the empty-fast-path and the actual work — querySelector
@@ -774,7 +795,10 @@ export function handleShadowRootHydration(rootElement: Element): void {
     const modeAttr = tpl.getAttribute("shadowrootmode");
     const mode: ShadowRootMode = modeAttr === "closed" ? "closed" : "open";
 
-    let shadow = parent.shadowRoot;
+    // For open roots, parent.shadowRoot is the reachable handle. For
+    // closed roots, the platform returns null on purpose — consult the
+    // WeakMap that we populated when we first attached the root.
+    let shadow = parent.shadowRoot ?? closedShadowRoots.get(parent);
     if (!shadow) {
       try {
         // Forward all Declarative Shadow DOM attributes so the hydrated
@@ -790,6 +814,9 @@ export function handleShadowRootHydration(rootElement: Element): void {
           clonable: tpl.hasAttribute("shadowrootclonable"),
           serializable: tpl.hasAttribute("shadowrootserializable"),
         });
+        if (mode === "closed") {
+          closedShadowRoots.set(parent, shadow);
+        }
       } catch {
         // attachShadow throws for hosts that can't accept one (void
         // elements, <input>, <textarea>, custom elements that declared a
