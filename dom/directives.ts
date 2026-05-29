@@ -999,8 +999,10 @@ const MIN_AREA_FRACTION = 0.02;
  * + tears down livetemplate trees would leak listeners across mounts.
  */
 export function teardownAreaSelectForRoot(rootElement: Element): void {
+  // `contains` returns true for the node itself, so this also handles
+  // the (today-impossible) case of rootElement being armed directly.
   for (const [element, entry] of Array.from(areaSelectArmed)) {
-    if (rootElement === element || rootElement.contains(element)) {
+    if (rootElement.contains(element)) {
       entry.cleanup();
     }
   }
@@ -1165,6 +1167,27 @@ function attachAreaSelect(
     if (pointerId !== -1) finalize(null, false);
     const parent = el.parentElement;
     if (!parent) return; // overlay needs a positioned container
+    // Dev-time check: if the parent doesn't establish a positioning
+    // context, the overlay's `position: absolute` will resolve against
+    // the nearest positioned ANCESTOR — a distant element with no
+    // visible relationship to the host. Result: overlay paints in
+    // the wrong place with no error, just a confusing visual.
+    // Check against the positive list of positioned values; the
+    // default "static" and an unset/empty value both fail it (jsdom
+    // returns "" for unset position).
+    const parentPos = window.getComputedStyle(parent).position;
+    if (
+      parentPos !== "relative" &&
+      parentPos !== "absolute" &&
+      parentPos !== "fixed" &&
+      parentPos !== "sticky"
+    ) {
+      console.warn(
+        "lvt-fx:area-select: parentElement has no positioning context; the drag overlay will be mis-positioned. " +
+          "Add position:relative (or absolute/fixed/sticky) to the parent.",
+        parent
+      );
+    }
     startClientX = e.clientX;
     startClientY = e.clientY;
     pointerId = e.pointerId;

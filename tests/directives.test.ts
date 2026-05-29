@@ -1479,6 +1479,55 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.height).toBe("40px");
   });
 
+  it("warns when the parent's computed position is `static`", () => {
+    // Forgetting position:relative on the parent silently mis-paints
+    // the overlay against the nearest positioned ancestor. A
+    // dev-time warn gives the author a chance to spot the mistake.
+    const warn = console.warn as jest.Mock;
+    document.body.innerHTML = `
+      <div id="static-parent">
+        <img id="target" lvt-fx:area-select="selectImageArea">
+      </div>
+    `;
+    const target = document.getElementById("target") as HTMLImageElement;
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("parentElement has no positioning context"),
+      expect.anything()
+    );
+  });
+
+  it("pointercancel cancels the drag without dispatching", () => {
+    // pointercancel fires on system gestures (OS-level swipe, app
+    // switch). Like lostpointercapture / pointerleave, it must remove
+    // the overlay and NOT dispatch — same contract from the user's
+    // perspective.
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 10, 10);
+    dispatchPointer(target, "pointermove", 80, 80);
+    dispatchPointer(target, "pointercancel", 80, 80);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
+  });
+
   it("rejects zero-area rectangles even if the threshold check would pass", () => {
     // The MIN_AREA_FRACTION check uses && so a wide-but-thin drag is
     // a legit selection — but a literal 60% × 0% drag has no area,
