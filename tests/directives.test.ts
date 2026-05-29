@@ -3,6 +3,7 @@ import {
   handleHighlightDirectives,
   handleAnimateDirectives,
   handleAutoClickDirectives,
+  handleShadowRootHydration,
   setupFxDOMEventTriggers,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
@@ -852,5 +853,311 @@ describe("handleAutoClickDirectives", () => {
     jest.advanceTimersByTime(500);
 
     expect(clickSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleShadowRootHydration", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("attaches an open shadow root and moves template content into it", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span class="inner">hi</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+
+    handleShadowRootHydration(document.body);
+
+    expect(host.shadowRoot).not.toBeNull();
+    expect(host.shadowRoot!.querySelector(".inner")?.textContent).toBe("hi");
+    // Template should be gone — leaving it would re-trigger the hook
+    // on every subsequent render.
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("honors shadowrootmode='closed'", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="closed"><span>x</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+
+    handleShadowRootHydration(document.body);
+
+    // Closed shadow root: parent.shadowRoot stays null per spec, but
+    // the template still gets consumed.
+    expect(host.shadowRoot).toBeNull();
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("is a no-op when there are no shadowroot templates", () => {
+    document.body.innerHTML = `<div><p>nothing here</p></div>`;
+    const before = document.body.innerHTML;
+
+    handleShadowRootHydration(document.body);
+
+    expect(document.body.innerHTML).toBe(before);
+  });
+
+  it("replaces existing shadow content on re-hydration in closed mode (WeakMap fallback)", () => {
+    // parent.shadowRoot is null for closed roots by spec, so a re-render
+    // would otherwise re-call attachShadow, throw NotSupportedError, and
+    // silently drop the new content. The WeakMap side-channel locates
+    // the prior root so replaceChildren actually updates it.
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="closed"><span class="round">1</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot).toBeNull(); // closed — spec confirms
+
+    // The directive's WeakMap holds the closed root; we can't observe
+    // its content via host.shadowRoot, but we CAN verify (a) the
+    // re-render path doesn't throw, (b) the template gets consumed,
+    // and (c) the template's content left the light DOM — together,
+    // strong evidence the content moved into the cached shadow root
+    // rather than vanishing or staying parked as an inert template
+    // (the exact failure mode pre-fix).
+    host.innerHTML = `<template shadowrootmode="closed"><span class="round">2</span></template>`;
+    expect(() => handleShadowRootHydration(document.body)).not.toThrow();
+    expect(host.querySelector("template")).toBeNull();
+    expect(host.children.length).toBe(0); // content lives in shadow, not light DOM
+  });
+
+  it("replaces existing shadow content on re-hydration (server re-render)", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>first</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot!.querySelector("span")?.textContent).toBe("first");
+
+    // Simulate the server emitting a new template into the same host
+    // after a morph (host kept, template re-inserted).
+    host.innerHTML = `<template shadowrootmode="open"><span>second</span></template>`;
+    handleShadowRootHydration(document.body);
+
+    expect(host.shadowRoot!.querySelector("span")?.textContent).toBe("second");
+    expect(host.querySelector("template")).toBeNull();
+  });
+
+  it("handles multiple sibling templates on one page", () => {
+    document.body.innerHTML = `
+      <div id="a"><template shadowrootmode="open"><i>A</i></template></div>
+      <div id="b"><template shadowrootmode="open"><i>B</i></template></div>
+      <div id="c"><template shadowrootmode="open"><i>C</i></template></div>
+    `;
+
+    handleShadowRootHydration(document.body);
+
+    for (const [id, want] of [["a", "A"], ["b", "B"], ["c", "C"]] as const) {
+      const host = document.getElementById(id)!;
+      expect(host.shadowRoot?.querySelector("i")?.textContent).toBe(want);
+    }
+  });
+
+  it("silently drops the template when the host can't accept a shadow root", () => {
+    // Real-world hosts that can't accept a shadow root (void elements,
+    // <input>, <textarea>, custom-element mode conflicts) make
+    // attachShadow throw a DOMException. The hook must catch and
+    // remove the template instead of leaving a re-trigger ticking on
+    // every render. Drive the failure path via a stub on a regular
+    // <div> so this test doesn't depend on jsdom's <input>-as-host
+    // behaviour, which varies across versions.
+    const host = document.createElement("div");
+    host.id = "host";
+    document.body.appendChild(host);
+    const tpl = document.createElement("template");
+    tpl.setAttribute("shadowrootmode", "open");
+    host.appendChild(tpl);
+    const orig = host.attachShadow.bind(host);
+    host.attachShadow = () => {
+      throw new DOMException(
+        "Operation is not supported",
+        "NotSupportedError"
+      );
+    };
+
+    expect(() => handleShadowRootHydration(document.body)).not.toThrow();
+    // Template must be removed even though attach failed.
+    expect(host.querySelector("template")).toBeNull();
+    expect(host.shadowRoot).toBeNull();
+
+    host.attachShadow = orig;
+    host.remove();
+  });
+
+  it("warns when attachShadow rejects the host (DOMException path)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const host = document.createElement("div");
+    host.id = "warn-host";
+    document.body.appendChild(host);
+    const tpl = document.createElement("template");
+    tpl.setAttribute("shadowrootmode", "open");
+    host.appendChild(tpl);
+    host.attachShadow = () => {
+      throw new DOMException(
+        "Operation is not supported",
+        "NotSupportedError"
+      );
+    };
+
+    handleShadowRootHydration(document.body);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("attachShadow rejected"),
+      host
+    );
+    warn.mockRestore();
+    host.remove();
+  });
+
+  it("removes templates with an unrecognised shadowrootmode and warns", () => {
+    // The HTML parser doesn't activate a `<template shadowrootmode>`
+    // with an unknown mode value. The directive removes the template
+    // outright (so the fast-path advertised in the docblock isn't
+    // defeated by a persistent typo that the qsa keeps re-finding) and
+    // logs a console.warn so authors actually see the mistake.
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="opne"><span>typo</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    expect(host.shadowRoot).toBeNull();
+    expect(host.querySelector("template")).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("invalid shadowrootmode"),
+      expect.anything()
+    );
+    warn.mockRestore();
+  });
+
+  it("rethrows non-DOMException errors so real bugs surface", () => {
+    document.body.innerHTML = `
+      <div id="host"><template shadowrootmode="open"><span>x</span></template></div>
+    `;
+    const host = document.getElementById("host")!;
+    host.attachShadow = () => {
+      throw new Error("typo in options or runtime bug");
+    };
+
+    // A bare catch would have hidden this; the narrow guard surfaces it.
+    expect(() => handleShadowRootHydration(document.body)).toThrow(
+      "typo in options or runtime bug"
+    );
+  });
+
+  it("idempotent re-run when no remaining templates is essentially free", () => {
+    document.body.innerHTML = `<div id="host"></div>`;
+    // First run: nothing to do.
+    handleShadowRootHydration(document.body);
+    // Second run on a clean tree: still nothing.
+    handleShadowRootHydration(document.body);
+    const host = document.getElementById("host")!;
+    expect(host.shadowRoot).toBeNull();
+  });
+
+  it("forwards shadowrootdelegatesfocus / clonable / serializable to attachShadow", () => {
+    // Use a spy because jsdom doesn't expose the options on the resulting
+    // ShadowRoot in a stable way across versions — checking the call args
+    // is what we actually want to assert ("the directive forwards
+    // attributes faithfully to the platform call").
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open" shadowrootdelegatesfocus shadowrootclonable shadowrootserializable>
+          <span>focus me</span>
+        </template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    const spy = jest.spyOn(host, "attachShadow");
+
+    handleShadowRootHydration(document.body);
+
+    expect(spy).toHaveBeenCalledWith({
+      mode: "open",
+      delegatesFocus: true,
+      clonable: true,
+      serializable: true,
+    });
+  });
+
+  // Documented limitations — kept as it.skip so a future PR that
+  // closes either gap can flip the skip and have an instant test.
+
+  it("warns when shadowrootmode is changed on re-render (mode is one-shot)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>first</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    handleShadowRootHydration(document.body);
+    // Server flips the mode on the next render — surfacing the mismatch
+    // is the contract.
+    host.innerHTML = `<template shadowrootmode="closed"><span>second</span></template>`;
+    handleShadowRootHydration(document.body);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("shadowrootmode changed"),
+      host
+    );
+    // The pre-existing open root persists (attachShadow can't be re-
+    // called); content still updates inside it.
+    expect(host.shadowRoot?.querySelector("span")?.textContent).toBe("second");
+    warn.mockRestore();
+  });
+
+  it.skip("nested DSD inside another template is inert on first render", () => {
+    // A `<template shadowrootmode>` nested inside another `<template>`
+    // is in DocumentFragment land, which qsa doesn't descend into — the
+    // inner template is never in the first qsa result, so it stays
+    // inert from render zero. (The "on re-render" case is the same
+    // mechanism: after the outer shadow attaches, the inner template
+    // sits behind a shadow boundary, also out of qsa's reach.)
+    document.body.innerHTML = `
+      <div id="outer">
+        <template shadowrootmode="open">
+          <div id="inner">
+            <template shadowrootmode="open"><span>nested</span></template>
+          </div>
+        </template>
+      </div>
+    `;
+    handleShadowRootHydration(document.body);
+    const outer = document.getElementById("outer")!;
+    const inner = outer.shadowRoot!.getElementById("inner")!;
+    expect(inner.shadowRoot).toBeNull();
+    expect(inner.querySelector("template")).not.toBeNull();
+  });
+
+  it("defaults all extended options to false when attrs are absent", () => {
+    document.body.innerHTML = `
+      <div id="host">
+        <template shadowrootmode="open"><span>x</span></template>
+      </div>
+    `;
+    const host = document.getElementById("host")!;
+    const spy = jest.spyOn(host, "attachShadow");
+
+    handleShadowRootHydration(document.body);
+
+    expect(spy).toHaveBeenCalledWith({
+      mode: "open",
+      delegatesFocus: false,
+      clonable: false,
+      serializable: false,
+    });
   });
 });

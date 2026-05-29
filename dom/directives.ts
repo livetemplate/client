@@ -733,3 +733,171 @@ function createToastElement(msg: ToastMessage): HTMLElement {
   return el;
 }
 
+// closedShadowRoots tracks shadow roots created in "closed" mode. The
+// platform makes them unreachable via `parent.shadowRoot` (it returns
+// null) — closed mode's whole point is that the host's normal DOM API
+// can't see them. On a re-render, without this side channel, the code
+// would call attachShadow a second time on the same host, throw
+// NotSupportedError, hit the catch, and silently drop the new content.
+// Open roots are reachable via parent.shadowRoot, so they don't need
+// the map.
+//
+// Module-scoped on purpose: WeakMap keys are garbage-collected with
+// their hosts, so detached elements don't leak. A function-scoped map
+// would forget closed roots across renders and the bug would return.
+const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
+
+/**
+ * Activate Declarative Shadow DOM for `<template shadowrootmode>` elements
+ * that the client inserted via DOM APIs (innerHTML setter, morphdom's
+ * createElement+appendChild path). The HTML parser activates declarative
+ * shadow roots only at parse time or via setHTMLUnsafe / parseHTMLUnsafe;
+ * a `<template shadowrootmode>` set via `.innerHTML = ...` is parked as a
+ * plain template with content but no attached shadow root. This sweep
+ * closes that gap so server-emitted shadow roots survive a client
+ * re-render.
+ *
+ * For each matching template found under rootElement:
+ *  - attach a shadow root on the parent (open by default; "closed" when
+ *    shadowrootmode="closed");
+ *  - move the template's content into the shadow root (replaceChildren
+ *    accepts a DocumentFragment and re-parents its children atomically,
+ *    so re-renders cleanly reset prior shadow content);
+ *  - remove the template.
+ *
+ * Hosts that can't accept a shadow root (a small fixed set: <input>,
+ * <textarea>, void elements, etc.) silently drop the template — better
+ * than an unhandled exception that kills the render.
+ *
+ * Closed-mode roots are tracked in a module-level WeakMap so re-renders
+ * can locate them (parent.shadowRoot returns null for closed roots).
+ *
+ * Idempotent: a re-run with no remaining templates is one qsa walk and
+ * an early return (sub-millisecond on hundreds-of-rows pages).
+ *
+ * Known limitations:
+ *
+ * - Nested DSD is inert on EVERY render, not just re-renders. A
+ *   `<template>`'s content lives in a DocumentFragment (`tpl.content`),
+ *   not in the light DOM, and `querySelectorAll` does not descend into
+ *   that fragment. So a `<template shadowrootmode>` nested inside
+ *   another `<template>` is never in the qsa result. Once the outer
+ *   shadow has been attached, the inner template ends up behind a
+ *   shadow boundary — still unreachable. The fix would be a recursive
+ *   sweep per new shadow root from within this loop.
+ *
+ * - Shadow-root options (`delegatesFocus`, `clonable`, `serializable`,
+ *   even `mode`) are fixed at first attach. A re-render that toggles
+ *   `shadowrootdelegatesfocus` on a host that already has a shadow root
+ *   won't change the existing root's focus behaviour — re-attach isn't
+ *   possible. Matches the HTML parser, which would have made the same
+ *   one-shot decision; if the server needs to flip these flags, it
+ *   needs to swap the host element entirely. The mode-mismatch case
+ *   also logs a console.warn so the divergence is visible.
+ */
+export function handleShadowRootHydration(rootElement: Element): void {
+  // Single qsa for both the empty-fast-path and the actual work — a
+  // leading querySelector check would double-walk the tree when
+  // templates are present. NodeList from querySelectorAll is static
+  // (not live), so removing templates inside the loop doesn't disturb
+  // iteration; no Array.from copy needed.
+  // The selector guarantees <template> elements, so the typed qsa
+  // overload removes the `as HTMLTemplateElement` cast inside the loop.
+  const templates = rootElement.querySelectorAll<HTMLTemplateElement>(
+    "template[shadowrootmode]"
+  );
+  if (templates.length === 0) return;
+  for (const tpl of templates) {
+    // qsa on an Element always returns descendants with a parentElement,
+    // so !parent should be unreachable today. Kept as a defensive guard
+    // in case a future caller passes a DocumentFragment-rooted tree
+    // where the matched template could be a fragment's direct child.
+    const parent = tpl.parentElement;
+    if (!parent) {
+      tpl.remove();
+      continue;
+    }
+    const modeAttr = tpl.getAttribute("shadowrootmode");
+    // Align with the HTML parser: only "open" and "closed" trigger
+    // activation. A typo like shadowrootmode="opne" was previously
+    // left in place "so the author can inspect" — but on every
+    // subsequent render the qsa would re-find it, defeating the
+    // fast-path advertised in the docblock. Remove it AND log a
+    // console.warn so authors actually see the typo (the next morphdom
+    // pass would overwrite it anyway).
+    if (modeAttr !== "open" && modeAttr !== "closed") {
+      console.warn(
+        `livetemplate: invalid shadowrootmode=${JSON.stringify(modeAttr)}; ` +
+          `expected "open" or "closed". Template removed.`,
+        tpl
+      );
+      tpl.remove();
+      continue;
+    }
+    const mode: ShadowRootMode = modeAttr;
+
+    // For open roots, parent.shadowRoot is the reachable handle. For
+    // closed roots, the platform returns null on purpose — consult the
+    // WeakMap that we populated when we first attached the root.
+    let shadow = parent.shadowRoot ?? closedShadowRoots.get(parent);
+    // If the server flips shadowrootmode on a re-render (e.g. open →
+    // closed), attachShadow can't be called a second time — the existing
+    // mode silently wins. Warn so the author notices the mistake instead
+    // of debugging mysterious focus/encapsulation behaviour later.
+    if (shadow && shadow.mode !== modeAttr) {
+      console.warn(
+        `livetemplate: shadowrootmode changed from "${shadow.mode}" to "${modeAttr}" ` +
+          `on re-render — mode is fixed at first attach and cannot be changed.`,
+        parent
+      );
+    }
+    if (!shadow) {
+      try {
+        // Forward all Declarative Shadow DOM attributes so the hydrated
+        // root matches the one the HTML parser would build natively:
+        // - shadowrootdelegatesfocus  → delegatesFocus
+        // - shadowrootclonable        → clonable        (Chrome 124+)
+        // - shadowrootserializable    → serializable    (Chrome 125+)
+        // Unknown flags from older runtimes are silently ignored by
+        // attachShadow, so we don't need a feature-detect.
+        shadow = parent.attachShadow({
+          mode,
+          delegatesFocus: tpl.hasAttribute("shadowrootdelegatesfocus"),
+          clonable: tpl.hasAttribute("shadowrootclonable"),
+          serializable: tpl.hasAttribute("shadowrootserializable"),
+        });
+        if (mode === "closed") {
+          closedShadowRoots.set(parent, shadow);
+        }
+      } catch (e) {
+        // attachShadow throws DOMException for hosts that can't accept
+        // one (void elements, <input>, <textarea>, custom elements that
+        // declared a different mode, etc.). Drop the template so it
+        // doesn't keep tripping this hook on every render, AND warn so
+        // a developer accidentally putting shadow content on an invalid
+        // host gets a console signal rather than a mysteriously empty
+        // preview.
+        //
+        // Anything OTHER than a DOMException is a real bug (typo in the
+        // options object, runtime fault); re-raise so it surfaces in the
+        // console instead of getting silently masked as "unsupported
+        // host".
+        if (!(e instanceof DOMException)) throw e;
+        console.warn(
+          `livetemplate: attachShadow rejected on <${parent.tagName.toLowerCase()}> ` +
+            `(${e.name}: ${e.message}). Template removed.`,
+          parent
+        );
+        tpl.remove();
+        continue;
+      }
+    }
+
+    // Pass the DocumentFragment directly — replaceChildren moves its
+    // children into the shadow root in one atomic platform call. Avoids
+    // both the spread (which could hit call-stack argument limits on
+    // very large NodeLists) and the intermediate Array.from allocation.
+    shadow.replaceChildren(tpl.content);
+    tpl.remove();
+  }
+}

@@ -12,6 +12,7 @@ import {
   handleAutoClickDirectives,
   handleHighlightDirectives,
   handleScrollDirectives,
+  handleShadowRootHydration,
   handleToastDirectives,
   teardownAutoClickTimers,
   setupToastClickOutside,
@@ -1831,6 +1832,21 @@ export class LiveTemplateClient {
     handleAnimateDirectives(element);
     handleToastDirectives(element);
     handleAutoClickDirectives(element);
+    // Hydrate any server-emitted Declarative Shadow DOM templates that
+    // morphdom inserted via DOM APIs (which don't auto-activate them).
+    // Cheap when no templates are present (one querySelectorAll).
+    //
+    // Hard limitation: livetemplate directives placed INSIDE shadow
+    // content (e.g. lvt-on:click on an element inside a `<template
+    // shadowrootmode>`) NEVER register, on any render. The directive
+    // sweeps above (setupFxDOMEventTriggers, eventDelegator) walk via
+    // querySelectorAll which stops at shadow boundaries, and the
+    // hydration that follows doesn't run them against the new shadow
+    // root either. Treat shadow DOM as a style/structure isolation
+    // primitive only — keep directives in light DOM. Today's consumer
+    // (prereview's HTML preview) wraps sanitised user HTML in shadow
+    // DOM purely for style isolation; no directives go in.
+    handleShadowRootHydration(element);
     setupScrollAway(element);
     setupSpy(element);
     if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
