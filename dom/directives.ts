@@ -949,9 +949,16 @@ const MIN_AREA_FRACTION = 0.02;
  *
  * Idempotent across renders: an element re-armed with the same action
  * keeps its existing listeners. A different action causes a tear-down
- * and re-arm. Disconnected elements have their listeners cleaned up
- * implicitly via WeakMap GC + pointerup happening only while the
- * element is still in the DOM.
+ * and re-arm. Disconnected elements (and elements whose attribute was
+ * cleared by a server diff) get their listeners cleaned up by the
+ * sweep at the top of every call — we use a regular Map (not WeakMap)
+ * specifically so the sweep can iterate.
+ *
+ * Module-level singleton: `areaSelectArmed` is shared across all
+ * LiveTemplateClient instances in the same window. If two clients
+ * ever arm the same element with different actions, the second wins
+ * and the first client's send() is orphaned. Single-client use is
+ * unaffected.
  */
 export function handleAreaSelectDirectives(
   rootElement: Element,
@@ -1064,6 +1071,14 @@ function attachAreaSelect(
     finalize(null, false);
   };
 
+  // Chromium fires `dragstart` on an <img> after the first mousemove
+  // following mousedown, yanking the gesture away from pointer events
+  // before pointerup arrives — the overlay flashes and capture is
+  // lost. preventDefault on dragstart suppresses the native image
+  // drag without breaking pointer events. Cheap to attach on every
+  // element type (non-img hosts simply never fire dragstart).
+  const onDragStart = (e: DragEvent) => e.preventDefault();
+
   const onPointerDown = (e: PointerEvent) => {
     // Only primary button (left mouse / single touch / pen tip). Modifier
     // keys passed through so the server-side handler can decide what to
@@ -1174,6 +1189,7 @@ function attachAreaSelect(
   // lostpointercapture handles the rare case where the platform yanks
   // capture (e.g. another element calls setPointerCapture, OS gesture).
   el.addEventListener("lostpointercapture", onPointerCancel);
+  el.addEventListener("dragstart", onDragStart);
 
   const cleanup = () => {
     el.removeEventListener("pointerdown", onPointerDown);
@@ -1182,6 +1198,7 @@ function attachAreaSelect(
     el.removeEventListener("pointercancel", onPointerCancel);
     el.removeEventListener("lostpointercapture", onPointerCancel);
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
+    el.removeEventListener("dragstart", onDragStart);
     finalize(null, false);
     areaSelectArmed.delete(el);
   };

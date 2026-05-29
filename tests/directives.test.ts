@@ -1426,6 +1426,58 @@ describe("handleAreaSelectDirectives", () => {
     expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
   });
 
+  it("suppresses native <img> drag via dragstart preventDefault", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    // Without the dragstart listener, Chromium would call default-
+    // action (start a native image drag) and steal the gesture from
+    // pointer events. The directive must call preventDefault on
+    // dragstart so pointermove + pointerup keep arriving.
+    const drag = new Event("dragstart", { bubbles: true, cancelable: true });
+    target.dispatchEvent(drag);
+    expect(drag.defaultPrevented).toBe(true);
+  });
+
+  it("positions overlay correctly when target is offset inside its parent", () => {
+    // Parent at (0,0), target at (50, 25) — exercises the
+    // border-box-to-padding-box offset math with a real gap.
+    document.body.innerHTML = `
+      <div id="parent" style="position:relative;">
+        <img id="target" lvt-fx:area-select="selectImageArea">
+      </div>
+    `;
+    const target = document.getElementById("target") as HTMLImageElement;
+    const parent = document.getElementById("parent") as HTMLDivElement;
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: 50, y: 25, left: 50, top: 25, right: 150, bottom: 125,
+      width: 100, height: 100, toJSON: () => ({}),
+    } as DOMRect));
+    parent.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    // Drag from (80, 50) → (120, 90) — inside the target's 100×100 rect.
+    // Relative to the parent (and after subtracting clientLeft/clientTop=0
+    // for a borderless parent), the overlay should sit at left=80, top=50.
+    dispatchPointer(target, "pointerdown", 80, 50);
+    dispatchPointer(target, "pointermove", 120, 90);
+    const overlay = parent.querySelector(".lvt-area-select-overlay") as HTMLDivElement;
+    expect(overlay).not.toBeNull();
+    expect(overlay.style.left).toBe("80px");
+    expect(overlay.style.top).toBe("50px");
+    expect(overlay.style.width).toBe("40px");
+    expect(overlay.style.height).toBe("40px");
+  });
+
   it("cleans up armed elements whose attribute was removed by a server diff", () => {
     const [target] = mountTarget(
       "img",
