@@ -777,12 +777,14 @@ const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
  *
  * Known limitations:
  *
- * - Nested DSD templates are activated only when the outer template is
- *   processed and its children are still in the light DOM at qsa time.
- *   Once a `<template shadowrootmode>` has been moved into a shadow root
- *   by a prior call, subsequent calls can't see its descendants (qsa
- *   stops at shadow boundaries) — a re-render that regenerates only the
- *   outer host would leave inner DSD inert.
+ * - Nested DSD is inert on EVERY render, not just re-renders. A
+ *   `<template>`'s content lives in a DocumentFragment (`tpl.content`),
+ *   not in the light DOM, and `querySelectorAll` does not descend into
+ *   that fragment. So a `<template shadowrootmode>` nested inside
+ *   another `<template>` is never in the qsa result. Once the outer
+ *   shadow has been attached, the inner template ends up behind a
+ *   shadow boundary — still unreachable. The fix would be a recursive
+ *   sweep per new shadow root from within this loop.
  *
  * - Shadow-root options (`delegatesFocus`, `clonable`, `serializable`,
  *   even `mode`) are fixed at first attach. A re-render that toggles
@@ -790,7 +792,8 @@ const closedShadowRoots = new WeakMap<Element, ShadowRoot>();
  *   won't change the existing root's focus behaviour — re-attach isn't
  *   possible. Matches the HTML parser, which would have made the same
  *   one-shot decision; if the server needs to flip these flags, it
- *   needs to swap the host element entirely.
+ *   needs to swap the host element entirely. The mode-mismatch case
+ *   also logs a console.warn so the divergence is visible.
  */
 export function handleShadowRootHydration(rootElement: Element): void {
   // Single qsa for both the empty-fast-path and the actual work — a

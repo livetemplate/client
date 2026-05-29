@@ -1119,26 +1119,27 @@ describe("handleShadowRootHydration", () => {
     warn.mockRestore();
   });
 
-  it.skip("nested DSD across re-renders is left inert (qsa stops at shadow boundary)", () => {
-    // Outer shadow root hydrated. Server re-renders the outer host with
-    // a new inner `<template shadowrootmode>`. qsa from rootElement
-    // won't cross into the existing shadow root to find it.
+  it.skip("nested DSD inside another template is inert on first render", () => {
+    // A `<template shadowrootmode>` nested inside another `<template>`
+    // is in DocumentFragment land, which qsa doesn't descend into — the
+    // inner template is never in the first qsa result, so it stays
+    // inert from render zero. (The "on re-render" case is the same
+    // mechanism: after the outer shadow attaches, the inner template
+    // sits behind a shadow boundary, also out of qsa's reach.)
     document.body.innerHTML = `
       <div id="outer">
         <template shadowrootmode="open">
-          <div id="inner"></div>
+          <div id="inner">
+            <template shadowrootmode="open"><span>nested</span></template>
+          </div>
         </template>
       </div>
     `;
     handleShadowRootHydration(document.body);
     const outer = document.getElementById("outer")!;
-    // Simulate the server re-rendering the inner host with nested DSD.
-    outer.shadowRoot!.getElementById("inner")!.innerHTML = `
-      <template shadowrootmode="open"><span>nested</span></template>
-    `;
-    handleShadowRootHydration(document.body);
     const inner = outer.shadowRoot!.getElementById("inner")!;
     expect(inner.shadowRoot).toBeNull();
+    expect(inner.querySelector("template")).not.toBeNull();
   });
 
   it("defaults all extended options to false when attrs are absent", () => {
