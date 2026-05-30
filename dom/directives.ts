@@ -1087,8 +1087,11 @@ function attachAreaSelect(
   let dragParent: HTMLElement | null = null;
 
   const removeOverlay = () => {
-    if (overlay && overlay.parentElement) {
-      overlay.parentElement.removeChild(overlay);
+    if (overlay) {
+      // Element.remove() is a no-op if the node isn't in the DOM,
+      // so we don't need the parent-null guard the older two-step
+      // pattern needed.
+      overlay.remove();
     }
     overlay = null;
   };
