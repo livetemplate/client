@@ -1546,6 +1546,41 @@ describe("handleAreaSelectDirectives", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("releasePointerCapture firing lostpointercapture synchronously does not drop the dispatch", () => {
+    // Chromium fires lostpointercapture SYNCHRONOUSLY during
+    // releasePointerCapture. Without the early state-reset in
+    // finalize, the nested lostpointercapture handler would see
+    // pointerId still matching, run a nested finalize that clears
+    // startRect, then the outer finalize would resume with rect=null
+    // and silently drop the dispatched action.
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    // Make releasePointerCapture fire lostpointercapture synchronously
+    // — the real Chromium behaviour that wasn't covered by jest.fn().
+    (target as any).releasePointerCapture = jest.fn((pid: number) => {
+      target.dispatchEvent(
+        Object.assign(new MouseEvent("lostpointercapture", { bubbles: false }), {
+          pointerId: pid,
+        })
+      );
+    });
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchPointer(target, "pointerdown", 20, 20);
+    dispatchPointer(target, "pointermove", 80, 80);
+    dispatchPointer(target, "pointerup", 80, 80);
+
+    // The action must still dispatch — the early state-reset prevents
+    // the nested lostpointercapture from re-entering finalize and
+    // clearing the rect mid-call.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("uses pointerdown-time rect for fractions even if host moves between mousemoves", () => {
     // If a server diff repositions the host mid-drag, the rect
     // captured AT POINTERUP would clamp startClientX (which was

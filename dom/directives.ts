@@ -961,12 +961,6 @@ const MIN_AREA_FRACTION = 0.02;
  *    (`position: relative` / `absolute` / `fixed`). The overlay is
  *    `position: absolute` inside that parent so it follows the host
  *    on scroll / reflow.
- *  - The parent should NOT use `overflow: hidden` — the in-progress
- *    overlay can briefly extend outside the host's rect while the
- *    drag is in flight (before the clamp settles on a frame), and
- *    overflow:hidden would clip it. The saved area persisted by
- *    the consumer will fit inside the host's rect; only the live
- *    drag-paint can briefly overshoot.
  *  - Consumers usually pair this with `touch-action: none` on the
  *    host so iOS Safari doesn't interpret the drag as a pinch/scroll.
  *  - `<img>` and other natively-draggable hosts work automatically:
@@ -1119,8 +1113,23 @@ function attachAreaSelect(
 
   const finalize = (e: PointerEvent | null, dispatch: boolean) => {
     if (pointerId === -1) return;
+    // CRITICAL ORDER: reset pointerId + dragParent + startRect BEFORE
+    // calling releasePointerCapture. Chromium fires lostpointercapture
+    // SYNCHRONOUSLY during releasePointerCapture, which lands in
+    // onLostCapture → finalize(null, false). Without the early reset,
+    // the nested finalize sees pointerId still matching and runs to
+    // completion (clearing startRect), then the outer finalize
+    // resumes with startRect == null and silently drops the
+    // dispatched action. Resetting first makes the nested call
+    // return at the `pointerId === -1` guard, leaving outer state
+    // intact.
+    const capturedPointerId = pointerId;
+    const rect = startRect;
+    pointerId = -1;
+    dragParent = null;
+    startRect = null;
     try {
-      el.releasePointerCapture(pointerId);
+      el.releasePointerCapture(capturedPointerId);
     } catch {
       // Capture may already be gone (e.g. pointercancel) — ignore.
     }
@@ -1128,12 +1137,6 @@ function attachAreaSelect(
     // doesn't inherit a stale listener from this one. {once: true}
     // only auto-removes if it fires; a stuck drag never fired it.
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
-    pointerId = -1;
-    dragParent = null;
-    // Snapshot + clear startRect before any early return so a future
-    // gesture starts with a fresh capture.
-    const rect = startRect;
-    startRect = null;
     if (!dispatch || !e || !rect) {
       removeOverlay();
       return;
