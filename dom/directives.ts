@@ -1207,21 +1207,30 @@ export function handleURLHashDirective(
     if (existing) existing.cleanup();
     const entry = attachURLHash(el, action, send);
     urlHashArmed.set(el, entry);
-    // First-arm sync: if the server has a hash to mirror, write it
-    // before reacting to the existing location.hash. If location.hash
-    // is a deep-link-shaped hash AND differs from the server's
-    // data-attr, dispatch (URL "wins" on initial load so deep-linked
-    // URLs work). Non-deep-link hashes (e.g. an element-id anchor
-    // setupHashLink owns) are left to their owning machinery.
+    // First-arm sync: three cases, in priority order.
     const initialLocation = window.location.hash.replace(/^#/, "");
     if (
       initialLocation &&
       initialLocation !== dataHash &&
       looksLikeDeepLinkHash(initialLocation)
     ) {
+      // (a) URL has a deep-link hash that differs from server state.
+      // URL "wins" on initial load — dispatch so the server can
+      // reconcile, and seed currentDataHash so the converging render
+      // doesn't try to mirror over the user's URL.
       entry.currentDataHash = initialLocation;
       send({ action, data: { hash: initialLocation } });
+    } else if (initialLocation && !looksLikeDeepLinkHash(initialLocation)) {
+      // (b) URL has a non-deep-link hash (e.g. `#hero` opening a
+      // popover, or a native heading anchor). Leave it alone — it
+      // belongs to other machinery (setupHashLink, native scroll).
+      // Seed currentDataHash so a later mirror sees the data-attr
+      // as the baseline to compare against, and only writes when
+      // the user navigates away from the popover/anchor.
+      entry.currentDataHash = dataHash;
     } else {
+      // (c) URL is empty (or already matches the server). Mirror the
+      // server's hash into the URL if any.
       mirrorDataAttrToLocation(entry, dataHash);
     }
   }
@@ -1256,10 +1265,23 @@ export function teardownURLHashForRoot(rootElement: Element): void {
 // any other change is a target-only update (line scroll / anchor
 // scroll) and gets replaceState. Updates entry.currentDataHash so a
 // subsequent render with the same data-attr no-ops.
+//
+// Empty-dataHash special case: if the server transitions FROM a
+// selected file TO no-selection (state.URLHash() returns ""), we
+// would otherwise wipe location.hash entirely — including hashes the
+// directive doesn't own (a popover #hero the user opened during the
+// session). To stay safe, only clear when the URL currently holds a
+// deep-link-shaped hash; non-deep-link hashes are left alone.
 function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
   if (entry.currentDataHash === dataHash) return;
   const currentLocation = window.location.hash.replace(/^#/, "");
   if (currentLocation === dataHash) {
+    entry.currentDataHash = dataHash;
+    return;
+  }
+  if (dataHash === "" && !looksLikeDeepLinkHash(currentLocation)) {
+    // Server cleared the hash AND the URL is on something not ours
+    // (popover id, native anchor). Don't clobber.
     entry.currentDataHash = dataHash;
     return;
   }
@@ -1280,6 +1302,14 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
 // anchors, dialog/popover/details ids, etc.). Deep-link hashes always
 // contain at least one of: `:` (target separator), `/` (nested path),
 // or `.` (file extension). Empty → false.
+//
+// False positives are possible but cheap. A heading id like
+// `#v1.0.0`, `#menu/item`, or `#key:value` matches this heuristic
+// and will dispatch the action — but the consuming server is
+// expected to no-op on hashes whose path doesn't resolve to a known
+// file (prereview's SetURLHash does, via the loadDiffCached failure
+// path). The cost is one wasted roundtrip per false positive, which
+// is acceptable for the alternative of missing real deep links.
 function looksLikeDeepLinkHash(hash: string): boolean {
   if (!hash) return false;
   return hash.includes(":") || hash.includes("/") || hash.includes(".");

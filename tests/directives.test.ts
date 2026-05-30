@@ -2214,6 +2214,25 @@ describe("handleURLHashDirective", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("teardown via a descendant root cleans up a body-armed entry", () => {
+    // Pin the body-ancestor branch of teardownURLHashForRoot: in
+    // production, livetemplate calls teardown with the wrapper div
+    // (inside body) as the root, but the directive lives on body.
+    // The teardown must clean up the body entry too — otherwise
+    // disconnect/reconnect cycles leak listeners.
+    mountBody("README.md:L4");
+    const wrapper = document.createElement("div");
+    document.body.appendChild(wrapper);
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    teardownURLHashForRoot(wrapper);
+
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("sweep cleans up entries whose attribute was removed by a server diff", () => {
     mountBody("README.md:L4");
     const send = jest.fn();
@@ -2250,6 +2269,42 @@ describe("handleURLHashDirective", () => {
     const send = jest.fn();
     handleURLHashDirective(document.body, send);
     expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("on initial load with non-deep-link hash AND non-empty server data-attr, leaves the URL alone", () => {
+    // The browser navigated to `#hero` (a popover id, say). The
+    // server happens to have selected a default file, so the data-
+    // attr is non-empty. Before the fix, the else-branch mirrored
+    // the server's hash into the URL and silently closed the
+    // popover. After the fix, the URL is left alone — popover
+    // wins.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("server clearing the data-attr does NOT wipe a non-deep-link URL hash", () => {
+    // Server first has README.md selected → URL becomes
+    // `#README.md`. Then the user opens a popover whose id is
+    // `#hero` (URL is now `#hero`). Then the server transitions to
+    // no-selection (e.g. ClearSelection) and renders data-attr="".
+    // The directive must not clobber the popover hash.
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md");
+
+    // User navigates to a popover-shaped hash (simulated).
+    window.history.replaceState(null, "", "#hero");
+
+    // Server clears state → empty data-attr.
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+
     expect(window.location.hash).toBe("#hero");
   });
 
