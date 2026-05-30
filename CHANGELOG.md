@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.11.6] - 2026-05-30
+
+### Changes
+
+- feat: lvt-fx:area-select — drag-rectangle pointer directive with final-coords dispatch (#125) (b590edc)
+
+
+
 ## [v0.11.5] - 2026-05-29
 
 ### Changes
