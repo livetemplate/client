@@ -5,10 +5,13 @@ import {
   handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleShadowRootHydration,
+  handleURLHashDirective,
   setupFxDOMEventTriggers,
   teardownAreaSelectForRoot,
+  teardownURLHashForRoot,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
+  __resetURLHashUnencodedWarnedForTesting,
 } from "../dom/directives";
 
 describe("handleScrollDirectives", () => {
@@ -2051,5 +2054,475 @@ describe("handleAreaSelectDirectives", () => {
     // Exactly one overlay at most over the whole sequence (the second
     // drag's) — never two.
     expect(document.querySelectorAll(".lvt-area-select-overlay").length).toBe(0);
+  });
+});
+
+describe("handleURLHashDirective", () => {
+  // The directive is a module-level singleton (a Map of armed elements
+  // plus a single window-level hashchange listener), so every test
+  // must tear down to avoid bleed between cases.
+  afterEach(() => {
+    teardownURLHashForRoot(document.body);
+    document.body.innerHTML = "";
+    // Body persists across tests (innerHTML only resets descendants);
+    // wipe attributes the previous test set on body itself.
+    document.body.removeAttribute("lvt-fx:url-hash");
+    document.body.removeAttribute("data-lvt-url-hash");
+    // Reset URL hash without touching history (the directive uses
+    // pushState/replaceState; jsdom keeps them isolated per test).
+    window.history.replaceState(null, "", window.location.pathname);
+    // The unencoded-hash warning dedupe Set is module-level and
+    // outlives a single test; reset so a hash value reused across
+    // tests still warns.
+    __resetURLHashUnencodedWarnedForTesting();
+    jest.restoreAllMocks();
+  });
+
+  function mountBody(dataHash: string, action = "setURLHash"): HTMLElement {
+    const body = document.body;
+    body.setAttribute("lvt-fx:url-hash", action);
+    body.setAttribute("data-lvt-url-hash", dataHash);
+    return body;
+  }
+
+  it("on first arm with empty location.hash and non-empty data-attr, mirrors data-attr into location.hash", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    // No dispatch because the URL didn't drive the change — the server
+    // already knew the state (the data-attr came FROM the server).
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("on first arm with empty URL, uses replaceState (not pushState) — Back must not loop", () => {
+    // Bug pinned: when initial URL is empty AND server has a hash,
+    // the mirror step uses pushState by the path-comparison rule
+    // ("" → "README.md" is a path change). That leaves a history
+    // entry where Back lands the user on `url-without-hash`, which
+    // re-arms the directive, which pushes the same hash again. Loop.
+    // Fix: empty currentLocation → always replaceState.
+    const lengthBefore = window.history.length;
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
+  it("on first arm with non-empty location.hash differing from data-attr, dispatches the action with the URL hash", () => {
+    window.history.replaceState(null, "", "#README.md:L4");
+    mountBody(""); // server hasn't seen the hash yet
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toEqual({
+      action: "setURLHash",
+      data: { hash: "README.md:L4" },
+    });
+    // The URL is not rewritten — the server's next render will produce
+    // the canonical data-attr, and we'll converge then.
+    expect(window.location.hash).toBe("#README.md:L4");
+  });
+
+  it("on first arm with empty location.hash and empty data-attr, no-op (no dispatch, no URL write)", () => {
+    mountBody("");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("mirrors data-attr change to location.hash via replaceState when path component is unchanged", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    const lengthBefore = window.history.length;
+
+    // Server re-render: same file, different line.
+    document.body.setAttribute("data-lvt-url-hash", "README.md:L8");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("#README.md:L8");
+    // replaceState keeps history depth flat: jsdom's history.length
+    // increments only on pushState, not replaceState.
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
+  it("mirrors data-attr change to location.hash via pushState when path component changes", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    const lengthBefore = window.history.length;
+
+    // Server re-render: different file.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md:L1");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("#OTHER.md:L1");
+    expect(window.history.length).toBe(lengthBefore + 1);
+  });
+
+  it("on hashchange (user clicks a permalink), dispatches the action with the new hash", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // Simulate a user-driven hash change: set location.hash AND
+    // synchronously fire the hashchange event. (jsdom queues
+    // hashchange asynchronously when you assign location.hash, so we
+    // dispatch manually to keep the test deterministic — same pattern
+    // as area-select's synthetic pointer events.)
+    window.history.replaceState(null, "", "#OTHER.md:L2");
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toEqual({
+      action: "setURLHash",
+      data: { hash: "OTHER.md:L2" },
+    });
+  });
+
+  it("idempotent re-arm with the same action does NOT add history entries", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    const lengthAfterArm = window.history.length;
+
+    // Re-call with no data-attr change.
+    handleURLHashDirective(document.body, send);
+    handleURLHashDirective(document.body, send);
+    handleURLHashDirective(document.body, send);
+
+    expect(window.history.length).toBe(lengthAfterArm);
+    expect(window.location.hash).toBe("#README.md:L4");
+  });
+
+  it("updateSend swaps the captured transport so a reconnect rebuilds dispatching", () => {
+    mountBody("README.md:L4");
+    const firstSend = jest.fn();
+    handleURLHashDirective(document.body, firstSend);
+    firstSend.mockClear();
+
+    // Re-arm with a NEW send (simulating a reconnect that rebuilt the
+    // transport).
+    const secondSend = jest.fn();
+    handleURLHashDirective(document.body, secondSend);
+
+    // hashchange now should route through the second send only.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(secondSend).toHaveBeenCalledTimes(1);
+    expect(secondSend.mock.calls[0][0].data).toEqual({ hash: "OTHER.md:L1" });
+  });
+
+  it("teardown removes the armed element AND its hashchange listener", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+
+    teardownURLHashForRoot(document.body);
+
+    // After teardown, a hashchange does NOT dispatch — the window
+    // listener was removed when the armed map emptied.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("teardown via a descendant root cleans up a body-armed entry", () => {
+    // Pin the body-ancestor branch of teardownURLHashForRoot: in
+    // production, livetemplate calls teardown with the wrapper div
+    // (inside body) as the root, but the directive lives on body.
+    // The teardown must clean up the body entry too — otherwise
+    // disconnect/reconnect cycles leak listeners.
+    mountBody("README.md:L4");
+    const wrapper = document.createElement("div");
+    document.body.appendChild(wrapper);
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    teardownURLHashForRoot(wrapper);
+
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("sweep cleans up entries whose attribute was removed by a server diff", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    // Server diff removed the directive.
+    document.body.removeAttribute("lvt-fx:url-hash");
+    document.body.removeAttribute("data-lvt-url-hash");
+    handleURLHashDirective(document.body, send);
+
+    // The window listener should be gone now too — no dispatch.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips when lvt-fx:url-hash is present but empty", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.setAttribute("lvt-fx:url-hash", "");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("lvt-fx:url-hash requires an action name")
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("ignores plain element-id hashes on initial load (no dispatch, no URL clobber)", () => {
+    // Anchors like `#hero` (no `:`, no `/`, no `.`) belong to native
+    // anchor / dialog / popover machinery — the directive must NOT
+    // dispatch for them or it would race against setupHashLink.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("on initial load with non-deep-link hash AND non-empty server data-attr, leaves the URL alone", () => {
+    // The browser navigated to `#hero` (a popover id, say). The
+    // server happens to have selected a default file, so the data-
+    // attr is non-empty. Before the fix, the else-branch mirrored
+    // the server's hash into the URL and silently closed the
+    // popover. After the fix, the URL is left alone — popover
+    // wins.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("server changing selection while a non-deep-link URL hash is open does NOT clobber", () => {
+    // Round-8 bot edge case: case (b) leaves the URL on #hero and
+    // seeds currentDataHash = dataHash. If the server then pushes a
+    // DIFFERENT selection (rare in prereview — server state changes
+    // only on user action — but possible via cross-tab sync or a
+    // server-driven update), the mirror's path-comparison would
+    // have written the new file's hash and clobbered #hero. Fixed
+    // by generalising the non-deep-link-URL guard to cover any
+    // dataHash, not just empty.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+
+    // Server pushes a different selection — URL must NOT change.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("server clearing the data-attr DOES clear a deep-link URL hash (deliberate, symmetric)", () => {
+    // Symmetric to "non-deep-link is never clobbered": if the URL
+    // is a deep-link we own AND the server transitions to
+    // no-selection, the URL should clear. Pin this as deliberate
+    // so a future refactor doesn't accidentally make all
+    // empty-dataHash mirrors no-op.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("");
+  });
+
+  it("deselection (deep-link → empty) uses pushState — Back returns to the selection (deliberate)", () => {
+    // Pin the path-comparison branch's behavior for the deselect
+    // case: server transitions `data-lvt-url-hash` from a selected
+    // file to "", path comparison says oldPath !== newPath (one is
+    // empty), the mirror uses pushState. That leaves a history
+    // entry so Back returns the user to their prior selection.
+    // Intentional — matches the file-switch UX.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    const lengthBeforeDeselect = window.history.length;
+
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("");
+    expect(window.history.length).toBe(lengthBeforeDeselect + 1);
+  });
+
+  it("server clearing the data-attr does NOT wipe a non-deep-link URL hash", () => {
+    // Server first has README.md selected → URL becomes
+    // `#README.md`. Then the user opens a popover whose id is
+    // `#hero` (URL is now `#hero`). Then the server transitions to
+    // no-selection (e.g. ClearSelection) and renders data-attr="".
+    // The directive must not clobber the popover hash.
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md");
+
+    // User navigates to a popover-shaped hash (simulated).
+    window.history.replaceState(null, "", "#hero");
+
+    // Server clears state → empty data-attr.
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("case-(b) + user clears URL: URL stays empty while server keeps its selection (deliberate divergence)", () => {
+    // Load with a popover-shaped hash, server has a file selected.
+    // Case (b) seeds entry.currentDataHash with the server's value.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+
+    // User clears the URL bar.
+    window.history.replaceState(null, "", window.location.pathname);
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+
+    // Server re-renders with the SAME selection (data-attr unchanged).
+    // The early-exit guard (currentDataHash === dataHash) means we
+    // never mirror — URL stays empty, server stays on README.md.
+    // This divergence is intentional: case (b) said "the URL isn't
+    // ours, leave it alone", and a user clearing the URL doesn't
+    // change that — they're still navigating outside our turf.
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("");
+    expect(send).not.toHaveBeenCalled();
+
+    // Convergence only happens when the user takes an in-app action
+    // that changes server state (e.g. SelectFile to OTHER.md): the
+    // data-attr now differs from currentDataHash and the mirror
+    // step writes the new hash.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#OTHER.md");
+  });
+
+  it("user clearing the URL hash (hashchange to empty) does NOT dispatch — server stays source of truth", () => {
+    // The directive treats the server as source of truth for
+    // "what's selected". An empty location.hash is "user navigated
+    // away from the hash" but not "deselect". Deselect happens via
+    // in-app affordances that flow through the server, which then
+    // emits an empty data-attr.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // User clears the URL bar.
+    window.history.replaceState(null, "", window.location.pathname);
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("ignores plain element-id hashes on hashchange", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // User clicks an HTML anchor link (e.g. inside the TOC overlay).
+    window.history.replaceState(null, "", "#some-section");
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("preserves history.state across the mirror write (doesn't clobber co-tenant SPA state)", () => {
+    // Co-tenant code stores something in history.state — e.g. scroll
+    // position or modal flag. Our directive's push/replaceState must
+    // pass that state through, not overwrite with null.
+    window.history.replaceState({ scroll: 42, modal: "open" }, "", window.location.pathname);
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    expect(window.history.state).toEqual({ scroll: 42, modal: "open" });
+
+    // Same on a path-change pushState path.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#OTHER.md");
+    expect(window.history.state).toEqual({ scroll: 42, modal: "open" });
+  });
+
+  it("warns when data-lvt-url-hash contains characters that should be percent-encoded", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // Note: jsdom's location.hash setter percent-encodes spaces, so
+    // we mount the directive with a value containing a literal space
+    // and expect a warn before the directive writes the URL.
+    mountBody("path with space.md");
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
+  it.each([
+    ["bracket [", "path[v1].md"],
+    ["bracket ]", "list]item.md"],
+    ["raw percent", "50%off.md"],
+    ["raw quote", `name".md`],
+    ["raw less-than", "x<y.md"],
+  ])("warns on %s", (_label, hash) => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mountBody(hash);
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
+  it("valid percent-encoded sequence does NOT warn", () => {
+    // `%20` is a properly percent-encoded space — no warn.
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mountBody("path%20with%20space.md");
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
+  it("data-attr update unchanged from last mirror is a no-op (no history pollution)", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    // User clicks a permalink anchor → location.hash changes to the
+    // same value the data-attr already had. The hashchange dispatch
+    // updates currentDataHash to the same value; subsequent renders
+    // with the same data-attr should still no-op (no extra history
+    // entries when the server echoes back the same hash).
+    window.history.replaceState(null, "", "#OTHER.md:L9");
+    window.dispatchEvent(new Event("hashchange"));
+    const lengthBefore = window.history.length;
+
+    send.mockClear();
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md:L9");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.history.length).toBe(lengthBefore);
+    expect(window.location.hash).toBe("#OTHER.md:L9");
   });
 });

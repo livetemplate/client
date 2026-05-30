@@ -15,7 +15,9 @@ import {
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
+  handleURLHashDirective,
   teardownAreaSelectForRoot,
+  teardownURLHashForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
@@ -595,6 +597,23 @@ export class LiveTemplateClient {
     setupInvokerPolyfill();
     setupHashLink();
 
+    // url-hash directive needs an initial-load arm here (not just in
+    // updateDOM's FIRE-ON-CHANGE block) because page load → no
+    // updateDOM call → directive never arms → a `#path:L4` URL never
+    // dispatches setURLHash. Subsequent state changes route through
+    // the FIRE-ON-CHANGE block's call site, which keeps the data-attr
+    // mirror in sync after server re-renders.
+    //
+    // Transport is reliable at this point: `connect()` above was
+    // awaited, so either the WebSocket is OPEN (`useHTTP=false`,
+    // readyState=1) or the HTTP fallback is wired (`useHTTP=true`).
+    // `this.send` covers both paths plus a `readyState!==1 && WS
+    // available` fallback that posts via HTTP, so the initial-arm
+    // dispatch always reaches the server — no "best-effort" caveat.
+    if (this.wrapperElement) {
+      handleURLHashDirective(this.wrapperElement, (message) => this.send(message));
+    }
+
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
 
@@ -628,6 +647,7 @@ export class LiveTemplateClient {
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
+      teardownURLHashForRoot(this.wrapperElement);
     }
     this.resetSessionState();
   }
@@ -1841,6 +1861,12 @@ export class LiveTemplateClient {
     // send the event delegator uses so the WS/HTTP routing is
     // identical to a normal action.
     handleAreaSelectDirectives(element, (message) => this.send(message));
+    // url-hash bridges server state ↔ location.hash. Same send-callback
+    // wiring as area-select: the directive needs to dispatch a server
+    // action on user-driven hashchange events (anchor click, address-bar
+    // edit, back-button) and read the latest server-rendered hash from
+    // `data-lvt-url-hash` on every render.
+    handleURLHashDirective(element, (message) => this.send(message));
     // Hydrate any server-emitted Declarative Shadow DOM templates that
     // morphdom inserted via DOM APIs (which don't auto-activate them).
     // Cheap when no templates are present (one querySelectorAll).
