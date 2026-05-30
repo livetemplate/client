@@ -1319,20 +1319,45 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
     entry.currentDataHash = dataHash;
     return;
   }
+  warnIfUnencodedHash(dataHash);
   const targetURL = dataHash ? `#${dataHash}` : window.location.pathname + window.location.search;
   const oldPath = currentLocation.split(":")[0];
   const newPath = dataHash.split(":")[0];
+  // Preserve existing history.state — passing `null` would clobber
+  // anything other SPA-like code on the page stores there (scroll
+  // position, modal flag, etc.). The state object is independent of
+  // the URL we're rewriting, so carrying it forward is the right
+  // default.
+  const currentState = window.history.state;
   // Empty currentLocation means we're establishing the URL from a
   // blank slate (initial render with no prior URL hash) — that's NOT
   // a back-button-meaningful navigation, so always replaceState.
   // Otherwise: a path change is a file switch (push), a target-only
   // change is a line/anchor scroll (replace).
   if (currentLocation !== "" && oldPath !== newPath) {
-    window.history.pushState(null, "", targetURL);
+    window.history.pushState(currentState, "", targetURL);
   } else {
-    window.history.replaceState(null, "", targetURL);
+    window.history.replaceState(currentState, "", targetURL);
   }
   entry.currentDataHash = dataHash;
+}
+
+// warnIfUnencodedHash flags `data-lvt-url-hash` values containing
+// characters that should be percent-encoded (raw space, `<`, `>`,
+// `"`, ``` ` ```, `#`). The directive writes the hash verbatim into
+// `pushState`/`replaceState`, so an unencoded value will silently
+// produce a malformed URL — `location.hash` reads back differently
+// from what was set. Cheap dev-time guard against a server-side
+// contract slip; dedupes by value to avoid log spam.
+const urlHashUnencodedWarned = new Set<string>();
+function warnIfUnencodedHash(hash: string): void {
+  if (!hash || urlHashUnencodedWarned.has(hash)) return;
+  if (/[ <>"`#]/.test(hash)) {
+    urlHashUnencodedWarned.add(hash);
+    console.warn(
+      `lvt-fx:url-hash: data-lvt-url-hash="${hash}" contains characters that should be percent-encoded. The directive writes it verbatim into history.pushState/replaceState; malformed URLs result. Server-side FormatHash (or equivalent) should percent-escape path segments and target ids before serialization.`
+    );
+  }
 }
 
 // looksLikeDeepLinkHash discriminates URL hashes the prereview deep-

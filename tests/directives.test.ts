@@ -2387,6 +2387,36 @@ describe("handleURLHashDirective", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("preserves history.state across the mirror write (doesn't clobber co-tenant SPA state)", () => {
+    // Co-tenant code stores something in history.state — e.g. scroll
+    // position or modal flag. Our directive's push/replaceState must
+    // pass that state through, not overwrite with null.
+    window.history.replaceState({ scroll: 42, modal: "open" }, "", window.location.pathname);
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    expect(window.history.state).toEqual({ scroll: 42, modal: "open" });
+
+    // Same on a path-change pushState path.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#OTHER.md");
+    expect(window.history.state).toEqual({ scroll: 42, modal: "open" });
+  });
+
+  it("warns when data-lvt-url-hash contains characters that should be percent-encoded", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // Note: jsdom's location.hash setter percent-encodes spaces, so
+    // we mount the directive with a value containing a literal space
+    // and expect a warn before the directive writes the URL.
+    mountBody("path with space.md");
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
   it("data-attr update unchanged from last mirror is a no-op (no history pollution)", () => {
     mountBody("README.md:L4");
     const send = jest.fn();
