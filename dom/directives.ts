@@ -915,6 +915,13 @@ const areaSelectArmed = new Map<Element, AreaSelectEntry>();
 // so a user who repeatedly drags on a mis-configured element gets a
 // single console message instead of one per pointerdown. WeakSet so
 // detached parents don't leak.
+//
+// Known limitation: once a parent is in the set, the warn never fires
+// again on that DOM node — even if the developer subsequently adds
+// `position: relative` to fix the issue. The WeakSet is per-object
+// (different DOM node = different entry), so re-mounting the parent
+// resets the dedupe; in-place CSS fixes do not. Fine in practice
+// (the user already saw the warn once, on the broken render).
 const areaSelectWarnedParents = new WeakSet<Element>();
 
 interface AreaSelectEntry {
@@ -1155,11 +1162,14 @@ function attachAreaSelect(
     send({ action, data: { x, y, w, h } });
   };
 
-  const onPointerLeaveCancel = () => {
+  const onPointerLeaveCancel = (e: PointerEvent) => {
     // Fallback for the rare case where setPointerCapture failed: without
     // capture, pointermove + pointerup stop arriving once the pointer
     // leaves the host, freezing the overlay. Treating pointerleave as
     // a cancel keeps the overlay from getting stuck on screen.
+    // Guard on pointerId — in multi-touch, a SECONDARY pointer's
+    // leave shouldn't cancel the primary drag.
+    if (e.pointerId !== pointerId) return;
     finalize(null, false);
   };
 

@@ -1223,7 +1223,7 @@ describe("handleAreaSelectDirectives", () => {
 
   function dispatchPointer(
     el: HTMLElement,
-    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel" | "lostpointercapture",
+    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel" | "lostpointercapture" | "pointerleave",
     clientX: number,
     clientY: number,
     pointerId = 1
@@ -1486,6 +1486,38 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.top).toBe("50px");
     expect(overlay.style.width).toBe("40px");
     expect(overlay.style.height).toBe("40px");
+  });
+
+  it("pointerleave for a different pointerId does NOT cancel our capture-fallback drag", () => {
+    // When setPointerCapture fails the directive attaches a
+    // pointerleave fallback so the drag can clean up. In a multi-
+    // touch scenario, a SECONDARY pointer leaving the element fires
+    // pointerleave too — must not be mistaken for our pointer
+    // leaving.
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    // Force capture failure so the pointerleave fallback is attached.
+    (target as any).setPointerCapture = jest.fn(() => {
+      throw new DOMException("no capture", "InvalidStateError");
+    });
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Primary drag with pointerId=1.
+    dispatchPointer(target, "pointerdown", 10, 10, 1);
+    dispatchPointer(target, "pointermove", 80, 80, 1);
+
+    // Secondary pointer (id=42) leaves the host. Must NOT cancel
+    // our id=1 drag.
+    dispatchPointer(target, "pointerleave", 80, 80, 42);
+
+    // Primary drag still alive — pointerup completes it normally.
+    dispatchPointer(target, "pointerup", 100, 100, 1);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("lostpointercapture for a different pointerId does NOT cancel our drag", () => {
