@@ -2417,6 +2417,31 @@ describe("handleURLHashDirective", () => {
     );
   });
 
+  it.each([
+    ["bracket [", "path[v1].md"],
+    ["bracket ]", "list]item.md"],
+    ["raw percent", "50%off.md"],
+    ["raw quote", `name".md`],
+    ["raw less-than", "x<y.md"],
+  ])("warns on %s", (_label, hash) => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mountBody(hash);
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
+  it("valid percent-encoded sequence does NOT warn", () => {
+    // `%20` is a properly percent-encoded space — no warn.
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mountBody("path%20with%20space.md");
+    handleURLHashDirective(document.body, jest.fn());
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("should be percent-encoded")
+    );
+  });
+
   it("data-attr update unchanged from last mirror is a no-op (no history pollution)", () => {
     mountBody("README.md:L4");
     const send = jest.fn();

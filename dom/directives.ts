@@ -1074,13 +1074,18 @@ export function teardownAreaSelectForRoot(rootElement: Element): void {
 // sweep (isConnected check).
 //
 // Module-level singleton: shared across all LiveTemplateClient
-// instances in the window. If two clients ever arm the same element
-// (rare — usually clients have disjoint roots), each gets its own
-// entry. On hashchange, the shared window listener iterates the map
-// and dispatches through every entry's own send — so a multi-client
-// page sees each client receive its hash event. Teardown is scoped
-// per root via teardownURLHashForRoot, so clients don't tear down
-// each other's listeners.
+// instances in the window. Two clients arming DIFFERENT elements
+// each get their own entry; the shared window hashchange listener
+// iterates the map and dispatches through every armed entry's own
+// send, so a multi-client page sees each client receive its hash
+// event. Teardown is scoped per root via teardownURLHashForRoot, so
+// clients don't tear down each other's listeners.
+//
+// Same-element multi-arm is "last writer wins": the Map key is the
+// element, so a second client arming the same element runs the
+// existing entry's cleanup() and replaces it. The first client's
+// send is orphaned. This matches area-select's behavior and is fine
+// for the documented single-arm-per-element contract.
 const urlHashArmed = new Map<Element, URLHashEntry>();
 
 // urlHashWindowListener is the single window-level `hashchange`
@@ -1167,6 +1172,14 @@ type URLHashSendFn = (
  * is intentional: popovers/anchors aren't ours to overwrite. The
  * next user action that triggers a server render will re-sync only
  * once URL and state share a deep-link hash.
+ *
+ * **Path-only deep links require an extension**: the
+ * `looksLikeDeepLinkHash` heuristic dispatches only hashes
+ * containing `:`, `/`, or `.`. Extension-less root files
+ * (`#Makefile`, `#Dockerfile`, `#LICENSE`) won't dispatch as
+ * path-only deep links — use the line form (`#Makefile:L1`)
+ * instead. The trade-off favours not clobbering native-anchor
+ * machinery for single-token hashes.
  */
 export function handleURLHashDirective(
   rootElement: Element,
@@ -1344,15 +1357,21 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
 
 // warnIfUnencodedHash flags `data-lvt-url-hash` values containing
 // characters that should be percent-encoded (raw space, `<`, `>`,
-// `"`, ``` ` ```, `#`). The directive writes the hash verbatim into
-// `pushState`/`replaceState`, so an unencoded value will silently
-// produce a malformed URL — `location.hash` reads back differently
-// from what was set. Cheap dev-time guard against a server-side
-// contract slip; dedupes by value to avoid log spam.
+// `"`, ``` ` ```, `#`, `[`, `]`, `%`). The directive writes the
+// hash verbatim into `pushState`/`replaceState`, so an unencoded
+// value will silently produce a malformed URL — `location.hash`
+// reads back differently from what was set. Cheap dev-time guard
+// against a server-side contract slip; dedupes by value to avoid
+// log spam.
+//
+// `%` is included because a raw `%` not followed by two hex digits
+// is itself a percent-encoding error. The check is a heuristic
+// (won't catch every malformed escape), but covers the common
+// "forgot to encode" cases.
 const urlHashUnencodedWarned = new Set<string>();
 function warnIfUnencodedHash(hash: string): void {
   if (!hash || urlHashUnencodedWarned.has(hash)) return;
-  if (/[ <>"`#]/.test(hash)) {
+  if (/[ <>"`#\[\]]/.test(hash) || /%(?![0-9A-Fa-f]{2})/.test(hash)) {
     urlHashUnencodedWarned.add(hash);
     console.warn(
       `lvt-fx:url-hash: data-lvt-url-hash="${hash}" contains characters that should be percent-encoded. The directive writes it verbatim into history.pushState/replaceState; malformed URLs result. Server-side FormatHash (or equivalent) should percent-escape path segments and target ids before serialization.`
