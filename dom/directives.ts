@@ -1283,6 +1283,14 @@ export function teardownURLHashForRoot(rootElement: Element): void {
 // scroll) and gets replaceState. Updates entry.currentDataHash so a
 // subsequent render with the same data-attr no-ops.
 //
+// Initial-mirror special case: if the URL was empty when we're
+// mirroring (no prior hash to compare against), use replaceState even
+// though the path-component comparison would say "changed". An empty
+// URL → first server hash isn't a "navigation" — we're establishing
+// the initial state. Using pushState here would let Back land the
+// user on `url-without-hash`, which re-triggers the same arm and
+// pushes the same hash again. Loop.
+//
 // Empty-dataHash special case: if the server transitions FROM a
 // selected file TO no-selection (state.URLHash() returns ""), we
 // would otherwise wipe location.hash entirely — including hashes the
@@ -1305,7 +1313,12 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
   const targetURL = dataHash ? `#${dataHash}` : window.location.pathname + window.location.search;
   const oldPath = currentLocation.split(":")[0];
   const newPath = dataHash.split(":")[0];
-  if (oldPath !== newPath) {
+  // Empty currentLocation means we're establishing the URL from a
+  // blank slate (initial render with no prior URL hash) — that's NOT
+  // a back-button-meaningful navigation, so always replaceState.
+  // Otherwise: a path change is a file switch (push), a target-only
+  // change is a line/anchor scroll (replace).
+  if (currentLocation !== "" && oldPath !== newPath) {
     window.history.pushState(null, "", targetURL);
   } else {
     window.history.replaceState(null, "", targetURL);
@@ -1364,6 +1377,15 @@ function attachURLHash(
       // would otherwise be dispatched here, prompt a server no-op,
       // then get clobbered by the mirror step when the server's
       // data-attr (unchanged) doesn't match.
+      //
+      // Empty hash (user cleared the URL bar) is also intentionally
+      // ignored. The directive treats the server as the source of
+      // truth for "what's selected"; an empty URL is "user navigated
+      // away from a hash" but not "deselect everything". If the user
+      // wants to deselect, they use the in-app affordance
+      // (clearSelection / Escape) which makes the server emit an
+      // empty data-attr — at which point the mirror step propagates
+      // the empty hash back to the URL.
       if (!looksLikeDeepLinkHash(hash)) return;
       // Iterate via Array.from in case a dispatched action triggers a
       // render that mutates the armed map (e.g. tears down this

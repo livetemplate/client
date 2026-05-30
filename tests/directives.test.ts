@@ -2090,6 +2090,21 @@ describe("handleURLHashDirective", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("on first arm with empty URL, uses replaceState (not pushState) — Back must not loop", () => {
+    // Bug pinned: when initial URL is empty AND server has a hash,
+    // the mirror step uses pushState by the path-comparison rule
+    // ("" → "README.md" is a path change). That leaves a history
+    // entry where Back lands the user on `url-without-hash`, which
+    // re-arms the directive, which pushes the same hash again. Loop.
+    // Fix: empty currentLocation → always replaceState.
+    const lengthBefore = window.history.length;
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
   it("on first arm with non-empty location.hash differing from data-attr, dispatches the action with the URL hash", () => {
     window.history.replaceState(null, "", "#README.md:L4");
     mountBody(""); // server hasn't seen the hash yet
@@ -2306,6 +2321,24 @@ describe("handleURLHashDirective", () => {
     handleURLHashDirective(document.body, send);
 
     expect(window.location.hash).toBe("#hero");
+  });
+
+  it("user clearing the URL hash (hashchange to empty) does NOT dispatch — server stays source of truth", () => {
+    // The directive treats the server as source of truth for
+    // "what's selected". An empty location.hash is "user navigated
+    // away from the hash" but not "deselect". Deselect happens via
+    // in-app affordances that flow through the server, which then
+    // emits an empty data-attr.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // User clears the URL bar.
+    window.history.replaceState(null, "", window.location.pathname);
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("ignores plain element-id hashes on hashchange", () => {
