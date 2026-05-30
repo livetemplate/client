@@ -603,6 +603,13 @@ export class LiveTemplateClient {
     // dispatches setURLHash. Subsequent state changes route through
     // the FIRE-ON-CHANGE block's call site, which keeps the data-attr
     // mirror in sync after server re-renders.
+    //
+    // Transport is reliable at this point: `connect()` above was
+    // awaited, so either the WebSocket is OPEN (`useHTTP=false`,
+    // readyState=1) or the HTTP fallback is wired (`useHTTP=true`).
+    // `this.send` covers both paths plus a `readyState!==1 && WS
+    // available` fallback that posts via HTTP, so the initial-arm
+    // dispatch always reaches the server — no "best-effort" caveat.
     if (this.wrapperElement) {
       handleURLHashDirective(this.wrapperElement, (message) => this.send(message));
     }
