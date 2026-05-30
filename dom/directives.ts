@@ -1141,6 +1141,23 @@ type URLHashSendFn = (
  * happens to collide with an element id, both handlers will fire —
  * the server is expected to no-op on hashes that don't resolve to a
  * known file.
+ *
+ * **Pre-encoding contract**: `data-lvt-url-hash` must hold the hash
+ * value already in URL-encoded form. The directive writes the
+ * attribute verbatim into `history.pushState`/`replaceState`, so a
+ * value containing spaces, `[`, `]`, `%`, or other reserved
+ * characters needs to be percent-encoded by the server. The hash
+ * sent to the action on `hashchange` is also passed through unmodified
+ * (no decoding) — both directions are byte-exact mirrors of what's
+ * in `location.hash`.
+ *
+ * **URL/state divergence after a non-deep-link initial load**: if
+ * the user lands with a native-anchor hash (`#hero`) AND the server
+ * has a selected file, the directive leaves the URL on `#hero` (case
+ * b) — URL and server state diverge until the user navigates. This
+ * is intentional: popovers/anchors aren't ours to overwrite. The
+ * next user action that triggers a server render will re-sync only
+ * once URL and state share a deep-link hash.
  */
 export function handleURLHashDirective(
   rootElement: Element,
