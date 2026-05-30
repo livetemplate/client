@@ -5,8 +5,10 @@ import {
   handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleShadowRootHydration,
+  handleURLHashDirective,
   setupFxDOMEventTriggers,
   teardownAreaSelectForRoot,
+  teardownURLHashForRoot,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
 } from "../dom/directives";
@@ -2051,5 +2053,213 @@ describe("handleAreaSelectDirectives", () => {
     // Exactly one overlay at most over the whole sequence (the second
     // drag's) — never two.
     expect(document.querySelectorAll(".lvt-area-select-overlay").length).toBe(0);
+  });
+});
+
+describe("handleURLHashDirective", () => {
+  // The directive is a module-level singleton (a Map of armed elements
+  // plus a single window-level hashchange listener), so every test
+  // must tear down to avoid bleed between cases.
+  afterEach(() => {
+    teardownURLHashForRoot(document.body);
+    document.body.innerHTML = "";
+    // Body persists across tests (innerHTML only resets descendants);
+    // wipe attributes the previous test set on body itself.
+    document.body.removeAttribute("lvt-fx:url-hash");
+    document.body.removeAttribute("data-lvt-url-hash");
+    // Reset URL hash without touching history (the directive uses
+    // pushState/replaceState; jsdom keeps them isolated per test).
+    window.history.replaceState(null, "", window.location.pathname);
+    jest.restoreAllMocks();
+  });
+
+  function mountBody(dataHash: string, action = "setURLHash"): HTMLElement {
+    const body = document.body;
+    body.setAttribute("lvt-fx:url-hash", action);
+    body.setAttribute("data-lvt-url-hash", dataHash);
+    return body;
+  }
+
+  it("on first arm with empty location.hash and non-empty data-attr, mirrors data-attr into location.hash", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    // No dispatch because the URL didn't drive the change — the server
+    // already knew the state (the data-attr came FROM the server).
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("on first arm with non-empty location.hash differing from data-attr, dispatches the action with the URL hash", () => {
+    window.history.replaceState(null, "", "#README.md:L4");
+    mountBody(""); // server hasn't seen the hash yet
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toEqual({
+      action: "setURLHash",
+      data: { hash: "README.md:L4" },
+    });
+    // The URL is not rewritten — the server's next render will produce
+    // the canonical data-attr, and we'll converge then.
+    expect(window.location.hash).toBe("#README.md:L4");
+  });
+
+  it("on first arm with empty location.hash and empty data-attr, no-op (no dispatch, no URL write)", () => {
+    mountBody("");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("mirrors data-attr change to location.hash via replaceState when path component is unchanged", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    const lengthBefore = window.history.length;
+
+    // Server re-render: same file, different line.
+    document.body.setAttribute("data-lvt-url-hash", "README.md:L8");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("#README.md:L8");
+    // replaceState keeps history depth flat: jsdom's history.length
+    // increments only on pushState, not replaceState.
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
+  it("mirrors data-attr change to location.hash via pushState when path component changes", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    const lengthBefore = window.history.length;
+
+    // Server re-render: different file.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md:L1");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("#OTHER.md:L1");
+    expect(window.history.length).toBe(lengthBefore + 1);
+  });
+
+  it("on hashchange (user clicks a permalink), dispatches the action with the new hash", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // Simulate a user-driven hash change: set location.hash AND
+    // synchronously fire the hashchange event. (jsdom queues
+    // hashchange asynchronously when you assign location.hash, so we
+    // dispatch manually to keep the test deterministic — same pattern
+    // as area-select's synthetic pointer events.)
+    window.history.replaceState(null, "", "#OTHER.md:L2");
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toEqual({
+      action: "setURLHash",
+      data: { hash: "OTHER.md:L2" },
+    });
+  });
+
+  it("idempotent re-arm with the same action does NOT add history entries", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    const lengthAfterArm = window.history.length;
+
+    // Re-call with no data-attr change.
+    handleURLHashDirective(document.body, send);
+    handleURLHashDirective(document.body, send);
+    handleURLHashDirective(document.body, send);
+
+    expect(window.history.length).toBe(lengthAfterArm);
+    expect(window.location.hash).toBe("#README.md:L4");
+  });
+
+  it("updateSend swaps the captured transport so a reconnect rebuilds dispatching", () => {
+    mountBody("README.md:L4");
+    const firstSend = jest.fn();
+    handleURLHashDirective(document.body, firstSend);
+    firstSend.mockClear();
+
+    // Re-arm with a NEW send (simulating a reconnect that rebuilt the
+    // transport).
+    const secondSend = jest.fn();
+    handleURLHashDirective(document.body, secondSend);
+
+    // hashchange now should route through the second send only.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(secondSend).toHaveBeenCalledTimes(1);
+    expect(secondSend.mock.calls[0][0].data).toEqual({ hash: "OTHER.md:L1" });
+  });
+
+  it("teardown removes the armed element AND its hashchange listener", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+
+    teardownURLHashForRoot(document.body);
+
+    // After teardown, a hashchange does NOT dispatch — the window
+    // listener was removed when the armed map emptied.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("sweep cleans up entries whose attribute was removed by a server diff", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    // Server diff removed the directive.
+    document.body.removeAttribute("lvt-fx:url-hash");
+    document.body.removeAttribute("data-lvt-url-hash");
+    handleURLHashDirective(document.body, send);
+
+    // The window listener should be gone now too — no dispatch.
+    window.history.replaceState(null, "", "#OTHER.md:L1");
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips when lvt-fx:url-hash is present but empty", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.setAttribute("lvt-fx:url-hash", "");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("lvt-fx:url-hash requires an action name")
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("data-attr update unchanged from last mirror is a no-op (no history pollution)", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+
+    // User clicks a permalink anchor → location.hash changes to the
+    // same value the data-attr already had. The hashchange dispatch
+    // updates currentDataHash to the same value; subsequent renders
+    // with the same data-attr should still no-op (no extra history
+    // entries when the server echoes back the same hash).
+    window.history.replaceState(null, "", "#OTHER.md:L9");
+    window.dispatchEvent(new Event("hashchange"));
+    const lengthBefore = window.history.length;
+
+    send.mockClear();
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md:L9");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.history.length).toBe(lengthBefore);
+    expect(window.location.hash).toBe("#OTHER.md:L9");
   });
 });

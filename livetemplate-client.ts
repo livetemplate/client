@@ -15,7 +15,9 @@ import {
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
+  handleURLHashDirective,
   teardownAreaSelectForRoot,
+  teardownURLHashForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
@@ -628,6 +630,7 @@ export class LiveTemplateClient {
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
+      teardownURLHashForRoot(this.wrapperElement);
     }
     this.resetSessionState();
   }
@@ -1841,6 +1844,12 @@ export class LiveTemplateClient {
     // send the event delegator uses so the WS/HTTP routing is
     // identical to a normal action.
     handleAreaSelectDirectives(element, (message) => this.send(message));
+    // url-hash bridges server state ↔ location.hash. Same send-callback
+    // wiring as area-select: the directive needs to dispatch a server
+    // action on user-driven hashchange events (anchor click, address-bar
+    // edit, back-button) and read the latest server-rendered hash from
+    // `data-lvt-url-hash` on every render.
+    handleURLHashDirective(element, (message) => this.send(message));
     // Hydrate any server-emitted Declarative Shadow DOM templates that
     // morphdom inserted via DOM APIs (which don't auto-activate them).
     // Cheap when no templates are present (one querySelectorAll).

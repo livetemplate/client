@@ -1067,6 +1067,226 @@ export function teardownAreaSelectForRoot(rootElement: Element): void {
   }
 }
 
+// urlHashArmed tracks `lvt-fx:url-hash` listeners and their last-
+// mirrored hash. Same Map-not-WeakMap reasoning as area-select: the
+// sweep iterates to detect elements whose attribute was removed by a
+// server diff, and detached elements are cleaned up via the same
+// sweep (isConnected check).
+const urlHashArmed = new Map<Element, URLHashEntry>();
+
+// urlHashWindowListener is the single window-level `hashchange`
+// listener shared across all armed elements. Registered on first arm,
+// removed when the armed map becomes empty. Per-element listeners
+// would multi-fire for the (rare) case of multiple armed elements;
+// one shared listener iterating the armed map keeps the dispatch
+// count deterministic.
+let urlHashWindowListener: ((e: HashChangeEvent) => void) | null = null;
+
+interface URLHashEntry {
+  action: string;
+  // send is stored on the entry so the shared window listener can
+  // dispatch each armed entry's action through its own transport. The
+  // idempotent re-arm path mutates this field directly (via
+  // updateSend), so a reconnect that rebuilt the transport is picked
+  // up on the next hashchange.
+  send: URLHashSendFn;
+  cleanup: () => void;
+  updateSend: (send: URLHashSendFn) => void;
+  // currentDataHash is the last `data-lvt-url-hash` value we mirrored
+  // into `location.hash` (or the value we observed on a user-initiated
+  // hashchange). Comparing against the next render's data-attr lets us
+  // no-op when the server re-rendered with the same hash — avoids
+  // extra history entries on every keystroke.
+  currentDataHash: string;
+}
+
+type URLHashSendFn = (
+  message: { action: string; data: Record<string, unknown> }
+) => void;
+
+/**
+ * Apply url-hash directives. `lvt-fx:url-hash="<actionName>"` plus a
+ * `data-lvt-url-hash="<hash>"` attribute on an element (typically the
+ * `<body>`) wires a two-way bridge between server state and
+ * `location.hash`:
+ *
+ *  - **State → URL** (every render): if `data-lvt-url-hash` differs
+ *    from `location.hash`, mirror the data-attr into the URL via
+ *    `history.pushState` when the path component changed (everything
+ *    before the first `:`) or `history.replaceState` when only the
+ *    target (line range / anchor) changed. Replace is the right
+ *    default for line scrolls so the back-button cycles between files,
+ *    not between every clicked line.
+ *  - **URL → State** (on `hashchange` AND initial arm): dispatch
+ *    `{action: <actionName>, data: {hash: <hash>}}` so the server can
+ *    parse the hash and update its state (which then renders back as
+ *    a matching data-attr — closing the loop).
+ *
+ * The directive uses `history.pushState`/`replaceState` (not
+ * `location.hash = ...`) for the state→URL direction precisely so
+ * those writes do NOT fire `hashchange` — only true user-initiated
+ * navigation (anchor click, address-bar edit, back-button) reaches
+ * the URL→state listener. This avoids the obvious infinite loop.
+ *
+ * Idempotent across renders: same action → keep listener + update
+ * send. Different action → cleanup + re-arm. Detached / attribute-
+ * removed elements are swept on every call (same pattern as
+ * area-select). The window listener is registered on first arm and
+ * removed when the armed map becomes empty.
+ *
+ * Coexistence with `setupHashLink`: prereview-style hashes
+ * (`README.md:L4`, `foo/bar.html:h-anchor`) never match a
+ * `document.getElementById(...)`, so the existing dialog/popover/
+ * details hash machinery silently no-ops. If a deep-link hash
+ * happens to collide with an element id, both handlers will fire —
+ * the server is expected to no-op on hashes that don't resolve to a
+ * known file.
+ */
+export function handleURLHashDirective(
+  rootElement: Element,
+  send: (message: { action: string; data: Record<string, unknown> }) => void
+): void {
+  // Sweep stale entries first — disconnected hosts AND hosts whose
+  // attribute was removed by a server diff. Iterate via Array.from so
+  // cleanup()'s delete() doesn't disturb the iterator.
+  for (const [element, entry] of Array.from(urlHashArmed)) {
+    if (
+      !element.isConnected ||
+      !element.hasAttribute("lvt-fx:url-hash")
+    ) {
+      entry.cleanup();
+    }
+  }
+
+  // Match the root itself AND descendants. The url-hash directive is
+  // typically placed on a wrapping element (body, the livetemplate
+  // wrapper div) and querySelectorAll only walks descendants — so
+  // without the root check, a directive on the wrapper itself would
+  // never arm.
+  const matches: HTMLElement[] = [];
+  if (
+    rootElement instanceof HTMLElement &&
+    rootElement.hasAttribute("lvt-fx:url-hash")
+  ) {
+    matches.push(rootElement);
+  }
+  rootElement
+    .querySelectorAll<HTMLElement>("[lvt-fx\\:url-hash]")
+    .forEach((el) => matches.push(el));
+  if (matches.length === 0) return;
+
+  for (const el of matches) {
+    const action = el.getAttribute("lvt-fx:url-hash");
+    if (!action) {
+      console.warn(
+        `lvt-fx:url-hash requires an action name, got: ${JSON.stringify(action)}`
+      );
+      continue;
+    }
+    const dataHash = el.getAttribute("data-lvt-url-hash") || "";
+    const existing = urlHashArmed.get(el);
+    if (existing && existing.action === action) {
+      existing.updateSend(send);
+      mirrorDataAttrToLocation(existing, dataHash);
+      continue;
+    }
+    if (existing) existing.cleanup();
+    const entry = attachURLHash(el, action, send);
+    urlHashArmed.set(el, entry);
+    // First-arm sync: if the server has a hash to mirror, write it
+    // before reacting to the existing location.hash. If location.hash
+    // is non-empty AND differs from the server's data-attr, dispatch
+    // (URL "wins" on initial load so deep-linked URLs work).
+    const initialLocation = window.location.hash.replace(/^#/, "");
+    if (initialLocation && initialLocation !== dataHash) {
+      entry.currentDataHash = initialLocation;
+      send({ action, data: { hash: initialLocation } });
+    } else {
+      mirrorDataAttrToLocation(entry, dataHash);
+    }
+  }
+}
+
+/**
+ * Cancel url-hash listeners for every armed element under root. Same
+ * lifecycle role as teardownAreaSelectForRoot.
+ */
+export function teardownURLHashForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(urlHashArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
+// mirrorDataAttrToLocation pushes `dataHash` into `location.hash` if
+// it differs from what's already in the URL. Chooses push vs replace
+// by comparing the path component (everything before the first `:`)
+// against the current location.hash's path: a path change is a "file
+// switch" (user-meaningful back-button entry) and gets pushState;
+// any other change is a target-only update (line scroll / anchor
+// scroll) and gets replaceState. Updates entry.currentDataHash so a
+// subsequent render with the same data-attr no-ops.
+function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
+  if (entry.currentDataHash === dataHash) return;
+  const currentLocation = window.location.hash.replace(/^#/, "");
+  if (currentLocation === dataHash) {
+    entry.currentDataHash = dataHash;
+    return;
+  }
+  const targetURL = dataHash ? `#${dataHash}` : window.location.pathname + window.location.search;
+  const oldPath = currentLocation.split(":")[0];
+  const newPath = dataHash.split(":")[0];
+  if (oldPath !== newPath) {
+    window.history.pushState(null, "", targetURL);
+  } else {
+    window.history.replaceState(null, "", targetURL);
+  }
+  entry.currentDataHash = dataHash;
+}
+
+function attachURLHash(
+  el: HTMLElement,
+  action: string,
+  initialSend: URLHashSendFn
+): URLHashEntry {
+  const entry: URLHashEntry = {
+    action,
+    send: initialSend,
+    cleanup: () => {
+      urlHashArmed.delete(el);
+      if (urlHashArmed.size === 0 && urlHashWindowListener) {
+        window.removeEventListener("hashchange", urlHashWindowListener);
+        urlHashWindowListener = null;
+      }
+    },
+    updateSend: (s) => {
+      entry.send = s;
+    },
+    currentDataHash: "",
+  };
+
+  if (!urlHashWindowListener) {
+    urlHashWindowListener = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      // Iterate via Array.from in case a dispatched action triggers a
+      // render that mutates the armed map (e.g. tears down this
+      // element). Each armed entry dispatches through its OWN send +
+      // action so multi-arm is deterministic — typically the body is
+      // the only armed element so this is one iteration.
+      for (const e of Array.from(urlHashArmed.values())) {
+        // Record the user-driven hash as the new baseline so the
+        // next render's mirror step doesn't immediately revert it.
+        e.currentDataHash = hash;
+        e.send({ action: e.action, data: { hash } });
+      }
+    };
+    window.addEventListener("hashchange", urlHashWindowListener);
+  }
+
+  return entry;
+}
+
 // attachAreaSelect captures `send` in a mutable local so the
 // idempotent re-arm path (same element, same action) can swap it via
 // the returned `updateSend` callback without tearing down + rebuilding
