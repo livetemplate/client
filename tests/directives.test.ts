@@ -2241,6 +2241,31 @@ describe("handleURLHashDirective", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("ignores plain element-id hashes on initial load (no dispatch, no URL clobber)", () => {
+    // Anchors like `#hero` (no `:`, no `/`, no `.`) belong to native
+    // anchor / dialog / popover machinery — the directive must NOT
+    // dispatch for them or it would race against setupHashLink.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("ignores plain element-id hashes on hashchange", () => {
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    send.mockClear();
+
+    // User clicks an HTML anchor link (e.g. inside the TOC overlay).
+    window.history.replaceState(null, "", "#some-section");
+    window.dispatchEvent(new Event("hashchange"));
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("data-attr update unchanged from last mirror is a no-op (no history pollution)", () => {
     mountBody("README.md:L4");
     const send = jest.fn();

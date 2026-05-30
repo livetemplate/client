@@ -597,6 +597,16 @@ export class LiveTemplateClient {
     setupInvokerPolyfill();
     setupHashLink();
 
+    // url-hash directive needs an initial-load arm here (not just in
+    // updateDOM's FIRE-ON-CHANGE block) because page load → no
+    // updateDOM call → directive never arms → a `#path:L4` URL never
+    // dispatches setURLHash. Subsequent state changes route through
+    // the FIRE-ON-CHANGE block's call site, which keeps the data-attr
+    // mirror in sync after server re-renders.
+    if (this.wrapperElement) {
+      handleURLHashDirective(this.wrapperElement, (message) => this.send(message));
+    }
+
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
 

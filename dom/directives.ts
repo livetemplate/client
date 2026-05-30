@@ -1158,11 +1158,14 @@ export function handleURLHashDirective(
     }
   }
 
-  // Match the root itself AND descendants. The url-hash directive is
-  // typically placed on a wrapping element (body, the livetemplate
-  // wrapper div) and querySelectorAll only walks descendants — so
-  // without the root check, a directive on the wrapper itself would
-  // never arm.
+  // Match the root itself, descendants, AND the document body. The
+  // url-hash directive is typically placed on `<body>`, but livetemplate
+  // auto-injects its `<div data-lvt-id>` INSIDE body, so the rootElement
+  // passed by the client is the wrapper div — a strict descendant of
+  // body. Without the body check, a directive on `<body>` would never
+  // arm. We accept body placement because URL hash is page-global
+  // anyway; the directive's lifecycle is still tied to the wrapper via
+  // teardownURLHashForRoot (called on disconnect of the wrapper).
   const matches: HTMLElement[] = [];
   if (
     rootElement instanceof HTMLElement &&
@@ -1170,9 +1173,20 @@ export function handleURLHashDirective(
   ) {
     matches.push(rootElement);
   }
+  const body = rootElement.ownerDocument?.body;
+  if (
+    body &&
+    body !== rootElement &&
+    body.hasAttribute("lvt-fx:url-hash") &&
+    !matches.includes(body)
+  ) {
+    matches.push(body);
+  }
   rootElement
     .querySelectorAll<HTMLElement>("[lvt-fx\\:url-hash]")
-    .forEach((el) => matches.push(el));
+    .forEach((el) => {
+      if (!matches.includes(el)) matches.push(el);
+    });
   if (matches.length === 0) return;
 
   for (const el of matches) {
@@ -1195,10 +1209,16 @@ export function handleURLHashDirective(
     urlHashArmed.set(el, entry);
     // First-arm sync: if the server has a hash to mirror, write it
     // before reacting to the existing location.hash. If location.hash
-    // is non-empty AND differs from the server's data-attr, dispatch
-    // (URL "wins" on initial load so deep-linked URLs work).
+    // is a deep-link-shaped hash AND differs from the server's
+    // data-attr, dispatch (URL "wins" on initial load so deep-linked
+    // URLs work). Non-deep-link hashes (e.g. an element-id anchor
+    // setupHashLink owns) are left to their owning machinery.
     const initialLocation = window.location.hash.replace(/^#/, "");
-    if (initialLocation && initialLocation !== dataHash) {
+    if (
+      initialLocation &&
+      initialLocation !== dataHash &&
+      looksLikeDeepLinkHash(initialLocation)
+    ) {
       entry.currentDataHash = initialLocation;
       send({ action, data: { hash: initialLocation } });
     } else {
@@ -1212,8 +1232,17 @@ export function handleURLHashDirective(
  * lifecycle role as teardownAreaSelectForRoot.
  */
 export function teardownURLHashForRoot(rootElement: Element): void {
+  // Includes body when body is an ancestor of rootElement and body is
+  // armed — the directive accepts body placement (see the matcher in
+  // handleURLHashDirective), so teardown must symmetrically clean up
+  // both directions.
+  const body = rootElement.ownerDocument?.body;
   for (const [element, entry] of Array.from(urlHashArmed)) {
     if (rootElement.contains(element)) {
+      entry.cleanup();
+      continue;
+    }
+    if (body && element === body && body.contains(rootElement)) {
       entry.cleanup();
     }
   }
@@ -1245,6 +1274,17 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
   entry.currentDataHash = dataHash;
 }
 
+// looksLikeDeepLinkHash discriminates URL hashes the prereview deep-
+// link grammar can produce (file path with optional :L<n> or :h-id)
+// from hashes that belong to other native machinery (HTML element
+// anchors, dialog/popover/details ids, etc.). Deep-link hashes always
+// contain at least one of: `:` (target separator), `/` (nested path),
+// or `.` (file extension). Empty → false.
+function looksLikeDeepLinkHash(hash: string): boolean {
+  if (!hash) return false;
+  return hash.includes(":") || hash.includes("/") || hash.includes(".");
+}
+
 function attachURLHash(
   el: HTMLElement,
   action: string,
@@ -1269,6 +1309,15 @@ function attachURLHash(
   if (!urlHashWindowListener) {
     urlHashWindowListener = () => {
       const hash = window.location.hash.replace(/^#/, "");
+      // Only dispatch hashes that look like deep-link targets — they
+      // contain `:` (target separator), `/` (nested path), or `.`
+      // (file extension). Plain element-id hashes like `#hero` or
+      // `#confirm-delete-xyz` belong to the native anchor / dialog /
+      // popover / details machinery (setupHashLink handles those) and
+      // would otherwise be dispatched here, prompt a server no-op,
+      // then get clobbered by the mirror step when the server's
+      // data-attr (unchanged) doesn't match.
+      if (!looksLikeDeepLinkHash(hash)) return;
       // Iterate via Array.from in case a dispatched action triggers a
       // render that mutates the armed map (e.g. tears down this
       // element). Each armed entry dispatches through its OWN send +
