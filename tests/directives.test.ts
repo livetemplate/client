@@ -1564,6 +1564,47 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlayInP1.style.left).toBe("30px");
   });
 
+  it("positions overlay correctly when parent is scrolled", () => {
+    // For a scrolled positioned parent: an element at viewport_x =
+    // parentRect.left actually has CSS_left = parent.scrollLeft (the
+    // browser is scrolled, so what's at viewport-x-0 is parent-x-100
+    // for scrollLeft=100). Without adding scrollLeft/scrollTop back
+    // into the CSS coords, the overlay paints displaced by the scroll
+    // amount.
+    document.body.innerHTML = `
+      <div id="parent" style="position:relative;"><img id="target" lvt-fx:area-select="selectImageArea"></div>
+    `;
+    const parent = document.getElementById("parent") as HTMLDivElement;
+    const target = document.getElementById("target") as HTMLImageElement;
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    parent.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    // jsdom: scrollLeft/Top are mutable properties; just assign.
+    Object.defineProperty(parent, "scrollLeft", { value: 100, configurable: true });
+    Object.defineProperty(parent, "scrollTop", { value: 50, configurable: true });
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    // Drag from viewport (30, 40) to (90, 100). With the scroll
+    // correction the overlay's CSS left should be
+    // 30 - 0 - 0 + 100 = 130 and CSS top should be
+    // 40 - 0 - 0 + 50 = 90. Without it, left=30 / top=40 (the bug).
+    dispatchPointer(target, "pointerdown", 30, 40);
+    dispatchPointer(target, "pointermove", 90, 100);
+    const overlay = parent.querySelector(".lvt-area-select-overlay") as HTMLDivElement;
+    expect(overlay).not.toBeNull();
+    expect(overlay.style.left).toBe("130px");
+    expect(overlay.style.top).toBe("90px");
+    expect(overlay.style.width).toBe("60px");
+    expect(overlay.style.height).toBe("60px");
+  });
+
   it("warns when the parent's computed position is `static`", () => {
     // Forgetting position:relative on the parent silently mis-paints
     // the overlay against the nearest positioned ancestor. A

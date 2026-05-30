@@ -1258,22 +1258,34 @@ function attachAreaSelect(
     if (!parent) return;
     const elRect = el.getBoundingClientRect();
     const parentRect = parent.getBoundingClientRect();
-    // position:absolute offsets from the parent's PADDING box, not its
-    // border box. getBoundingClientRect returns the border box, so a
-    // parent with a non-zero CSS border would shift the overlay by the
-    // border width. Subtract clientLeft / clientTop to convert from
-    // border-box to padding-box offset.
+    // Convert viewport coords (clientX/Y) to position:absolute CSS
+    // offsets inside the parent. Three corrections, all subtracted
+    // from / added to the same way for every value we compute:
+    //
+    //   1. parentRect.left/top — getBoundingClientRect is in viewport
+    //      coords; CSS offsets are relative to the parent's box.
+    //   2. parent.clientLeft/Top — position:absolute is measured from
+    //      the padding box; getBoundingClientRect returns the border
+    //      box. A parent with a CSS border would otherwise shift the
+    //      overlay by the border width.
+    //   3. parent.scrollLeft/Top — when the parent is scrolled, an
+    //      element at viewport_x = parentRect.left has CSS_left =
+    //      parent.scrollLeft (not 0). Without adding scroll back in,
+    //      the overlay paints offset by the scroll amount.
     const borderL = parent.clientLeft;
     const borderT = parent.clientTop;
-    const left = Math.min(startClientX, e.clientX) - parentRect.left - borderL;
-    const top = Math.min(startClientY, e.clientY) - parentRect.top - borderT;
+    const scrollL = parent.scrollLeft;
+    const scrollT = parent.scrollTop;
+    const toCSSLeft = (vx: number) => vx - parentRect.left - borderL + scrollL;
+    const toCSSTop = (vy: number) => vy - parentRect.top - borderT + scrollT;
+    const left = toCSSLeft(Math.min(startClientX, e.clientX));
+    const top = toCSSTop(Math.min(startClientY, e.clientY));
     const width = Math.abs(e.clientX - startClientX);
     const height = Math.abs(e.clientY - startClientY);
-    // Clamp to the host's rendered rect so a drag that runs off the
-    // edge doesn't paint outside the image. Same border-box-to-
-    // padding-box conversion as above.
-    const minLeft = elRect.left - parentRect.left - borderL;
-    const minTop = elRect.top - parentRect.top - borderT;
+    // Clamp to the host's rendered rect (in the same CSS coord space)
+    // so a drag that runs off the edge doesn't paint outside the host.
+    const minLeft = toCSSLeft(elRect.left);
+    const minTop = toCSSTop(elRect.top);
     const maxRight = minLeft + elRect.width;
     const maxBottom = minTop + elRect.height;
     const clampedLeft = Math.max(minLeft, Math.min(left, maxRight));
