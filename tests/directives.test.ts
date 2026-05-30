@@ -2323,6 +2323,39 @@ describe("handleURLHashDirective", () => {
     expect(window.location.hash).toBe("#hero");
   });
 
+  it("case-(b) + user clears URL: URL stays empty while server keeps its selection (deliberate divergence)", () => {
+    // Load with a popover-shaped hash, server has a file selected.
+    // Case (b) seeds entry.currentDataHash with the server's value.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+
+    // User clears the URL bar.
+    window.history.replaceState(null, "", window.location.pathname);
+    window.dispatchEvent(new Event("hashchange"));
+    expect(send).not.toHaveBeenCalled();
+
+    // Server re-renders with the SAME selection (data-attr unchanged).
+    // The early-exit guard (currentDataHash === dataHash) means we
+    // never mirror — URL stays empty, server stays on README.md.
+    // This divergence is intentional: case (b) said "the URL isn't
+    // ours, leave it alone", and a user clearing the URL doesn't
+    // change that — they're still navigating outside our turf.
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("");
+    expect(send).not.toHaveBeenCalled();
+
+    // Convergence only happens when the user takes an in-app action
+    // that changes server state (e.g. SelectFile to OTHER.md): the
+    // data-attr now differs from currentDataHash and the mirror
+    // step writes the new hash.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#OTHER.md");
+  });
+
   it("user clearing the URL hash (hashchange to empty) does NOT dispatch — server stays source of truth", () => {
     // The directive treats the server as source of truth for
     // "what's selected". An empty location.hash is "user navigated
