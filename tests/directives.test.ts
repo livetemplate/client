@@ -2344,6 +2344,26 @@ describe("handleURLHashDirective", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("deselection (deep-link → empty) uses pushState — Back returns to the selection (deliberate)", () => {
+    // Pin the path-comparison branch's behavior for the deselect
+    // case: server transitions `data-lvt-url-hash` from a selected
+    // file to "", path comparison says oldPath !== newPath (one is
+    // empty), the mirror uses pushState. That leaves a history
+    // entry so Back returns the user to their prior selection.
+    // Intentional — matches the file-switch UX.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+    const lengthBeforeDeselect = window.history.length;
+
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+
+    expect(window.location.hash).toBe("");
+    expect(window.history.length).toBe(lengthBeforeDeselect + 1);
+  });
+
   it("server clearing the data-attr does NOT wipe a non-deep-link URL hash", () => {
     // Server first has README.md selected → URL becomes
     // `#README.md`. Then the user opens a popover whose id is
