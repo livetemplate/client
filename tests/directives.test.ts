@@ -2302,6 +2302,43 @@ describe("handleURLHashDirective", () => {
     expect(window.location.hash).toBe("#hero");
   });
 
+  it("server changing selection while a non-deep-link URL hash is open does NOT clobber", () => {
+    // Round-8 bot edge case: case (b) leaves the URL on #hero and
+    // seeds currentDataHash = dataHash. If the server then pushes a
+    // DIFFERENT selection (rare in prereview — server state changes
+    // only on user action — but possible via cross-tab sync or a
+    // server-driven update), the mirror's path-comparison would
+    // have written the new file's hash and clobbered #hero. Fixed
+    // by generalising the non-deep-link-URL guard to cover any
+    // dataHash, not just empty.
+    window.history.replaceState(null, "", "#hero");
+    mountBody("README.md");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+
+    // Server pushes a different selection — URL must NOT change.
+    document.body.setAttribute("data-lvt-url-hash", "OTHER.md");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#hero");
+  });
+
+  it("server clearing the data-attr DOES clear a deep-link URL hash (deliberate, symmetric)", () => {
+    // Symmetric to "non-deep-link is never clobbered": if the URL
+    // is a deep-link we own AND the server transitions to
+    // no-selection, the URL should clear. Pin this as deliberate
+    // so a future refactor doesn't accidentally make all
+    // empty-dataHash mirrors no-op.
+    mountBody("README.md:L4");
+    const send = jest.fn();
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("#README.md:L4");
+
+    document.body.setAttribute("data-lvt-url-hash", "");
+    handleURLHashDirective(document.body, send);
+    expect(window.location.hash).toBe("");
+  });
+
   it("server clearing the data-attr does NOT wipe a non-deep-link URL hash", () => {
     // Server first has README.md selected → URL becomes
     // `#README.md`. Then the user opens a popover whose id is

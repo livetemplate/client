@@ -1326,9 +1326,13 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
     entry.currentDataHash = dataHash;
     return;
   }
-  if (dataHash === "" && !looksLikeDeepLinkHash(currentLocation)) {
-    // Server cleared the hash AND the URL is on something not ours
-    // (popover id, native anchor). Don't clobber.
+  if (currentLocation !== "" && !looksLikeDeepLinkHash(currentLocation)) {
+    // URL is on something not ours (popover id, native anchor) —
+    // don't clobber it, regardless of what the server's data-attr
+    // says. This covers BOTH the server-clears case (dataHash="")
+    // and the rarer server-changes-selection-while-popover-open
+    // case (dataHash transitions from one file to another while
+    // the URL is parked on a non-deep-link hash).
     entry.currentDataHash = dataHash;
     return;
   }
