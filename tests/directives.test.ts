@@ -1165,6 +1165,15 @@ describe("handleShadowRootHydration", () => {
 });
 
 describe("handleAreaSelectDirectives", () => {
+  // The module-level areaSelectArmed map is cleared lazily — the sweep
+  // only fires when handleAreaSelectDirectives runs. Without an explicit
+  // afterEach, tests that don't call it would inherit armed elements
+  // from prior tests. teardownAreaSelectForRoot(document.body) wipes
+  // every entry so each test gets a fresh slate.
+  afterEach(() => {
+    teardownAreaSelectForRoot(document.body);
+  });
+
   // jsdom-friendly helper: configure the target element so it has a
   // non-trivial bounding rect (jsdom returns zeros by default) and a
   // positioned parent so the overlay has somewhere to land. Returns
@@ -1477,6 +1486,82 @@ describe("handleAreaSelectDirectives", () => {
     expect(overlay.style.top).toBe("50px");
     expect(overlay.style.width).toBe("40px");
     expect(overlay.style.height).toBe("40px");
+  });
+
+  it("lostpointercapture for a different pointerId does NOT cancel our drag", () => {
+    // Another code path could call setPointerCapture on the same
+    // element with a different pointerId and later release it,
+    // firing lostpointercapture on the host. Our handler must not
+    // mistake that for OUR drag being canceled.
+    const [, parent] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const target = parent.querySelector("img")! as HTMLElement;
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Our drag starts with pointerId=1.
+    dispatchPointer(target, "pointerdown", 10, 10, 1);
+    dispatchPointer(target, "pointermove", 80, 80, 1);
+
+    // Unrelated lostpointercapture for pointerId=42 — must be ignored.
+    dispatchPointer(target, "lostpointercapture", 80, 80, 42);
+
+    // Our drag is still alive — pointerup dispatches normally.
+    dispatchPointer(target, "pointerup", 100, 100, 1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the pointerdown-time parent even if host moves between mousemoves", () => {
+    // Two positioned parents at known offsets. The host starts under
+    // the first; we begin a drag, then synthetically re-parent the
+    // host into the second container mid-drag. Without the parent-
+    // capture fix, updateOverlay would refetch el.parentElement and
+    // compute against the SECOND parent while the overlay still
+    // lives in the FIRST — visual mis-positioning for the rest of
+    // the drag. With the fix, the overlay tracks the FIRST parent.
+    document.body.innerHTML = `
+      <div id="p1" style="position:relative;"></div>
+      <div id="p2" style="position:relative;"></div>
+    `;
+    const p1 = document.getElementById("p1") as HTMLDivElement;
+    const p2 = document.getElementById("p2") as HTMLDivElement;
+    const target = document.createElement("img");
+    target.setAttribute("lvt-fx:area-select", "selectImageArea");
+    p1.appendChild(target);
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: 10, y: 10, left: 10, top: 10, right: 110, bottom: 110,
+      width: 100, height: 100, toJSON: () => ({}),
+    } as DOMRect));
+    p1.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    p2.getBoundingClientRect = jest.fn(() => ({
+      x: 500, y: 500, left: 500, top: 500, right: 700, bottom: 700,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    dispatchPointer(target, "pointerdown", 30, 30);
+    // Server diff moves the host to p2.
+    p2.appendChild(target);
+    dispatchPointer(target, "pointermove", 80, 60);
+
+    // Overlay stays in p1 (where pointerdown attached it). Position is
+    // computed against p1's rect (cached at pointerdown), not p2's.
+    const overlayInP1 = p1.querySelector(".lvt-area-select-overlay") as HTMLDivElement;
+    const overlayInP2 = p2.querySelector(".lvt-area-select-overlay");
+    expect(overlayInP1).not.toBeNull();
+    expect(overlayInP2).toBeNull();
+    // pointerdown at (30,30), move to (80,60) → 50×30 against p1
+    // at (0,0). If updateOverlay had re-fetched el.parentElement
+    // and used p2 (at 500,500), left would be -470 instead of 30.
+    expect(overlayInP1.style.left).toBe("30px");
   });
 
   it("warns when the parent's computed position is `static`", () => {

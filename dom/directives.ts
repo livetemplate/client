@@ -989,25 +989,6 @@ const MIN_AREA_FRACTION = 0.02;
  * and the first client's send() is orphaned. Single-client use is
  * unaffected.
  */
-/**
- * Cancel area-select listeners for every armed element under root.
- * Mirrors teardownAutoClickTimers: meant for the client's disconnect /
- * destroy lifecycle so the module-level singleton doesn't outlive a
- * client that was torn down without a subsequent
- * handleAreaSelectDirectives call (e.g. network error closed the
- * socket while an element was armed). Without this, a SPA that mounts
- * + tears down livetemplate trees would leak listeners across mounts.
- */
-export function teardownAreaSelectForRoot(rootElement: Element): void {
-  // `contains` returns true for the node itself, so this also handles
-  // the (today-impossible) case of rootElement being armed directly.
-  for (const [element, entry] of Array.from(areaSelectArmed)) {
-    if (rootElement.contains(element)) {
-      entry.cleanup();
-    }
-  }
-}
-
 export function handleAreaSelectDirectives(
   rootElement: Element,
   send: (message: { action: string; data: Record<string, unknown> }) => void
@@ -1054,6 +1035,25 @@ export function handleAreaSelectDirectives(
   }
 }
 
+/**
+ * Cancel area-select listeners for every armed element under root.
+ * Mirrors teardownAutoClickTimers: meant for the client's disconnect /
+ * destroy lifecycle so the module-level singleton doesn't outlive a
+ * client that was torn down without a subsequent
+ * handleAreaSelectDirectives call (e.g. network error closed the
+ * socket while an element was armed). Without this, a SPA that mounts
+ * + tears down livetemplate trees would leak listeners across mounts.
+ */
+export function teardownAreaSelectForRoot(rootElement: Element): void {
+  // `contains` returns true for the node itself, so this also handles
+  // the (today-impossible) case of rootElement being armed directly.
+  for (const [element, entry] of Array.from(areaSelectArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
 // attachAreaSelect captures `send` in a mutable local so the
 // idempotent re-arm path (same element, same action) can swap it via
 // the returned `updateSend` callback without tearing down + rebuilding
@@ -1072,6 +1072,13 @@ function attachAreaSelect(
   let startClientX = 0;
   let startClientY = 0;
   let pointerId = -1;
+  // Capture the parent at pointerdown time so a server diff that moves
+  // the host to a NEW parent mid-drag doesn't split the drag across
+  // two positioning contexts. updateOverlay positions against this
+  // cached parent for the lifetime of the gesture; the overlay itself
+  // stays a child of the parent we appended it to (overlay removal
+  // uses overlay.parentElement, which is independent).
+  let dragParent: HTMLElement | null = null;
 
   const removeOverlay = () => {
     if (overlay && overlay.parentElement) {
@@ -1092,6 +1099,7 @@ function attachAreaSelect(
     // only auto-removes if it fires; a stuck drag never fired it.
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
     pointerId = -1;
+    dragParent = null;
     if (!dispatch || !e) {
       removeOverlay();
       return;
@@ -1191,6 +1199,7 @@ function attachAreaSelect(
     startClientX = e.clientX;
     startClientY = e.clientY;
     pointerId = e.pointerId;
+    dragParent = parent;
     let captureOk = false;
     try {
       el.setPointerCapture(pointerId);
@@ -1226,7 +1235,12 @@ function attachAreaSelect(
 
   const updateOverlay = (e: PointerEvent) => {
     if (!overlay) return;
-    const parent = el.parentElement;
+    // Use the parent captured at pointerdown — if a server diff
+    // moved `el` to a new parent mid-drag, re-fetching el.parentElement
+    // here would compute against the new container while the overlay
+    // lives in the old, paint at the wrong place for the rest of the
+    // gesture.
+    const parent = dragParent;
     if (!parent) return;
     const elRect = el.getBoundingClientRect();
     const parentRect = parent.getBoundingClientRect();
@@ -1284,11 +1298,13 @@ function attachAreaSelect(
     finalize(e, false);
   };
   // lostpointercapture handles the rare case where the platform yanks
-  // capture (OS gesture, another setPointerCapture call). Don't go
-  // through onPointerCancel — that variant reads e.pointerId, which
-  // for a lost-capture event may not match our tracked pointerId
-  // (e.g. capture was lost between gestures). Just always cancel.
-  const onLostCapture = () => finalize(null, false);
+  // capture (OS gesture, another setPointerCapture call). Guard on
+  // pointerId — another code path could call setPointerCapture for a
+  // DIFFERENT pointer on the same element, and we mustn't cancel
+  // our in-progress drag because of an unrelated release.
+  const onLostCapture = (e: PointerEvent) => {
+    if (e.pointerId === pointerId) finalize(null, false);
+  };
 
   el.addEventListener("pointerdown", onPointerDown);
   el.addEventListener("pointermove", onPointerMove);
