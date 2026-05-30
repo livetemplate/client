@@ -984,6 +984,12 @@ const MIN_AREA_FRACTION = 0.02;
  *    so click handlers still receive the gesture; that means the
  *    browser's default text-selection-on-drag behaviour also fires
  *    unless the host opts out via CSS).
+ *  - The overlay uses `z-index: var(--lvt-area-select-z-index, 9999)`.
+ *    9999 is high enough for most use cases but can collide with
+ *    portals / modals / drawers that also sit at a high z-index.
+ *    Set `--lvt-area-select-z-index` on the host (or any ancestor)
+ *    to override. Color + fill follow the same pattern via
+ *    `--lvt-area-select-color` and `--lvt-area-select-fill`.
  *  - **No keyboard equivalent.** Pointer-only by design (a keyboard-
  *    selected rectangle requires a different UX — focus + arrow keys
  *    to position + arrow keys to size). Consumers needing a11y for
@@ -1092,6 +1098,14 @@ function attachAreaSelect(
   // stays a child of the parent we appended it to (overlay removal
   // uses overlay.parentElement, which is independent).
   let dragParent: HTMLElement | null = null;
+  // Cache the host's rect at pointerdown — startClientX/Y are captured
+  // in the SAME frame, so the start corner is meaningful only against
+  // the rect that existed then. If a server diff repositions the host
+  // mid-drag, finalize would otherwise clamp the (old-coord-system)
+  // startClientX against the new rect and silently produce wrong
+  // fractions. Anchoring to the start-rect keeps the dispatched
+  // rectangle pinned to the visual region the user actually dragged.
+  let startRect: DOMRect | null = null;
 
   const removeOverlay = () => {
     if (overlay) {
@@ -1116,11 +1130,14 @@ function attachAreaSelect(
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
     pointerId = -1;
     dragParent = null;
-    if (!dispatch || !e) {
+    // Snapshot + clear startRect before any early return so a future
+    // gesture starts with a fresh capture.
+    const rect = startRect;
+    startRect = null;
+    if (!dispatch || !e || !rect) {
       removeOverlay();
       return;
     }
-    const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
       removeOverlay();
       return;
@@ -1224,6 +1241,7 @@ function attachAreaSelect(
     startClientY = e.clientY;
     pointerId = e.pointerId;
     dragParent = parent;
+    startRect = el.getBoundingClientRect();
     let captureOk = false;
     try {
       el.setPointerCapture(pointerId);

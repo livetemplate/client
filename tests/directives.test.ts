@@ -1546,6 +1546,58 @@ describe("handleAreaSelectDirectives", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("uses pointerdown-time rect for fractions even if host moves between mousemoves", () => {
+    // If a server diff repositions the host mid-drag, the rect
+    // captured AT POINTERUP would clamp startClientX (which was
+    // captured against the OLD position) into the wrong place.
+    // The dispatched fractions must reflect the original drag,
+    // measured against the rect that existed at pointerdown.
+    document.body.innerHTML = `
+      <div id="parent" style="position:relative;"><img id="target" lvt-fx:area-select="selectImageArea"></div>
+    `;
+    const parent = document.getElementById("parent") as HTMLDivElement;
+    const target = document.getElementById("target") as HTMLImageElement;
+    // Rect call counter: first call (pointerdown) returns the OLD
+    // rect, subsequent calls return a NEW rect 500px away.
+    let rectCalls = 0;
+    target.getBoundingClientRect = jest.fn(() => {
+      rectCalls++;
+      if (rectCalls === 1) {
+        return {
+          x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+          width: 200, height: 200, toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return {
+        x: 500, y: 500, left: 500, top: 500, right: 700, bottom: 700,
+        width: 200, height: 200, toJSON: () => ({}),
+      } as DOMRect;
+    });
+    parent.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 1000,
+      width: 1000, height: 1000, toJSON: () => ({}),
+    } as DOMRect));
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // Drag from (40, 60) → (140, 160) inside the OLD rect at (0..200).
+    // OLD-rect fractions: x=40/200=0.2, y=60/200=0.3, w=100/200=0.5,
+    // h=100/200=0.5. With the new (500..700) rect at finalize time,
+    // clamping (40,60) into that rect would silently shift the start.
+    dispatchPointer(target, "pointerdown", 40, 60);
+    dispatchPointer(target, "pointermove", 90, 110);
+    dispatchPointer(target, "pointerup", 140, 160);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const data = send.mock.calls[0][0].data as Record<string, number>;
+    expect(data.x).toBeCloseTo(0.2, 5);
+    expect(data.y).toBeCloseTo(0.3, 5);
+    expect(data.w).toBeCloseTo(0.5, 5);
+    expect(data.h).toBeCloseTo(0.5, 5);
+  });
+
   it("uses the pointerdown-time parent even if host moves between mousemoves", () => {
     // Two positioned parents at known offsets. The host starts under
     // the first; we begin a drag, then synthetically re-parent the
