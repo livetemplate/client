@@ -9,11 +9,13 @@ import morphdom from "morphdom";
 import { FocusManager } from "./dom/focus-manager";
 import {
   handleAnimateDirectives,
+  handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleHighlightDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
+  teardownAreaSelectForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
   setupFxDOMEventTriggers,
@@ -625,6 +627,7 @@ export class LiveTemplateClient {
       teardownFxLifecycleListeners(this.wrapperElement);
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
+      teardownAreaSelectForRoot(this.wrapperElement);
     }
     this.resetSessionState();
   }
@@ -1832,6 +1835,12 @@ export class LiveTemplateClient {
     handleAnimateDirectives(element);
     handleToastDirectives(element);
     handleAutoClickDirectives(element);
+    // Area-select needs the send() callback to dispatch the final-
+    // coords action on pointerup, unlike the other directives in this
+    // block (which are visual-only or click-through). Reuse the same
+    // send the event delegator uses so the WS/HTTP routing is
+    // identical to a normal action.
+    handleAreaSelectDirectives(element, (message) => this.send(message));
     // Hydrate any server-emitted Declarative Shadow DOM templates that
     // morphdom inserted via DOM APIs (which don't auto-activate them).
     // Cheap when no templates are present (one querySelectorAll).
