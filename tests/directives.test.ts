@@ -11,6 +11,7 @@ import {
   teardownURLHashForRoot,
   teardownAutoClickTimers,
   __resetAnimatedElementsForTesting,
+  __resetURLHashUnencodedWarnedForTesting,
 } from "../dom/directives";
 
 describe("handleScrollDirectives", () => {
@@ -2070,6 +2071,10 @@ describe("handleURLHashDirective", () => {
     // Reset URL hash without touching history (the directive uses
     // pushState/replaceState; jsdom keeps them isolated per test).
     window.history.replaceState(null, "", window.location.pathname);
+    // The unencoded-hash warning dedupe Set is module-level and
+    // outlives a single test; reset so a hash value reused across
+    // tests still warns.
+    __resetURLHashUnencodedWarnedForTesting();
     jest.restoreAllMocks();
   });
 

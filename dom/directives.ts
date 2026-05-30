@@ -1284,6 +1284,17 @@ export function teardownURLHashForRoot(rootElement: Element): void {
   // armed — the directive accepts body placement (see the matcher in
   // handleURLHashDirective), so teardown must symmetrically clean up
   // both directions.
+  //
+  // Multi-client caveat: a body-armed entry is shared across all
+  // LiveTemplateClient instances (Map key is the element, so only one
+  // entry per body). Tearing down client A's root will therefore also
+  // tear down a body listener that client B armed last — there's no
+  // "owner" tracked. Acceptable for the single-client case (the
+  // common deployment) and matches the same-element-multi-arm
+  // last-writer-wins behavior in attachURLHash. A "fix" that
+  // restricted the body-cleanup branch to client A would leak
+  // client A's own body listener — don't do that without also
+  // tracking entry ownership.
   const body = rootElement.ownerDocument?.body;
   for (const [element, entry] of Array.from(urlHashArmed)) {
     if (rootElement.contains(element)) {
@@ -1373,6 +1384,19 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
 // (won't catch every malformed escape), but covers the common
 // "forgot to encode" cases.
 const urlHashUnencodedWarned = new Set<string>();
+
+/**
+ * Test-only: reset the per-page dedupe Set that suppresses repeated
+ * `warnIfUnencodedHash` calls for the same hash value. Production
+ * code shouldn't need this — the Set is bounded by the number of
+ * unique malformed hashes — but tests that re-use the same hash
+ * across cases need to clear it or the second test won't see the
+ * warning. Mirrors `__resetAnimatedElementsForTesting`.
+ */
+export function __resetURLHashUnencodedWarnedForTesting(): void {
+  urlHashUnencodedWarned.clear();
+}
+
 function warnIfUnencodedHash(hash: string): void {
   if (!hash || urlHashUnencodedWarned.has(hash)) return;
   if (/[ <>"`#\[\]]/.test(hash) || /%(?![0-9A-Fa-f]{2})/.test(hash)) {
