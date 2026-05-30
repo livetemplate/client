@@ -911,6 +911,12 @@ export function handleShadowRootHydration(rootElement: Element): void {
 // the same sweep (isConnected check).
 const areaSelectArmed = new Map<Element, AreaSelectEntry>();
 
+// areaSelectWarnedParents dedupes the "parent not positioned" dev-warn
+// so a user who repeatedly drags on a mis-configured element gets a
+// single console message instead of one per pointerdown. WeakSet so
+// detached parents don't leak.
+const areaSelectWarnedParents = new WeakSet<Element>();
+
 interface AreaSelectEntry {
   action: string;
   cleanup: () => void;
@@ -1182,19 +1188,24 @@ function attachAreaSelect(
     // the wrong place with no error, just a confusing visual.
     // Check against the positive list of positioned values; the
     // default "static" and an unset/empty value both fail it (jsdom
-    // returns "" for unset position).
-    const parentPos = window.getComputedStyle(parent).position;
-    if (
-      parentPos !== "relative" &&
-      parentPos !== "absolute" &&
-      parentPos !== "fixed" &&
-      parentPos !== "sticky"
-    ) {
-      console.warn(
-        "lvt-fx:area-select: parentElement has no positioning context; the drag overlay will be mis-positioned. " +
-          "Add position:relative (or absolute/fixed/sticky) to the parent.",
-        parent
-      );
+    // returns "" for unset position). Dedupe via WeakSet so a user
+    // dragging repeatedly on the same mis-configured parent gets ONE
+    // console message, not one per pointerdown.
+    if (!areaSelectWarnedParents.has(parent)) {
+      const parentPos = window.getComputedStyle(parent).position;
+      if (
+        parentPos !== "relative" &&
+        parentPos !== "absolute" &&
+        parentPos !== "fixed" &&
+        parentPos !== "sticky"
+      ) {
+        console.warn(
+          "lvt-fx:area-select: parentElement has no positioning context; the drag overlay will be mis-positioned. " +
+            "Add position:relative (or absolute/fixed/sticky) to the parent.",
+          parent
+        );
+        areaSelectWarnedParents.add(parent);
+      }
     }
     startClientX = e.clientX;
     startClientY = e.clientY;

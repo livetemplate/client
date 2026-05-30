@@ -1585,10 +1585,43 @@ describe("handleAreaSelectDirectives", () => {
 
     dispatchPointer(target, "pointerdown", 10, 10);
 
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("parentElement has no positioning context"),
-      expect.anything()
+    const warnings = warn.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("parentElement has no positioning context")
     );
+    expect(warnings.length).toBe(1);
+  });
+
+  it("dedupes the static-parent warn across repeated drags", () => {
+    // Without the WeakSet dedupe, a user repeatedly dragging on the
+    // same mis-configured element would spam console.warn (and
+    // re-run getComputedStyle, a style-recalc trigger) once per
+    // pointerdown.
+    const warn = console.warn as jest.Mock;
+    document.body.innerHTML = `
+      <div id="static-parent">
+        <img id="target" lvt-fx:area-select="selectImageArea">
+      </div>
+    `;
+    const target = document.getElementById("target") as HTMLImageElement;
+    target.getBoundingClientRect = jest.fn(() => ({
+      x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 200,
+      width: 200, height: 200, toJSON: () => ({}),
+    } as DOMRect));
+    (target as any).setPointerCapture = jest.fn();
+    (target as any).releasePointerCapture = jest.fn();
+    handleAreaSelectDirectives(document.body, jest.fn());
+
+    // Three drags on the same mis-configured parent — only the FIRST
+    // should warn.
+    for (let i = 0; i < 3; i++) {
+      dispatchPointer(target, "pointerdown", 10, 10);
+      dispatchPointer(target, "pointerup", 60, 60);
+    }
+
+    const warnings = warn.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("parentElement has no positioning context")
+    );
+    expect(warnings.length).toBe(1);
   });
 
   it("pointercancel cancels the drag without dispatching", () => {
