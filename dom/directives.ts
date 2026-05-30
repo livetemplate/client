@@ -1072,6 +1072,15 @@ export function teardownAreaSelectForRoot(rootElement: Element): void {
 // sweep iterates to detect elements whose attribute was removed by a
 // server diff, and detached elements are cleaned up via the same
 // sweep (isConnected check).
+//
+// Module-level singleton: shared across all LiveTemplateClient
+// instances in the window. If two clients ever arm the same element
+// (rare — usually clients have disjoint roots), each gets its own
+// entry. On hashchange, the shared window listener iterates the map
+// and dispatches through every entry's own send — so a multi-client
+// page sees each client receive its hash event. Teardown is scoped
+// per root via teardownURLHashForRoot, so clients don't tear down
+// each other's listeners.
 const urlHashArmed = new Map<Element, URLHashEntry>();
 
 // urlHashWindowListener is the single window-level `hashchange`
@@ -1340,6 +1349,16 @@ function mirrorDataAttrToLocation(entry: URLHashEntry, dataHash: string): void {
 // file (prereview's SetURLHash does, via the loadDiffCached failure
 // path). The cost is one wasted roundtrip per false positive, which
 // is acceptable for the alternative of missing real deep links.
+//
+// False negatives: extension-less filenames at the repo root —
+// `#Makefile`, `#Dockerfile`, `#LICENSE` — don't match this
+// heuristic and won't be dispatched as path-only deep links. The
+// workaround is the line-form (`#Makefile:L1`), which always
+// dispatches. This trade-off is deliberate: a heuristic that
+// matched single-token hashes would also clobber every native
+// anchor / popover id, which is a much worse default. Consumers
+// that need extension-less file deep links can build a richer
+// directive on top.
 function looksLikeDeepLinkHash(hash: string): boolean {
   if (!hash) return false;
   return hash.includes(":") || hash.includes("/") || hash.includes(".");
