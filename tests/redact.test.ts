@@ -112,6 +112,30 @@ describe("redactActionData", () => {
     expect(data.passport).toEqual({ redacted: true, field: "passport" });
   });
 
+  it("redacts even when localStorage is entirely unavailable (fail-closed)", () => {
+    // Simulate a browser where localStorage is absent (disabled storage /
+    // sandboxed iframe): getStorage() sees no global and returns null. The raw
+    // value must still be dropped from the payload rather than leaked.
+    const desc = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      const input = document.createElement("input");
+      input.setAttribute("name", "passport");
+      input.setAttribute("data-lvt-redact", "passport");
+      input.value = "secret";
+
+      const data: Record<string, unknown> = { passport: "secret" };
+      redactActionData(input, data); // no opts -> falls back to (absent) global
+
+      expect(data.passport).toEqual({ redacted: true, field: "passport" });
+    } finally {
+      if (desc) Object.defineProperty(globalThis, "localStorage", desc);
+    }
+  });
+
   it("resolves the scope from the page's data-lvt-id when none is given", () => {
     document.body.innerHTML = `<div data-lvt-id="page-xyz"></div>`;
     const input = document.createElement("input");

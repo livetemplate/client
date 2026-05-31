@@ -33,6 +33,11 @@ const STORAGE_PREFIX = "lvt-redact";
 // The grammar is bracket-based, not angle-based: "<<name>>" is mangled by both
 // html/template's escaper and the browser's innerHTML parser (it reads "<name>"
 // as a tag), whereas "[[name]]" survives every context intact.
+//
+// The `g` flag carries `lastIndex` state, but it is only ever used with
+// String.prototype.replace (which resets lastIndex on each call), so the shared
+// module-level instance is safe. Do not switch to `.exec()` in a loop without
+// reconsidering this.
 const TOKEN_RE = /\[\[([\w.-]+)\]\]/g;
 
 export interface RedactOptions {
@@ -104,9 +109,14 @@ function collectRedactInputs(actionElement: Element): Element[] {
  * Shared outgoing-redaction core. For every redact-tagged element at/under
  * `actionElement`: persist its value to localStorage and hand the sink the
  * payload key + sentinel to write. The sink differs per transport (a JSON
- * payload object vs. a multipart FormData). No-op when storage is unavailable
- * (the raw value would then flow to the server — callers that need a hard
- * guarantee should feature-detect storage first).
+ * payload object vs. a multipart FormData).
+ *
+ * Redaction is fail-closed: the sentinel is ALWAYS written, regardless of
+ * whether persistence is possible. Persistence is the best-effort part — if
+ * localStorage is entirely unavailable (disabled / sandboxed iframe) or setItem
+ * throws (quota), the raw value is still dropped from the payload so it never
+ * reaches the server. The security guarantee (never leak) takes priority over
+ * the UX (being able to restore the value later).
  */
 function applyOutgoingRedaction(
   actionElement: Element,
@@ -114,19 +124,22 @@ function applyOutgoingRedaction(
   sink: (key: string, sentinel: RedactSentinel) => void,
 ): void {
   const storage = getStorage(opts);
-  if (!storage) return;
-  const scope = opts?.scope ?? resolveScope(actionElement.ownerDocument);
+  const scope = storage
+    ? (opts?.scope ?? resolveScope(actionElement.ownerDocument))
+    : null;
 
   for (const el of collectRedactInputs(actionElement)) {
     const field = el.getAttribute("data-lvt-redact");
     if (!field || !hasValue(el)) continue;
 
-    try {
-      storage.setItem(storageKey(scope, field), el.value);
-    } catch {
-      // Quota exceeded or storage disabled mid-session: skip persisting. We do
-      // NOT fall through to leaking the raw value — the sink still writes the
-      // sentinel below, so the secret never leaves the browser.
+    // Persist best-effort; both branches (no storage, setItem throws) fall
+    // through to the sentinel write below — never to leaking the raw value.
+    if (storage && scope) {
+      try {
+        storage.setItem(storageKey(scope, field), el.value);
+      } catch {
+        // Quota exceeded — value not persisted, but still redacted below.
+      }
     }
     // The payload key the server sees is the element's `name` (falling back to
     // the redact field name, mirroring the event-delegation "name || value"
