@@ -5,6 +5,16 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changes
+
+- feat: data-lvt-redact — Preview-mode field redaction. Inputs tagged
+  `data-lvt-redact="<field>"` keep their value in browser localStorage and send a
+  `{redacted:true,field}` sentinel instead; `[[field]]` placeholder tokens (emitted
+  by the Go `lvt.Redact` helper) are substituted back from localStorage before each
+  DOM patch. Purely additive — apps without the attribute behave identically.
+
 ## [v0.11.7] - 2026-05-30
 
 ### Changes

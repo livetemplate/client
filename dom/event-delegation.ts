@@ -1,4 +1,5 @@
 import { debounce, throttle } from "../utils/rate-limit";
+import { redactActionData, redactFormData } from "./redact";
 import { lvtSelector } from "../utils/lvt-selector";
 import { executeAction, resolveTarget, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
@@ -584,6 +585,11 @@ export class EventDelegator {
               // tier1FormData is only set when targetElement is a form.
               if (tier1FormData !== null) {
                 this.logger.debug("Tier 1 file upload detected, using HTTP fetch");
+                // Preview-mode redaction on the multipart path: a redacted field
+                // in a form that also has a file input would otherwise POST its
+                // raw value as a multipart field, bypassing the JSON redaction
+                // below. Redact the FormData before it leaves the browser.
+                redactFormData(targetElement, tier1FormData);
                 this.context.sendHTTPMultipart(
                   targetElement as HTMLFormElement,
                   action,
@@ -591,6 +597,12 @@ export class EventDelegator {
                 );
                 return;
               }
+
+              // Preview-mode redaction: persist any data-lvt-redact values to
+              // localStorage and replace them in the payload with a sentinel so
+              // the raw value never reaches the server. No-op when no element is
+              // tagged. Runs last so it sees the fully-built message.data.
+              redactActionData(targetElement, message.data);
 
               this.context.send(message);
               this.logger.debug("send() called");
