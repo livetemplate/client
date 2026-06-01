@@ -35,6 +35,7 @@ import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
 import { setupSpy, teardownSpy } from "./dom/spy";
+import { hydrateRedactedTokens } from "./dom/redact";
 import { TreeRenderer } from "./state/tree-renderer";
 import {
   RangeDomApplier,
@@ -1826,6 +1827,15 @@ export class LiveTemplateClient {
       // preventing leaked attributes on the live DOM.
       this.rangeDomApplier.cleanupMarkers(element);
     }
+
+    // Preview-mode hydration: fill [data-lvt-redact] elements from localStorage
+    // (.value for inputs, textContent for spans). Runs on the LIVE element AFTER
+    // morphdom (not the detached tempWrapper before it): a redacted element is
+    // static, so it's never re-walked in an update patch — the committed DOM is
+    // the only place to catch it. Runs before focus restoration so a restored
+    // input's value is present when its focus/selection is reapplied. No-op when
+    // nothing is tagged/stored.
+    hydrateRedactedTokens(element);
 
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
