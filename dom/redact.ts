@@ -78,19 +78,17 @@ function hasValue(el: Element): el is HTMLInputElement | HTMLTextAreaElement | H
 }
 
 /**
- * Collect every redact-tagged value element at or under `actionElement`.
- * `actionElement` itself is included when it is the tagged element (the
- * single-input change/input event path), as well as any descendants (the
- * form-submit path).
+ * Collect every redact-tagged element at or under `root` — `root` itself when it
+ * carries the attribute, plus all descendants. Used by both the outgoing path
+ * (the action element may be the tagged input) and the incoming path (so a
+ * tagged root is hydrated, not just its children).
  */
-function collectRedactInputs(actionElement: Element): Element[] {
+function collectRedactElements(root: Element): Element[] {
   const found: Element[] = [];
-  if (actionElement.hasAttribute("data-lvt-redact")) {
-    found.push(actionElement);
+  if (root.hasAttribute("data-lvt-redact")) {
+    found.push(root);
   }
-  actionElement
-    .querySelectorAll?.("[data-lvt-redact]")
-    .forEach((el) => found.push(el));
+  root.querySelectorAll?.("[data-lvt-redact]").forEach((el) => found.push(el));
   return found;
 }
 
@@ -117,7 +115,7 @@ function applyOutgoingRedaction(
     ? (opts?.scope ?? resolveScope(actionElement.ownerDocument))
     : null;
 
-  for (const el of collectRedactInputs(actionElement)) {
+  for (const el of collectRedactElements(actionElement)) {
     const field = el.getAttribute("data-lvt-redact");
     if (!field || !hasValue(el)) continue;
 
@@ -203,16 +201,18 @@ export function hydrateRedactedTokens(root: Element, opts?: RedactOptions): void
   // mid-keystroke would clobber in-progress input (and the stored value may lag
   // what they've typed since the last dispatch).
   const active = root.ownerDocument?.activeElement ?? null;
-  root.querySelectorAll?.("[data-lvt-redact]").forEach((el) => {
-    if (el === active) return;
+  for (const el of collectRedactElements(root)) {
+    if (el === active) continue;
     const field = el.getAttribute("data-lvt-redact");
-    if (!field) return;
+    if (!field) continue;
     const v = read(field);
-    if (v === null) return;
+    if (v === null) continue;
     if (hasValue(el)) {
+      // For file inputs, el.value is the fake C:\fakepath string, not file
+      // contents — redacting file fields is out of scope for this helper.
       el.value = v;
     } else {
       el.textContent = v;
     }
-  });
+  }
 }

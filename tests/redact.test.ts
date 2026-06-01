@@ -235,6 +235,17 @@ describe("hydrateRedactedTokens", () => {
     expect(root.querySelector("input")!.value).toBe("X1234567");
   });
 
+  it("hydrates root itself when it carries the attribute (not just descendants)", () => {
+    storage.setItem("lvt-redact:s1:passport", "X1234567");
+    const root = document.createElement("span");
+    root.setAttribute("data-lvt-redact", "passport");
+    document.body.appendChild(root);
+
+    hydrateRedactedTokens(root, { storage, scope: "s1" });
+
+    expect(root.textContent).toBe("X1234567");
+  });
+
   it("fills textContent of a tagged non-input element (the lvt.Redact span)", () => {
     storage.setItem("lvt-redact:s1:passport", "X1234567");
     const root = document.createElement("div");
