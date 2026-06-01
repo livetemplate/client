@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changes
+### Added
 
-- feat: data-lvt-redact — Preview-mode field redaction. Inputs tagged
+- feat: data-lvt-redact — Preview-mode field redaction. Elements tagged
   `data-lvt-redact="<field>"` keep their value in browser localStorage and send a
-  `{redacted:true,field}` sentinel instead; `[[field]]` placeholder tokens (emitted
-  by the Go `lvt.Redact` helper) are substituted back from localStorage before each
-  DOM patch. Purely additive — apps without the attribute behave identically.
+  `{redacted:true,field}` sentinel instead (both the JSON and multipart send paths);
+  on render the client fills `[data-lvt-redact]` elements from localStorage —
+  `.value` for inputs, `textContent` for the `<span>` the Go `lvt.Redact` helper
+  emits. Substitution is scoped to the attribute, never a free text scan, so
+  user-posted content can't trigger it. Purely additive.
 
 ## [v0.11.7] - 2026-05-30
 

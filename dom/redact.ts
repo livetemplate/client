@@ -17,28 +17,17 @@
  *      transports: `redactActionData` for the JSON payload (WebSocket / HTTP-JSON)
  *      and `redactFormData` for the multipart file-upload path.
  *
- *   2. Incoming (hydrateRedactedTokens): before each DOM patch is applied, real
- *      values are substituted back in from localStorage — both into
- *      `input[data-lvt-redact]` element values and into `[[field]]` placeholder
- *      tokens in text content (the token the Go `lvt.Redact` helper emits).
+ *   2. Incoming (hydrateRedactedTokens): after each DOM patch, real values are
+ *      filled back into `[data-lvt-redact]` elements from localStorage — `.value`
+ *      for inputs, `textContent` for the <span> the Go `lvt.Redact` helper emits.
+ *      Substitution is scoped to the attribute, never a free text scan, so
+ *      user-posted content cannot trigger it.
  *
  * Values are namespaced by the page's `data-lvt-id` scope so two LiveTemplate
  * pages in the same origin don't collide.
  */
 
 const STORAGE_PREFIX = "lvt-redact";
-
-// Matches the placeholder token emitted by the Go `lvt.Redact(name)` helper.
-// Field names are word chars plus dot/hyphen (e.g. "tax_id", "address.line1").
-// The grammar is bracket-based, not angle-based: "<<name>>" is mangled by both
-// html/template's escaper and the browser's innerHTML parser (it reads "<name>"
-// as a tag), whereas "[[name]]" survives every context intact.
-//
-// The `g` flag carries `lastIndex` state, but it is only ever used with
-// String.prototype.replace (which resets lastIndex on each call), so the shared
-// module-level instance is safe. Do not switch to `.exec()` in a loop without
-// reconsidering this.
-const TOKEN_RE = /\[\[([\w.-]+)\]\]/g;
 
 export interface RedactOptions {
   /** Storage backend; defaults to window.localStorage. Injectable for tests. */
@@ -186,15 +175,11 @@ export function redactFormData(
 }
 
 /**
- * Substitute real values back into the rendered DOM. Call on the LIVE element
- * after the patch commits (redacted content tokens are static, so they only
- * exist on the committed DOM, never in an update patch).
- *
- * Handles two surfaces:
- *   - `input[data-lvt-redact]` (and textarea/select): sets `.value`.
- *   - `[[field]]` tokens in text nodes: replaces with the stored value.
- *
- * Reads are cached per call so repeated tokens cost one storage hit each.
+ * Fill every `[data-lvt-redact]` element from localStorage. Call on the LIVE
+ * element after the patch commits. Substitution is scoped to elements carrying
+ * the attribute — never a free text scan — so user-posted content can't trigger
+ * it. Value elements (input/textarea/select) get `.value`; others (the <span>
+ * the Go lvt.Redact helper emits) get `textContent`. Reads are cached per call.
  */
 export function hydrateRedactedTokens(root: Element, opts?: RedactOptions): void {
   const storage = getStorage(opts);
@@ -214,36 +199,20 @@ export function hydrateRedactedTokens(root: Element, opts?: RedactOptions): void
     return v;
   };
 
-  // 1. Tagged value elements. Skip the element the user is currently editing —
-  // overwriting .value mid-keystroke would clobber in-progress input (and the
-  // stored value may lag what they've typed since the last dispatch).
+  // Skip the element the user is currently editing — overwriting .value
+  // mid-keystroke would clobber in-progress input (and the stored value may lag
+  // what they've typed since the last dispatch).
   const active = root.ownerDocument?.activeElement ?? null;
   root.querySelectorAll?.("[data-lvt-redact]").forEach((el) => {
     if (el === active) return;
     const field = el.getAttribute("data-lvt-redact");
-    if (!field || !hasValue(el)) return;
+    if (!field) return;
     const v = read(field);
-    if (v !== null) el.value = v;
+    if (v === null) return;
+    if (hasValue(el)) {
+      el.value = v;
+    } else {
+      el.textContent = v;
+    }
   });
-
-  // 2. `[[field]]` tokens in text nodes. Walk only text nodes; never touches
-  // attributes or element structure, so morphdom still diffs normally.
-  const ownerDoc = root.ownerDocument;
-  if (!ownerDoc) return;
-  const walker = ownerDoc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const pending: Text[] = [];
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if (n.nodeValue && n.nodeValue.includes("[[")) {
-      pending.push(n as Text);
-    }
-  }
-  for (const textNode of pending) {
-    const replaced = textNode.nodeValue!.replace(TOKEN_RE, (whole, field: string) => {
-      const v = read(field);
-      return v !== null ? v : whole;
-    });
-    if (replaced !== textNode.nodeValue) {
-      textNode.nodeValue = replaced;
-    }
-  }
 }

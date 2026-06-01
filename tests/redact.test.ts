@@ -232,69 +232,87 @@ describe("hydrateRedactedTokens", () => {
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
-    const input = root.querySelector("input")!;
-    expect(input.value).toBe("X1234567");
+    expect(root.querySelector("input")!.value).toBe("X1234567");
   });
 
-  it("replaces [[field]] tokens in text content", () => {
+  it("fills textContent of a tagged non-input element (the lvt.Redact span)", () => {
     storage.setItem("lvt-redact:s1:passport", "X1234567");
     const root = document.createElement("div");
-    root.innerHTML = `<span>Your passport: [[passport]]</span>`;
+    root.innerHTML = `<span data-lvt-redact="passport"></span>`;
     document.body.appendChild(root);
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
-    expect(root.querySelector("span")!.textContent).toBe("Your passport: X1234567");
+    expect(root.querySelector("span")!.textContent).toBe("X1234567");
   });
 
-  it("replaces multiple distinct tokens in one pass", () => {
+  it("fills multiple distinct tagged elements in one pass", () => {
     storage.setItem("lvt-redact:s1:first", "Ada");
     storage.setItem("lvt-redact:s1:last", "Lovelace");
     const root = document.createElement("div");
-    root.innerHTML = `<p>[[first]] [[last]]</p>`;
+    root.innerHTML =
+      `<span data-lvt-redact="first"></span> <span data-lvt-redact="last"></span>`;
     document.body.appendChild(root);
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
-    expect(root.querySelector("p")!.textContent).toBe("Ada Lovelace");
+    const spans = root.querySelectorAll("span");
+    expect(spans[0].textContent).toBe("Ada");
+    expect(spans[1].textContent).toBe("Lovelace");
   });
 
-  it("leaves a token untouched when no value is stored for it", () => {
+  it("leaves a tagged element empty when no value is stored", () => {
     const root = document.createElement("div");
-    root.innerHTML = `<span>[[unknown]]</span>`;
+    root.innerHTML = `<span data-lvt-redact="unknown"></span>`;
     document.body.appendChild(root);
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
-    expect(root.querySelector("span")!.textContent).toBe("[[unknown]]");
+    expect(root.querySelector("span")!.textContent).toBe("");
   });
 
   it("escapes substituted values as text, never as HTML (no XSS)", () => {
-    // A stored value containing markup must land as literal text, not be
-    // parsed as DOM. Setting nodeValue (not innerHTML) guarantees this.
+    // A stored value containing markup must land as literal text (textContent),
+    // not be parsed as DOM.
     storage.setItem("lvt-redact:s1:bio", "<img src=x onerror=alert(1)>");
     const root = document.createElement("div");
-    root.innerHTML = `<span>[[bio]]</span>`;
+    root.innerHTML = `<span data-lvt-redact="bio"></span>`;
     document.body.appendChild(root);
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
     const span = root.querySelector("span")!;
     expect(span.textContent).toBe("<img src=x onerror=alert(1)>");
-    // No <img> element was created — the value stayed text.
     expect(span.querySelector("img")).toBeNull();
   });
 
-  it("does not substitute tokens inside element attributes (content-only)", () => {
+  it("does NOT substitute token-looking text without the attribute (no free scan)", () => {
+    // The security guarantee: only elements carrying data-lvt-redact are filled.
+    // User-posted content that merely names a field must never trigger
+    // substitution of the viewer's stored value.
     storage.setItem("lvt-redact:s1:passport", "X1234567");
     const root = document.createElement("div");
-    // A token in an attribute must NOT be substituted — the walker only
-    // touches text nodes, so the real value never leaks into an attribute.
-    root.innerHTML = `<span title="[[passport]]">visible</span>`;
+    root.innerHTML = `<span>my passport is [[passport]] and {{passport}}</span>`;
     document.body.appendChild(root);
 
     hydrateRedactedTokens(root, { storage, scope: "s1" });
 
-    expect(root.querySelector("span")!.getAttribute("title")).toBe("[[passport]]");
+    const text = root.querySelector("span")!.textContent!;
+    expect(text).toBe("my passport is [[passport]] and {{passport}}");
+    expect(text).not.toContain("X1234567");
+  });
+
+  it("skips the element the user is currently editing", () => {
+    storage.setItem("lvt-redact:s1:passport", "STORED");
+    const root = document.createElement("div");
+    root.innerHTML = `<input name="passport" data-lvt-redact="passport" value="typing" />`;
+    document.body.appendChild(root);
+    const input = root.querySelector("input")!;
+    input.focus();
+
+    hydrateRedactedTokens(root, { storage, scope: "s1" });
+
+    // Focused element keeps the user's in-progress value, not the stored one.
+    expect(input.value).toBe("typing");
   });
 });
