@@ -1828,14 +1828,13 @@ export class LiveTemplateClient {
       this.rangeDomApplier.cleanupMarkers(element);
     }
 
-    // Preview-mode hydration: substitute real values back from localStorage
-    // into data-lvt-redact inputs and `[[field]]` placeholder tokens. Runs on
-    // the LIVE element AFTER morphdom (not the detached tempWrapper before it):
-    // redacted content tokens like `[[passport]]` are static, so they're never
-    // re-walked in an update patch — scanning the committed DOM is the only way
-    // to catch them. Runs before focus restoration so a restored input's value
-    // is present when its focus/selection is reapplied. No-op when nothing is
-    // tagged/stored.
+    // Preview-mode hydration: fill [data-lvt-redact] elements from localStorage
+    // (.value for inputs, textContent for spans). Runs on the LIVE element AFTER
+    // morphdom (not the detached tempWrapper before it): a redacted element is
+    // static, so it's never re-walked in an update patch — the committed DOM is
+    // the only place to catch it. Runs before focus restoration so a restored
+    // input's value is present when its focus/selection is reapplied. No-op when
+    // nothing is tagged/stored.
     hydrateRedactedTokens(element);
 
     // Restore focus to previously focused element
