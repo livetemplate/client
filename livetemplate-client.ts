@@ -1414,7 +1414,16 @@ export class LiveTemplateClient {
     };
 
     if (!result.changed && !hasStaticsInTree(update)) {
-      // No changes detected and no statics in update, skip morphdom
+      // No DOM changes to apply — skip morphdom. But the action still
+      // completed, so its loading lifecycle must still resolve: fire the
+      // form lifecycle (which dispatches lvt:done → reactive on:done
+      // attributes, lvt-form:disable-with restore, form aria-busy). Without
+      // this, a no-op action (re-submitting the same value, or any
+      // idempotent action that produces an empty render diff) leaves
+      // spinners spinning and disabled buttons stuck forever.
+      if (meta) {
+        this.formLifecycleManager.handleResponse(meta);
+      }
       return;
     }
 
