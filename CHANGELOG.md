@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.11.9] - 2026-06-06
+
+### Changes
+
+- Fix loading lifecycle stuck when an action produces no render diff (#128) (b1725cc)
+
+
+
 ## [v0.11.8] - 2026-06-01
 
 ### Changes
