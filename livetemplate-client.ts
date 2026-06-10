@@ -237,7 +237,8 @@ export class LiveTemplateClient {
             );
           }
         },
-        postMultipartUpload: (formData) => this.postUploadMultipart(formData),
+        postMultipartUpload: (formData, signal) =>
+          this.postUploadMultipart(formData, signal),
         isConnected: () =>
           !this.useHTTP && this.webSocketManager.getReadyState() === 1,
         postUploadStart: (message, signal) =>

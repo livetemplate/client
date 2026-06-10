@@ -403,8 +403,14 @@ export class UploadHandler {
 
   /** Point every preview placeholder for uploadName at the given object URL. */
   private applyPreview(uploadName: string, url: string): void {
+    // Escape the field name so a name with a quote/bracket can't break or inject
+    // into the selector (falls back to the raw value where CSS.escape is absent).
+    const safeName =
+      typeof CSS !== "undefined" && CSS.escape
+        ? CSS.escape(uploadName)
+        : uploadName;
     const els = document.querySelectorAll<HTMLElement>(
-      `[data-lvt-upload-preview="${uploadName}"]`
+      `[data-lvt-upload-preview="${safeName}"]`
     );
     els.forEach((el) => {
       if (el instanceof HTMLImageElement) {
