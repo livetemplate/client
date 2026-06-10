@@ -42,6 +42,7 @@ export class UploadHandler {
     signal?: AbortSignal
   ) => Promise<UploadStartResponse>;
   private pendingHandshakes: Set<AbortController> = new Set();
+  private pendingUploads: Set<AbortController> = new Set(); // in-flight proxied fetches
   private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
@@ -365,6 +366,7 @@ export class UploadHandler {
     }
 
     entry.abortController = new AbortController();
+    this.pendingUploads.add(entry.abortController);
     // A single fetch has no native upload progress, so emit a start event (0%)
     // and let finishUpload emit 100% — a progress bar won't sit frozen with no
     // signal at all.
@@ -385,6 +387,8 @@ export class UploadHandler {
         this.onError(entry, errorMsg);
       }
       this.cleanupEntries(entry.uploadName);
+    } finally {
+      if (entry.abortController) this.pendingUploads.delete(entry.abortController);
     }
   }
 
@@ -461,12 +465,17 @@ export class UploadHandler {
 
   /** Revoke all preview object URLs. Called on teardown to avoid leaks. */
   revokePreviews(): void {
-    // Abort in-flight offline handshakes first so a late resolution doesn't
-    // create a new preview URL after we've cleared the map.
+    // Abort in-flight offline handshakes and proxied upload fetches first, so a
+    // late resolution doesn't create a preview URL or apply a tree update after
+    // the client has torn down.
     for (const controller of this.pendingHandshakes) {
       controller.abort();
     }
     this.pendingHandshakes.clear();
+    for (const controller of this.pendingUploads) {
+      controller.abort();
+    }
+    this.pendingUploads.clear();
     for (const url of this.previewUrls.values()) {
       URL.revokeObjectURL(url);
     }
