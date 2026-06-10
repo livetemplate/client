@@ -124,7 +124,7 @@ export interface UploadHandlerOptions {
    * client so the upload handler stays transport-agnostic. Resolves when the
    * POST completes; rejects on a non-2xx response.
    */
-  postMultipartUpload?: (formData: FormData) => Promise<void>;
+  postMultipartUpload?: (formData: FormData, signal?: AbortSignal) => Promise<void>;
   /**
    * Reports whether the WebSocket is currently usable. When false, the upload
    * handshake is sent over HTTP instead (see postUploadStart).

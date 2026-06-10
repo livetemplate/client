@@ -1066,16 +1066,23 @@ export class LiveTemplateClient {
    * upload handler can surface the failure to the app; it is transport-agnostic
    * (works whether or not the WebSocket is connected).
    */
-  private async postUploadMultipart(formData: FormData): Promise<void> {
+  private async postUploadMultipart(
+    formData: FormData,
+    signal?: AbortSignal
+  ): Promise<void> {
     const liveUrl = this.getLiveUrl();
     const response = await fetch(liveUrl, {
       method: "POST",
       credentials: "include",
       headers: {
         Accept: "application/json",
+        // X-Lvt-Upload is a non-safelisted header, so it forces a CORS preflight
+        // — a cross-site page can't silently POST the user's cookies here.
+        "X-Lvt-Upload": "proxied",
         // Do NOT set Content-Type — the browser sets the multipart boundary.
       },
       body: formData,
+      signal,
     });
 
     if (!response.ok) {

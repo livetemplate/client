@@ -32,7 +32,10 @@ export class UploadHandler {
   private onProgress?: (entry: UploadEntry) => void;
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
-  private postMultipartUpload?: (formData: FormData) => Promise<void>;
+  private postMultipartUpload?: (
+    formData: FormData,
+    signal?: AbortSignal
+  ) => Promise<void>;
   private isConnected?: () => boolean;
   private postUploadStart?: (
     message: UploadStartMessage
@@ -331,6 +334,7 @@ export class UploadHandler {
       return;
     }
 
+    entry.abortController = new AbortController();
     try {
       const formData = new FormData();
       // Write value fields BEFORE the file part so the server resolves the
@@ -338,7 +342,7 @@ export class UploadHandler {
       formData.set("lvt-action", `upload_${entry.uploadName}_complete`);
       formData.set(entry.uploadName, entry.file, entry.file.name);
 
-      await this.postMultipartUpload(formData);
+      await this.postMultipartUpload(formData, entry.abortController.signal);
       this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -410,7 +414,7 @@ export class UploadHandler {
       if (!url) return;
       if (el instanceof HTMLImageElement) {
         if (el.src !== url) el.src = url;
-      } else {
+      } else if (el.getAttribute("src") !== url) {
         el.setAttribute("src", url);
       }
     });
