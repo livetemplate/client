@@ -70,7 +70,16 @@ export class UploadHandler {
         void this.uploadProxied(entry);
         return;
       case "direct":
-        if (entry.external) void this.uploadExternal(entry, entry.external);
+        if (entry.external) {
+          void this.uploadExternal(entry, entry.external);
+        } else {
+          // Direct requires presign metadata; surface the misconfig instead of
+          // silently abandoning the entry.
+          const msg = "direct upload mode requires presigned upload metadata";
+          entry.error = msg;
+          if (this.onError) this.onError(entry, msg);
+          this.cleanupEntries(entry.uploadName);
+        }
         return;
       case "volume":
       default:
@@ -346,6 +355,11 @@ export class UploadHandler {
     if (this.onComplete) {
       this.onComplete(entry.uploadName, [entry]);
     }
+
+    // Drop the tracking entry (the blob URL lives in previewUrls, not entries),
+    // matching every other completed-upload path, so re-selecting the same field
+    // doesn't accumulate stale entries.
+    this.cleanupEntries(entry.uploadName);
   }
 
   /** Point every preview placeholder for uploadName at the given object URL. */

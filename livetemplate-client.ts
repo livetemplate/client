@@ -643,6 +643,7 @@ export class LiveTemplateClient {
     this.hiddenAt = 0;
     this.reconnecting = false;
     this.teardownVisibilityReconnect();
+    this.uploadHandler.revokePreviews();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
     teardownAutoClickTimers();
