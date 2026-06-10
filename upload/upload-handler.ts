@@ -103,6 +103,12 @@ export class UploadHandler {
   private finishUpload(entry: UploadEntry): void {
     entry.done = true;
     entry.progress = 100;
+    // Emit a final 100% tick so every completed path (proxied included) sends it
+    // — a progress bar waiting on 100% won't hang. Idempotent for chunked/external
+    // which already reach 100% during transfer.
+    if (this.onProgress) {
+      this.onProgress(entry);
+    }
     if (this.onComplete) {
       this.onComplete(entry.uploadName, [entry]);
     }
@@ -404,11 +410,17 @@ export class UploadHandler {
   /** Point every preview placeholder for uploadName at the given object URL. */
   private applyPreview(uploadName: string, url: string): void {
     // Escape the field name so a name with a quote/bracket can't break or inject
-    // into the selector (falls back to the raw value where CSS.escape is absent).
-    const safeName =
-      typeof CSS !== "undefined" && CSS.escape
-        ? CSS.escape(uploadName)
-        : uploadName;
+    // into the selector. Prefer CSS.escape; without it, only proceed for a simple
+    // identifier (the normal case) and otherwise skip rather than run a
+    // possibly-broken selector (hydratePreviews still re-applies via attr reads).
+    let safeName: string;
+    if (typeof CSS !== "undefined" && CSS.escape) {
+      safeName = CSS.escape(uploadName);
+    } else if (/^[\w-]+$/.test(uploadName)) {
+      safeName = uploadName;
+    } else {
+      return;
+    }
     const els = document.querySelectorAll<HTMLElement>(
       `[data-lvt-upload-preview="${safeName}"]`
     );
