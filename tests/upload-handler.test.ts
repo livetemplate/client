@@ -261,6 +261,50 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("previews locally without uploading when mode is preview", async () => {
+      const createObjectURL = jest
+        .fn()
+        .mockReturnValue("blob:mock-url");
+      (global as any).URL.createObjectURL = createObjectURL;
+      (global as any).URL.revokeObjectURL = jest.fn();
+
+      document.body.innerHTML = `<img data-lvt-upload-preview="draft" />`;
+
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const previewHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("photo.png", "imgdata", "image/png");
+      await previewHandler.startUpload("draft", [file]);
+      await previewHandler.handleUploadStartResponse({
+        upload_name: "draft",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "photo.png",
+            valid: true,
+            auto_upload: true,
+            mode: "preview",
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      // A local object URL is created and applied to the placeholder...
+      expect(createObjectURL).toHaveBeenCalledWith(file);
+      const img = document.querySelector(
+        '[data-lvt-upload-preview="draft"]'
+      ) as HTMLImageElement;
+      expect(img.getAttribute("src")).toBe("blob:mock-url");
+
+      // ...and nothing is uploaded (no chunks, no multipart POST).
+      expect(postMultipart).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_chunk" })
+      );
+    });
+
     it("logs warning for missing files", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 

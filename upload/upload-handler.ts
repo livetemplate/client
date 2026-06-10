@@ -33,6 +33,7 @@ export class UploadHandler {
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
   private postMultipartUpload?: (formData: FormData) => Promise<void>;
+  private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
   constructor(
@@ -57,7 +58,7 @@ export class UploadHandler {
   private dispatchUpload(entry: UploadEntry): void {
     switch (entry.mode) {
       case "preview":
-        // Preview never uploads; bytes stay on the device. (Handled in Phase 5.)
+        this.uploadPreview(entry);
         return;
       case "proxied":
         void this.uploadProxied(entry);
@@ -295,6 +296,73 @@ export class UploadHandler {
       }
       this.cleanupEntries(entry.uploadName);
     }
+  }
+
+  /**
+   * Preview mode: keep the file on the device and show it locally via an object
+   * URL. Nothing is uploaded — the server already has the file's metadata from
+   * the upload_start handshake. The blob URL is re-applied after server
+   * re-renders by hydratePreviews().
+   */
+  private uploadPreview(entry: UploadEntry): void {
+    // Revoke any prior preview for this field to avoid leaking object URLs.
+    const prev = this.previewUrls.get(entry.uploadName);
+    if (prev) URL.revokeObjectURL(prev);
+
+    const url = URL.createObjectURL(entry.file);
+    this.previewUrls.set(entry.uploadName, url);
+
+    entry.done = true;
+    entry.progress = 100;
+    this.applyPreview(entry.uploadName, url);
+
+    if (this.onComplete) {
+      this.onComplete(entry.uploadName, [entry]);
+    }
+  }
+
+  /** Point every preview placeholder for uploadName at the given object URL. */
+  private applyPreview(uploadName: string, url: string): void {
+    const els = document.querySelectorAll<HTMLElement>(
+      `[data-lvt-upload-preview="${uploadName}"]`
+    );
+    els.forEach((el) => {
+      if (el instanceof HTMLImageElement) {
+        el.src = url;
+      } else {
+        el.setAttribute("src", url);
+      }
+    });
+  }
+
+  /**
+   * Re-attach Preview-mode blob URLs after a DOM morph. The server re-renders
+   * the {{.lvt.UploadPreview}} placeholder with an empty src, so this restores
+   * the local object URL the visitor selected. Called by the client post-update.
+   */
+  hydratePreviews(root: Element): void {
+    const els = root.querySelectorAll<HTMLElement>(
+      "[data-lvt-upload-preview]"
+    );
+    els.forEach((el) => {
+      const name = el.getAttribute("data-lvt-upload-preview");
+      if (!name) return;
+      const url = this.previewUrls.get(name);
+      if (!url) return;
+      if (el instanceof HTMLImageElement) {
+        if (el.src !== url) el.src = url;
+      } else {
+        el.setAttribute("src", url);
+      }
+    });
+  }
+
+  /** Revoke all preview object URLs. Called on teardown to avoid leaks. */
+  revokePreviews(): void {
+    for (const url of this.previewUrls.values()) {
+      URL.revokeObjectURL(url);
+    }
+    this.previewUrls.clear();
   }
 
   /**

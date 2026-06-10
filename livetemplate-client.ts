@@ -1879,6 +1879,11 @@ export class LiveTemplateClient {
     // nothing is tagged/stored.
     hydrateRedactedTokens(element);
 
+    // Preview-mode uploads: re-attach local object URLs to any
+    // [data-lvt-upload-preview] placeholder the server just re-rendered, so the
+    // on-device preview survives server updates (same rationale as redact).
+    this.uploadHandler.hydratePreviews(element);
+
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
