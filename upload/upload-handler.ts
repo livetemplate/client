@@ -38,8 +38,10 @@ export class UploadHandler {
   ) => Promise<void>;
   private isConnected?: () => boolean;
   private postUploadStart?: (
-    message: UploadStartMessage
+    message: UploadStartMessage,
+    signal?: AbortSignal
   ) => Promise<UploadStartResponse>;
+  private pendingHandshakes: Set<AbortController> = new Set();
   private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
@@ -176,15 +178,26 @@ export class UploadHandler {
         );
         return;
       }
+      const controller = new AbortController();
+      this.pendingHandshakes.add(controller);
       try {
-        const response = await this.postUploadStart(startMessage);
-        await this.handleUploadStartResponse(response);
+        const response = await this.postUploadStart(
+          startMessage,
+          controller.signal
+        );
+        // Skip if teardown aborted us mid-flight, so we don't create a preview
+        // object URL after revokePreviews already ran.
+        if (!controller.signal.aborted) {
+          await this.handleUploadStartResponse(response);
+        }
       } catch (error) {
         this.failStart(
           uploadName,
           files,
           error instanceof Error ? error.message : String(error)
         );
+      } finally {
+        this.pendingHandshakes.delete(controller);
       }
       return;
     }
@@ -391,8 +404,8 @@ export class UploadHandler {
     );
     els.forEach((el) => {
       if (el instanceof HTMLImageElement) {
-        el.src = url;
-      } else {
+        if (el.src !== url) el.src = url;
+      } else if (el.getAttribute("src") !== url) {
         el.setAttribute("src", url);
       }
     });
@@ -422,6 +435,12 @@ export class UploadHandler {
 
   /** Revoke all preview object URLs. Called on teardown to avoid leaks. */
   revokePreviews(): void {
+    // Abort in-flight offline handshakes first so a late resolution doesn't
+    // create a new preview URL after we've cleared the map.
+    for (const controller of this.pendingHandshakes) {
+      controller.abort();
+    }
+    this.pendingHandshakes.clear();
     for (const url of this.previewUrls.values()) {
       URL.revokeObjectURL(url);
     }

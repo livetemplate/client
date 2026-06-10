@@ -240,7 +240,8 @@ export class LiveTemplateClient {
         postMultipartUpload: (formData) => this.postUploadMultipart(formData),
         isConnected: () =>
           !this.useHTTP && this.webSocketManager.getReadyState() === 1,
-        postUploadStart: (message) => this.postUploadStartHTTP(message),
+        postUploadStart: (message, signal) =>
+          this.postUploadStartHTTP(message, signal),
       }
     );
 
@@ -1109,7 +1110,8 @@ export class LiveTemplateClient {
    * as a normal action.
    */
   private async postUploadStartHTTP(
-    message: UploadStartMessage
+    message: UploadStartMessage,
+    signal?: AbortSignal
   ): Promise<UploadStartResponse> {
     const response = await fetch(this.getLiveUrl(), {
       method: "POST",
@@ -1120,6 +1122,7 @@ export class LiveTemplateClient {
         "X-Lvt-Upload": "start",
       },
       body: JSON.stringify(message),
+      signal,
     });
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).trim();

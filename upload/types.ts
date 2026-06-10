@@ -135,7 +135,10 @@ export interface UploadHandlerOptions {
    * Used when the WebSocket is down so mode dispatch (and Direct presign) still
    * work. Injected by the LiveTemplate client; rejects on a non-2xx response.
    */
-  postUploadStart?: (message: UploadStartMessage) => Promise<UploadStartResponse>;
+  postUploadStart?: (
+    message: UploadStartMessage,
+    signal?: AbortSignal
+  ) => Promise<UploadStartResponse>;
 }
 
 export interface Uploader {
