@@ -1079,7 +1079,10 @@ export class LiveTemplateClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Proxied upload failed: ${response.status}`);
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(
+        `Proxied upload failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+      );
     }
 
     const updateResponse: UpdateResponse = await response.json();
@@ -1112,7 +1115,10 @@ export class LiveTemplateClient {
       body: JSON.stringify(message),
     });
     if (!response.ok) {
-      throw new Error(`upload_start handshake failed: ${response.status}`);
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(
+        `upload_start handshake failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+      );
     }
     return (await response.json()) as UploadStartResponse;
   }

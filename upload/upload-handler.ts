@@ -164,26 +164,42 @@ export class UploadHandler {
     // the socket down, post the handshake over HTTP and handle the response
     // inline so mode dispatch (and Direct presign) still work.
     const connected = this.isConnected ? this.isConnected() : true;
-    if (!connected && this.postUploadStart) {
+    if (!connected) {
+      if (!this.postUploadStart) {
+        this.failStart(
+          uploadName,
+          files,
+          "upload unavailable: WebSocket is closed and no HTTP fallback is configured"
+        );
+        return;
+      }
       try {
         const response = await this.postUploadStart(startMessage);
         await this.handleUploadStartResponse(response);
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        this.pendingFiles.delete(uploadName);
-        for (const file of files) {
-          if (this.onError) {
-            this.onError(
-              { id: "", file, uploadName, progress: 0, bytesUploaded: 0, valid: false, done: false },
-              msg
-            );
-          }
-        }
+        this.failStart(
+          uploadName,
+          files,
+          error instanceof Error ? error.message : String(error)
+        );
       }
       return;
     }
 
     this.sendMessage(startMessage);
+  }
+
+  // failStart reports a handshake failure on every selected file and clears the
+  // pending set, so a startUpload that can't reach the server isn't silent.
+  private failStart(uploadName: string, files: File[], message: string): void {
+    this.pendingFiles.delete(uploadName);
+    if (!this.onError) return;
+    for (const file of files) {
+      this.onError(
+        { id: "", file, uploadName, progress: 0, bytesUploaded: 0, valid: false, done: false },
+        message
+      );
+    }
   }
 
   /**
@@ -356,9 +372,11 @@ export class UploadHandler {
       this.onComplete(entry.uploadName, [entry]);
     }
 
-    // Drop the tracking entry (the blob URL lives in previewUrls, not entries),
-    // matching every other completed-upload path, so re-selecting the same field
-    // doesn't accumulate stale entries.
+    // Clear the input and drop the tracking entry, matching every other
+    // completed-upload path, so re-submitting doesn't re-trigger on the same
+    // file. The blob URL lives in previewUrls (not the input), so the preview
+    // survives the clear.
+    this.clearFileInput(entry.uploadName);
     this.cleanupEntries(entry.uploadName);
   }
 
