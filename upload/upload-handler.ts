@@ -348,6 +348,10 @@ export class UploadHandler {
     }
 
     entry.abortController = new AbortController();
+    // A single fetch has no native upload progress, so emit a start event (0%)
+    // and let finishUpload emit 100% — a progress bar won't sit frozen with no
+    // signal at all.
+    if (this.onProgress) this.onProgress(entry);
     try {
       const formData = new FormData();
       // Write value fields BEFORE the file part so the server resolves the
@@ -417,10 +421,7 @@ export class UploadHandler {
    * the local object URL the visitor selected. Called by the client post-update.
    */
   hydratePreviews(root: Element): void {
-    const els = root.querySelectorAll<HTMLElement>(
-      "[data-lvt-upload-preview]"
-    );
-    els.forEach((el) => {
+    const apply = (el: Element) => {
       const name = el.getAttribute("data-lvt-upload-preview");
       if (!name) return;
       const url = this.previewUrls.get(name);
@@ -430,7 +431,12 @@ export class UploadHandler {
       } else if (el.getAttribute("src") !== url) {
         el.setAttribute("src", url);
       }
-    });
+    };
+    // querySelectorAll skips the root itself, so match it explicitly.
+    if (root.matches("[data-lvt-upload-preview]")) apply(root);
+    root
+      .querySelectorAll<HTMLElement>("[data-lvt-upload-preview]")
+      .forEach(apply);
   }
 
   /** Revoke all preview object URLs. Called on teardown to avoid leaks. */
