@@ -32,6 +32,7 @@ export class UploadHandler {
   private onProgress?: (entry: UploadEntry) => void;
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
+  private postMultipartUpload?: (formData: FormData) => Promise<void>;
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
   constructor(
@@ -42,9 +43,39 @@ export class UploadHandler {
     this.onProgress = options.onProgress;
     this.onComplete = options.onComplete;
     this.onError = options.onError;
+    this.postMultipartUpload = options.postMultipartUpload;
 
     // Register default uploaders
     this.uploaders.set("s3", new S3Uploader());
+  }
+
+  /**
+   * Dispatch a valid upload entry to the transport its mode requires. The server
+   * declares the mode per-entry; existing entries that only carry `external`
+   * (no mode) fall back to the Direct path for backward compatibility.
+   */
+  private dispatchUpload(entry: UploadEntry): void {
+    switch (entry.mode) {
+      case "preview":
+        // Preview never uploads; bytes stay on the device. (Handled in Phase 5.)
+        return;
+      case "proxied":
+        void this.uploadProxied(entry);
+        return;
+      case "direct":
+        if (entry.external) void this.uploadExternal(entry, entry.external);
+        return;
+      case "volume":
+        void this.uploadChunked(entry);
+        return;
+      default:
+        // No mode (legacy server): infer from presence of presigned meta.
+        if (entry.external) {
+          void this.uploadExternal(entry, entry.external);
+        } else {
+          void this.uploadChunked(entry);
+        }
+    }
   }
 
   /**
@@ -156,6 +187,7 @@ export class UploadHandler {
         valid: info.valid,
         done: false,
         error: info.error,
+        mode: info.mode,
         external: info.external,
       };
 
@@ -170,15 +202,10 @@ export class UploadHandler {
         continue;
       }
 
-      // Only start upload immediately if autoUpload is true
-      // Otherwise, entries are stored and will be uploaded on form submit
+      // Only start upload immediately if autoUpload is true; otherwise the entry
+      // waits for an explicit form-submit trigger.
       if (info.auto_upload) {
-        // Start upload (external or chunked)
-        if (info.external) {
-          this.uploadExternal(entry, info.external);
-        } else {
-          this.uploadChunked(entry);
-        }
+        this.dispatchUpload(entry);
       }
     }
   }
@@ -224,6 +251,48 @@ export class UploadHandler {
         this.onError(entry, errorMsg);
       }
       // Schedule cleanup after error
+      this.cleanupEntries(entry.uploadName);
+    }
+  }
+
+  /**
+   * Upload a Proxied file as a single multipart POST to the live URL. The server
+   * streams the bytes straight to the app's OnUpload handler (zero local-disk
+   * staging) and dispatches the upload_<name>_complete action. Independent of
+   * the WebSocket, so it works with the socket disabled.
+   */
+  private async uploadProxied(entry: UploadEntry): Promise<void> {
+    if (!this.postMultipartUpload) {
+      const msg =
+        "Proxied upload unavailable: no multipart transport configured";
+      entry.error = msg;
+      if (this.onError) this.onError(entry, msg);
+      this.cleanupEntries(entry.uploadName);
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      // Write value fields BEFORE the file part so the server resolves the
+      // action regardless of multipart part ordering.
+      formData.set("lvt-action", `upload_${entry.uploadName}_complete`);
+      formData.set(entry.uploadName, entry.file, entry.file.name);
+
+      await this.postMultipartUpload(formData);
+
+      entry.done = true;
+      entry.progress = 100;
+      if (this.onComplete) {
+        this.onComplete(entry.uploadName, [entry]);
+      }
+      this.clearFileInput(entry.uploadName);
+      this.cleanupEntries(entry.uploadName);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      entry.error = errorMsg;
+      if (this.onError) {
+        this.onError(entry, errorMsg);
+      }
       this.cleanupEntries(entry.uploadName);
     }
   }
@@ -372,11 +441,7 @@ export class UploadHandler {
 
     // Start uploads
     for (const entry of pendingEntries) {
-      if (entry.external) {
-        this.uploadExternal(entry, entry.external);
-      } else {
-        this.uploadChunked(entry);
-      }
+      this.dispatchUpload(entry);
     }
   }
 

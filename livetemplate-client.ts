@@ -236,6 +236,7 @@ export class LiveTemplateClient {
             );
           }
         },
+        postMultipartUpload: (formData) => this.postUploadMultipart(formData),
       }
     );
 
@@ -1051,6 +1052,38 @@ export class LiveTemplateClient {
       }
     } catch (error) {
       this.logger.error("Failed to send HTTP multipart request:", error);
+    }
+  }
+
+  /**
+   * POST a Proxied upload's multipart body to the live URL and apply the tree
+   * response. Unlike sendHTTPMultipart this REJECTS on a non-2xx response so the
+   * upload handler can surface the failure to the app; it is transport-agnostic
+   * (works whether or not the WebSocket is connected).
+   */
+  private async postUploadMultipart(formData: FormData): Promise<void> {
+    const liveUrl = this.getLiveUrl();
+    const response = await fetch(liveUrl, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        // Do NOT set Content-Type — the browser sets the multipart boundary.
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Proxied upload failed: ${response.status}`);
+    }
+
+    const updateResponse: UpdateResponse = await response.json();
+    if (this.wrapperElement) {
+      this.updateDOM(
+        this.wrapperElement,
+        updateResponse.tree,
+        updateResponse.meta
+      );
     }
   }
 

@@ -224,6 +224,43 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("posts a multipart upload (not WS chunks) when mode is proxied", async () => {
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const proxiedHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await proxiedHandler.startUpload("doc", [file]);
+
+      const response: UploadStartResponse = {
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      };
+
+      await proxiedHandler.handleUploadStartResponse(response);
+      await jest.runAllTimersAsync();
+
+      // Proxied uploads go via a single multipart POST...
+      expect(postMultipart).toHaveBeenCalledTimes(1);
+      const fd = postMultipart.mock.calls[0][0] as FormData;
+      expect(fd.get("lvt-action")).toBe("upload_doc_complete");
+      expect(fd.get("doc")).toBeInstanceOf(File);
+
+      // ...and never over the WebSocket chunk transport.
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_chunk" })
+      );
+    });
+
     it("logs warning for missing files", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 
