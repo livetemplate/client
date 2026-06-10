@@ -67,16 +67,27 @@ export class UploadHandler {
         if (entry.external) void this.uploadExternal(entry, entry.external);
         return;
       case "volume":
-        void this.uploadChunked(entry);
-        return;
       default:
-        // No mode (legacy server): infer from presence of presigned meta.
-        if (entry.external) {
-          void this.uploadExternal(entry, entry.external);
-        } else {
-          void this.uploadChunked(entry);
-        }
+        // entry.mode is normalized to a concrete mode at ingest (see
+        // handleUploadStartResponse), so the default is just the Volume path.
+        void this.uploadChunked(entry);
     }
+  }
+
+  /**
+   * Mark an upload finished and run the shared post-completion steps: fire the
+   * onComplete callback, clear the file input, and schedule entry cleanup.
+   * Callers that talk to the server (chunked/external) send their own
+   * upload_complete message first.
+   */
+  private finishUpload(entry: UploadEntry): void {
+    entry.done = true;
+    entry.progress = 100;
+    if (this.onComplete) {
+      this.onComplete(entry.uploadName, [entry]);
+    }
+    this.clearFileInput(entry.uploadName);
+    this.cleanupEntries(entry.uploadName);
   }
 
   /**
@@ -188,7 +199,10 @@ export class UploadHandler {
         valid: info.valid,
         done: false,
         error: info.error,
-        mode: info.mode,
+        // Normalize legacy responses (no mode) at the ingest boundary: a
+        // presigned entry is Direct, otherwise server-side Volume. Downstream
+        // dispatch then only ever sees a concrete mode.
+        mode: info.mode ?? (info.external ? "direct" : "volume"),
         external: info.external,
       };
 
@@ -235,16 +249,7 @@ export class UploadHandler {
       };
 
       this.sendMessage(completeMessage);
-
-      if (this.onComplete) {
-        this.onComplete(entry.uploadName, [entry]);
-      }
-
-      // Clear the file input to prevent re-upload of the same file
-      this.clearFileInput(entry.uploadName);
-
-      // Schedule cleanup after completion
-      this.cleanupEntries(entry.uploadName);
+      this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
@@ -280,14 +285,7 @@ export class UploadHandler {
       formData.set(entry.uploadName, entry.file, entry.file.name);
 
       await this.postMultipartUpload(formData);
-
-      entry.done = true;
-      entry.progress = 100;
-      if (this.onComplete) {
-        this.onComplete(entry.uploadName, [entry]);
-      }
-      this.clearFileInput(entry.uploadName);
-      this.cleanupEntries(entry.uploadName);
+      this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
@@ -418,16 +416,7 @@ export class UploadHandler {
       };
 
       this.sendMessage(completeMessage);
-
-      if (this.onComplete) {
-        this.onComplete(entry.uploadName, [entry]);
-      }
-
-      // Clear the file input to prevent re-upload of the same file
-      this.clearFileInput(entry.uploadName);
-
-      // Schedule cleanup after completion
-      this.cleanupEntries(entry.uploadName);
+      this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
