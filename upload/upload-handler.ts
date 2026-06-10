@@ -33,6 +33,10 @@ export class UploadHandler {
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
   private postMultipartUpload?: (formData: FormData) => Promise<void>;
+  private isConnected?: () => boolean;
+  private postUploadStart?: (
+    message: UploadStartMessage
+  ) => Promise<UploadStartResponse>;
   private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
@@ -45,6 +49,8 @@ export class UploadHandler {
     this.onComplete = options.onComplete;
     this.onError = options.onError;
     this.postMultipartUpload = options.postMultipartUpload;
+    this.isConnected = options.isConnected;
+    this.postUploadStart = options.postUploadStart;
 
     // Register default uploaders
     this.uploaders.set("s3", new S3Uploader());
@@ -138,12 +144,35 @@ export class UploadHandler {
       size: file.size,
     }));
 
-    // Send upload_start message to server
     const startMessage: UploadStartMessage = {
       action: "upload_start",
       upload_name: uploadName,
       files: fileMetadata,
     };
+
+    // Over an open WebSocket the server replies with a separate
+    // UploadStartResponse message (routed to handleUploadStartResponse). With
+    // the socket down, post the handshake over HTTP and handle the response
+    // inline so mode dispatch (and Direct presign) still work.
+    const connected = this.isConnected ? this.isConnected() : true;
+    if (!connected && this.postUploadStart) {
+      try {
+        const response = await this.postUploadStart(startMessage);
+        await this.handleUploadStartResponse(response);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.pendingFiles.delete(uploadName);
+        for (const file of files) {
+          if (this.onError) {
+            this.onError(
+              { id: "", file, uploadName, progress: 0, bytesUploaded: 0, valid: false, done: false },
+              msg
+            );
+          }
+        }
+      }
+      return;
+    }
 
     this.sendMessage(startMessage);
   }

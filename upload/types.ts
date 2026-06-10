@@ -125,6 +125,17 @@ export interface UploadHandlerOptions {
    * POST completes; rejects on a non-2xx response.
    */
   postMultipartUpload?: (formData: FormData) => Promise<void>;
+  /**
+   * Reports whether the WebSocket is currently usable. When false, the upload
+   * handshake is sent over HTTP instead (see postUploadStart).
+   */
+  isConnected?: () => boolean;
+  /**
+   * Posts an upload_start handshake over HTTP and returns the parsed response.
+   * Used when the WebSocket is down so mode dispatch (and Direct presign) still
+   * work. Injected by the LiveTemplate client; rejects on a non-2xx response.
+   */
+  postUploadStart?: (message: UploadStartMessage) => Promise<UploadStartResponse>;
 }
 
 export interface Uploader {

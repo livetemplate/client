@@ -305,6 +305,37 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("posts the handshake over HTTP when the WebSocket is down", async () => {
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      });
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const offlineHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => false,
+        postUploadStart,
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await offlineHandler.startUpload("doc", [file]);
+      await jest.runAllTimersAsync();
+
+      // Handshake went over HTTP (not the WebSocket sendMessage path)...
+      expect(postUploadStart).toHaveBeenCalledTimes(1);
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      // ...and the response was handled inline, dispatching the proxied upload.
+      expect(postMultipart).toHaveBeenCalledTimes(1);
+    });
+
     it("logs warning for missing files", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 

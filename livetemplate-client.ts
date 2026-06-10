@@ -48,6 +48,7 @@ import { WebSocketManager } from "./transport/websocket";
 import { UploadHandler } from "./upload/upload-handler";
 import type {
   UploadProgressMessage,
+  UploadStartMessage,
   UploadStartResponse,
 } from "./upload/types";
 import type {
@@ -237,6 +238,9 @@ export class LiveTemplateClient {
           }
         },
         postMultipartUpload: (formData) => this.postUploadMultipart(formData),
+        isConnected: () =>
+          !this.useHTTP && this.webSocketManager.getReadyState() === 1,
+        postUploadStart: (message) => this.postUploadStartHTTP(message),
       }
     );
 
@@ -1085,6 +1089,31 @@ export class LiveTemplateClient {
         updateResponse.meta
       );
     }
+  }
+
+  /**
+   * Post an upload_start handshake over HTTP (WebSocket-disabled fallback) and
+   * return the parsed UploadStartResponse. The X-Lvt-Upload header tells the
+   * server to answer with the handshake response rather than treating the body
+   * as a normal action.
+   */
+  private async postUploadStartHTTP(
+    message: UploadStartMessage
+  ): Promise<UploadStartResponse> {
+    const response = await fetch(this.getLiveUrl(), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-Lvt-Upload": "start",
+      },
+      body: JSON.stringify(message),
+    });
+    if (!response.ok) {
+      throw new Error(`upload_start handshake failed: ${response.status}`);
+    }
+    return (await response.json()) as UploadStartResponse;
   }
 
   /**
