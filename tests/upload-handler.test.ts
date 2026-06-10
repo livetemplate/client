@@ -224,6 +224,118 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("posts a multipart upload (not WS chunks) when mode is proxied", async () => {
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const proxiedHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await proxiedHandler.startUpload("doc", [file]);
+
+      const response: UploadStartResponse = {
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      };
+
+      await proxiedHandler.handleUploadStartResponse(response);
+      await jest.runAllTimersAsync();
+
+      // Proxied uploads go via a single multipart POST...
+      expect(postMultipart).toHaveBeenCalledTimes(1);
+      const fd = postMultipart.mock.calls[0][0] as FormData;
+      expect(fd.get("lvt-action")).toBe("upload_doc_complete");
+      expect(fd.get("doc")).toBeInstanceOf(File);
+
+      // ...and never over the WebSocket chunk transport.
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_chunk" })
+      );
+    });
+
+    it("previews locally without uploading when mode is preview", async () => {
+      const createObjectURL = jest
+        .fn()
+        .mockReturnValue("blob:mock-url");
+      (global as any).URL.createObjectURL = createObjectURL;
+      (global as any).URL.revokeObjectURL = jest.fn();
+
+      document.body.innerHTML = `<img data-lvt-upload-preview="draft" />`;
+
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const previewHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("photo.png", "imgdata", "image/png");
+      await previewHandler.startUpload("draft", [file]);
+      await previewHandler.handleUploadStartResponse({
+        upload_name: "draft",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "photo.png",
+            valid: true,
+            auto_upload: true,
+            mode: "preview",
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      // A local object URL is created and applied to the placeholder...
+      expect(createObjectURL).toHaveBeenCalledWith(file);
+      const img = document.querySelector(
+        '[data-lvt-upload-preview="draft"]'
+      ) as HTMLImageElement;
+      expect(img.getAttribute("src")).toBe("blob:mock-url");
+
+      // ...and nothing is uploaded (no chunks, no multipart POST).
+      expect(postMultipart).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_chunk" })
+      );
+    });
+
+    it("posts the handshake over HTTP when the WebSocket is down", async () => {
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      });
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const offlineHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => false,
+        postUploadStart,
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await offlineHandler.startUpload("doc", [file]);
+      await jest.runAllTimersAsync();
+
+      // Handshake went over HTTP (not the WebSocket sendMessage path)...
+      expect(postUploadStart).toHaveBeenCalledTimes(1);
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      // ...and the response was handled inline, dispatching the proxied upload.
+      expect(postMultipart).toHaveBeenCalledTimes(1);
+    });
+
     it("logs warning for missing files", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 

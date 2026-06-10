@@ -32,6 +32,18 @@ export class UploadHandler {
   private onProgress?: (entry: UploadEntry) => void;
   private onComplete?: (uploadName: string, entries: UploadEntry[]) => void;
   private onError?: (entry: UploadEntry, error: string) => void;
+  private postMultipartUpload?: (
+    formData: FormData,
+    signal?: AbortSignal
+  ) => Promise<void>;
+  private isConnected?: () => boolean;
+  private postUploadStart?: (
+    message: UploadStartMessage,
+    signal?: AbortSignal
+  ) => Promise<UploadStartResponse>;
+  private pendingHandshakes: Set<AbortController> = new Set();
+  private pendingUploads: Set<AbortController> = new Set(); // in-flight proxied fetches
+  private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
   constructor(
@@ -42,9 +54,67 @@ export class UploadHandler {
     this.onProgress = options.onProgress;
     this.onComplete = options.onComplete;
     this.onError = options.onError;
+    this.postMultipartUpload = options.postMultipartUpload;
+    this.isConnected = options.isConnected;
+    this.postUploadStart = options.postUploadStart;
 
     // Register default uploaders
     this.uploaders.set("s3", new S3Uploader());
+  }
+
+  /**
+   * Dispatch a valid upload entry to the transport its mode requires. The server
+   * declares the mode per-entry; existing entries that only carry `external`
+   * (no mode) fall back to the Direct path for backward compatibility.
+   */
+  private dispatchUpload(entry: UploadEntry): void {
+    switch (entry.mode) {
+      case "preview":
+        this.uploadPreview(entry);
+        return;
+      case "proxied":
+        void this.uploadProxied(entry);
+        return;
+      case "direct":
+        if (entry.external) {
+          void this.uploadExternal(entry, entry.external);
+        } else {
+          // Direct requires presign metadata; surface the misconfig instead of
+          // silently abandoning the entry.
+          const msg = "direct upload mode requires presigned upload metadata";
+          entry.error = msg;
+          if (this.onError) this.onError(entry, msg);
+          this.cleanupEntries(entry.uploadName);
+        }
+        return;
+      case "volume":
+      default:
+        // entry.mode is normalized to a concrete mode at ingest (see
+        // handleUploadStartResponse), so the default is just the Volume path.
+        void this.uploadChunked(entry);
+    }
+  }
+
+  /**
+   * Mark an upload finished and run the shared post-completion steps: fire the
+   * onComplete callback, clear the file input, and schedule entry cleanup.
+   * Callers that talk to the server (chunked/external) send their own
+   * upload_complete message first.
+   */
+  private finishUpload(entry: UploadEntry): void {
+    entry.done = true;
+    entry.progress = 100;
+    // Emit a final 100% tick so every completed path (proxied included) sends it
+    // — a progress bar waiting on 100% won't hang. Idempotent for chunked/external
+    // which already reach 100% during transfer.
+    if (this.onProgress) {
+      this.onProgress(entry);
+    }
+    if (this.onComplete) {
+      this.onComplete(entry.uploadName, [entry]);
+    }
+    this.clearFileInput(entry.uploadName);
+    this.cleanupEntries(entry.uploadName);
   }
 
   /**
@@ -95,14 +165,75 @@ export class UploadHandler {
       size: file.size,
     }));
 
-    // Send upload_start message to server
     const startMessage: UploadStartMessage = {
       action: "upload_start",
       upload_name: uploadName,
       files: fileMetadata,
     };
 
+    // Over an open WebSocket the server replies with a separate
+    // UploadStartResponse message (routed to handleUploadStartResponse). With
+    // the socket down, post the handshake over HTTP and handle the response
+    // inline so mode dispatch (and Direct presign) still work.
+    const connected = this.isConnected ? this.isConnected() : true;
+    if (!connected) {
+      if (!this.postUploadStart) {
+        this.failStart(
+          uploadName,
+          files,
+          "upload unavailable: WebSocket is closed and no HTTP fallback is configured"
+        );
+        return;
+      }
+      const controller = new AbortController();
+      this.pendingHandshakes.add(controller);
+      try {
+        const response = await this.postUploadStart(
+          startMessage,
+          controller.signal
+        );
+        // Skip if teardown aborted us mid-flight, so we don't create a preview
+        // object URL after revokePreviews already ran.
+        if (!controller.signal.aborted) {
+          await this.handleUploadStartResponse(response);
+        }
+      } catch (error) {
+        this.failStart(
+          uploadName,
+          files,
+          error instanceof Error ? error.message : String(error)
+        );
+      } finally {
+        this.pendingHandshakes.delete(controller);
+      }
+      return;
+    }
+
     this.sendMessage(startMessage);
+  }
+
+  // failStart reports a handshake failure on every selected file and clears the
+  // pending set, so a startUpload that can't reach the server isn't silent.
+  private failStart(uploadName: string, files: File[], message: string): void {
+    this.pendingFiles.delete(uploadName);
+    const onError = this.onError;
+    if (!onError) return;
+    // Distinct synthetic ids per file (no server entry exists yet) so a consumer
+    // keying per-file error state doesn't collapse a multi-file failure.
+    files.forEach((file, i) => {
+      onError(
+        {
+          id: `pending-${uploadName}-${i}`,
+          file,
+          uploadName,
+          progress: 0,
+          bytesUploaded: 0,
+          valid: false,
+          done: false,
+        },
+        message
+      );
+    });
   }
 
   /**
@@ -156,6 +287,10 @@ export class UploadHandler {
         valid: info.valid,
         done: false,
         error: info.error,
+        // Normalize legacy responses (no mode) at the ingest boundary: a
+        // presigned entry is Direct, otherwise server-side Volume. Downstream
+        // dispatch then only ever sees a concrete mode.
+        mode: info.mode ?? (info.external ? "direct" : "volume"),
         external: info.external,
       };
 
@@ -170,15 +305,10 @@ export class UploadHandler {
         continue;
       }
 
-      // Only start upload immediately if autoUpload is true
-      // Otherwise, entries are stored and will be uploaded on form submit
+      // Only start upload immediately if autoUpload is true; otherwise the entry
+      // waits for an explicit form-submit trigger.
       if (info.auto_upload) {
-        // Start upload (external or chunked)
-        if (info.external) {
-          this.uploadExternal(entry, info.external);
-        } else {
-          this.uploadChunked(entry);
-        }
+        this.dispatchUpload(entry);
       }
     }
   }
@@ -207,16 +337,7 @@ export class UploadHandler {
       };
 
       this.sendMessage(completeMessage);
-
-      if (this.onComplete) {
-        this.onComplete(entry.uploadName, [entry]);
-      }
-
-      // Clear the file input to prevent re-upload of the same file
-      this.clearFileInput(entry.uploadName);
-
-      // Schedule cleanup after completion
-      this.cleanupEntries(entry.uploadName);
+      this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
@@ -226,6 +347,139 @@ export class UploadHandler {
       // Schedule cleanup after error
       this.cleanupEntries(entry.uploadName);
     }
+  }
+
+  /**
+   * Upload a Proxied file as a single multipart POST to the live URL. The server
+   * streams the bytes straight to the app's OnUpload handler (zero local-disk
+   * staging) and dispatches the upload_<name>_complete action. Independent of
+   * the WebSocket, so it works with the socket disabled.
+   */
+  private async uploadProxied(entry: UploadEntry): Promise<void> {
+    if (!this.postMultipartUpload) {
+      const msg =
+        "Proxied upload unavailable: no multipart transport configured";
+      entry.error = msg;
+      if (this.onError) this.onError(entry, msg);
+      this.cleanupEntries(entry.uploadName);
+      return;
+    }
+
+    entry.abortController = new AbortController();
+    this.pendingUploads.add(entry.abortController);
+    // A single fetch has no native upload progress, so emit a start event (0%)
+    // and let finishUpload emit 100% — a progress bar won't sit frozen with no
+    // signal at all.
+    if (this.onProgress) this.onProgress(entry);
+    try {
+      const formData = new FormData();
+      // Write value fields BEFORE the file part so the server resolves the
+      // action regardless of multipart part ordering.
+      formData.set("lvt-action", `upload_${entry.uploadName}_complete`);
+      formData.set(entry.uploadName, entry.file, entry.file.name);
+
+      await this.postMultipartUpload(formData, entry.abortController.signal);
+      this.finishUpload(entry);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      entry.error = errorMsg;
+      if (this.onError) {
+        this.onError(entry, errorMsg);
+      }
+      this.cleanupEntries(entry.uploadName);
+    } finally {
+      if (entry.abortController) this.pendingUploads.delete(entry.abortController);
+    }
+  }
+
+  /**
+   * Preview mode: keep the file on the device and show it locally via an object
+   * URL. Nothing is uploaded — the server already has the file's metadata from
+   * the upload_start handshake. The blob URL is re-applied after server
+   * re-renders by hydratePreviews().
+   */
+  private uploadPreview(entry: UploadEntry): void {
+    // Revoke any prior preview for this field to avoid leaking object URLs.
+    const prev = this.previewUrls.get(entry.uploadName);
+    if (prev) URL.revokeObjectURL(prev);
+
+    const url = URL.createObjectURL(entry.file);
+    this.previewUrls.set(entry.uploadName, url);
+    this.applyPreview(entry.uploadName, url);
+
+    // Share the completion path with every other mode (progress 100% tick,
+    // onComplete, input clear, cleanup). The blob URL lives in previewUrls, not
+    // the input, so it survives the clear.
+    this.finishUpload(entry);
+  }
+
+  /** Point every preview placeholder for uploadName at the given object URL. */
+  private applyPreview(uploadName: string, url: string): void {
+    // Escape the field name so a name with a quote/bracket can't break or inject
+    // into the selector. Prefer CSS.escape; without it, only proceed for a simple
+    // identifier (the normal case) and otherwise skip rather than run a
+    // possibly-broken selector (hydratePreviews still re-applies via attr reads).
+    let safeName: string;
+    if (typeof CSS !== "undefined" && CSS.escape) {
+      safeName = CSS.escape(uploadName);
+    } else if (/^[\w-]+$/.test(uploadName)) {
+      safeName = uploadName;
+    } else {
+      return;
+    }
+    const els = document.querySelectorAll<HTMLElement>(
+      `[data-lvt-upload-preview="${safeName}"]`
+    );
+    els.forEach((el) => {
+      if (el instanceof HTMLImageElement) {
+        if (el.src !== url) el.src = url;
+      } else if (el.getAttribute("src") !== url) {
+        el.setAttribute("src", url);
+      }
+    });
+  }
+
+  /**
+   * Re-attach Preview-mode blob URLs after a DOM morph. The server re-renders
+   * the {{.lvt.UploadPreview}} placeholder with an empty src, so this restores
+   * the local object URL the visitor selected. Called by the client post-update.
+   */
+  hydratePreviews(root: Element): void {
+    const apply = (el: Element) => {
+      const name = el.getAttribute("data-lvt-upload-preview");
+      if (!name) return;
+      const url = this.previewUrls.get(name);
+      if (!url) return;
+      if (el instanceof HTMLImageElement) {
+        if (el.src !== url) el.src = url;
+      } else if (el.getAttribute("src") !== url) {
+        el.setAttribute("src", url);
+      }
+    };
+    // querySelectorAll skips the root itself, so match it explicitly.
+    if (root.matches("[data-lvt-upload-preview]")) apply(root);
+    root
+      .querySelectorAll<HTMLElement>("[data-lvt-upload-preview]")
+      .forEach(apply);
+  }
+
+  /** Revoke all preview object URLs. Called on teardown to avoid leaks. */
+  revokePreviews(): void {
+    // Abort in-flight offline handshakes and proxied upload fetches first, so a
+    // late resolution doesn't create a preview URL or apply a tree update after
+    // the client has torn down.
+    for (const controller of this.pendingHandshakes) {
+      controller.abort();
+    }
+    this.pendingHandshakes.clear();
+    for (const controller of this.pendingUploads) {
+      controller.abort();
+    }
+    this.pendingUploads.clear();
+    for (const url of this.previewUrls.values()) {
+      URL.revokeObjectURL(url);
+    }
+    this.previewUrls.clear();
   }
 
   /**
@@ -281,16 +535,7 @@ export class UploadHandler {
       };
 
       this.sendMessage(completeMessage);
-
-      if (this.onComplete) {
-        this.onComplete(entry.uploadName, [entry]);
-      }
-
-      // Clear the file input to prevent re-upload of the same file
-      this.clearFileInput(entry.uploadName);
-
-      // Schedule cleanup after completion
-      this.cleanupEntries(entry.uploadName);
+      this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       entry.error = errorMsg;
@@ -372,11 +617,7 @@ export class UploadHandler {
 
     // Start uploads
     for (const entry of pendingEntries) {
-      if (entry.external) {
-        this.uploadExternal(entry, entry.external);
-      } else {
-        this.uploadChunked(entry);
-      }
+      this.dispatchUpload(entry);
     }
   }
 

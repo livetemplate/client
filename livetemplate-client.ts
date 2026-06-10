@@ -48,6 +48,7 @@ import { WebSocketManager } from "./transport/websocket";
 import { UploadHandler } from "./upload/upload-handler";
 import type {
   UploadProgressMessage,
+  UploadStartMessage,
   UploadStartResponse,
 } from "./upload/types";
 import type {
@@ -236,6 +237,12 @@ export class LiveTemplateClient {
             );
           }
         },
+        postMultipartUpload: (formData, signal) =>
+          this.postUploadMultipart(formData, signal),
+        isConnected: () =>
+          !this.useHTTP && this.webSocketManager.getReadyState() === 1,
+        postUploadStart: (message, signal) =>
+          this.postUploadStartHTTP(message, signal),
       }
     );
 
@@ -638,6 +645,7 @@ export class LiveTemplateClient {
     this.hiddenAt = 0;
     this.reconnecting = false;
     this.teardownVisibilityReconnect();
+    this.uploadHandler.revokePreviews();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
     teardownAutoClickTimers();
@@ -1052,6 +1060,78 @@ export class LiveTemplateClient {
     } catch (error) {
       this.logger.error("Failed to send HTTP multipart request:", error);
     }
+  }
+
+  /**
+   * POST a Proxied upload's multipart body to the live URL and apply the tree
+   * response. Unlike sendHTTPMultipart this REJECTS on a non-2xx response so the
+   * upload handler can surface the failure to the app; it is transport-agnostic
+   * (works whether or not the WebSocket is connected).
+   */
+  private async postUploadMultipart(
+    formData: FormData,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const liveUrl = this.getLiveUrl();
+    const response = await fetch(liveUrl, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        // X-Lvt-Upload is a non-safelisted header, so it forces a CORS preflight
+        // — a cross-site page can't silently POST the user's cookies here.
+        "X-Lvt-Upload": "proxied",
+        // Do NOT set Content-Type — the browser sets the multipart boundary.
+      },
+      body: formData,
+      signal,
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(
+        `Proxied upload failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+      );
+    }
+
+    const updateResponse: UpdateResponse = await response.json();
+    if (this.wrapperElement) {
+      this.updateDOM(
+        this.wrapperElement,
+        updateResponse.tree,
+        updateResponse.meta
+      );
+    }
+  }
+
+  /**
+   * Post an upload_start handshake over HTTP (WebSocket-disabled fallback) and
+   * return the parsed UploadStartResponse. The X-Lvt-Upload header tells the
+   * server to answer with the handshake response rather than treating the body
+   * as a normal action.
+   */
+  private async postUploadStartHTTP(
+    message: UploadStartMessage,
+    signal?: AbortSignal
+  ): Promise<UploadStartResponse> {
+    const response = await fetch(this.getLiveUrl(), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-Lvt-Upload": "start",
+      },
+      body: JSON.stringify(message),
+      signal,
+    });
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(
+        `upload_start handshake failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+      );
+    }
+    return (await response.json()) as UploadStartResponse;
   }
 
   /**
@@ -1845,6 +1925,11 @@ export class LiveTemplateClient {
     // input's value is present when its focus/selection is reapplied. No-op when
     // nothing is tagged/stored.
     hydrateRedactedTokens(element);
+
+    // Preview-mode uploads: re-attach local object URLs to any
+    // [data-lvt-upload-preview] placeholder the server just re-rendered, so the
+    // on-device preview survives server updates (same rationale as redact).
+    this.uploadHandler.hydratePreviews(element);
 
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();

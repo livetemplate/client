@@ -16,12 +16,24 @@ export interface UploadConfig {
   chunkSize?: number;
 }
 
+/**
+ * UploadMode mirrors the server's UploadConfig.Mode. It is chosen purely by
+ * server config and delivered per-entry in the upload_start response; the client
+ * dispatches the matching transport.
+ *  - "volume":  WebSocket-chunked staging to the server's disk
+ *  - "direct":  browser → cloud via a presigned URL (carries `external`)
+ *  - "proxied": one multipart POST per file → server streams to remote storage
+ *  - "preview": file stays on device; only metadata is sent
+ */
+export type UploadMode = "volume" | "direct" | "proxied" | "preview";
+
 export interface UploadEntryInfo {
   entry_id: string;
   client_name: string;
   valid: boolean;
   error?: string;
   auto_upload: boolean;
+  mode?: UploadMode;
   external?: ExternalUploadMeta;
 }
 
@@ -92,6 +104,7 @@ export interface UploadEntry {
   valid: boolean;
   done: boolean;
   error?: string;
+  mode?: UploadMode;
   external?: ExternalUploadMeta;
   abortController?: AbortController;
 }
@@ -105,6 +118,27 @@ export interface UploadHandlerOptions {
   onProgress?: UploadProgressCallback;
   onComplete?: UploadCompleteCallback;
   onError?: UploadErrorCallback;
+  /**
+   * Posts a Proxied upload's multipart body (file + action fields) to the live
+   * URL and applies the server's tree response. Injected by the LiveTemplate
+   * client so the upload handler stays transport-agnostic. Resolves when the
+   * POST completes; rejects on a non-2xx response.
+   */
+  postMultipartUpload?: (formData: FormData, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Reports whether the WebSocket is currently usable. When false, the upload
+   * handshake is sent over HTTP instead (see postUploadStart).
+   */
+  isConnected?: () => boolean;
+  /**
+   * Posts an upload_start handshake over HTTP and returns the parsed response.
+   * Used when the WebSocket is down so mode dispatch (and Direct presign) still
+   * work. Injected by the LiveTemplate client; rejects on a non-2xx response.
+   */
+  postUploadStart?: (
+    message: UploadStartMessage,
+    signal?: AbortSignal
+  ) => Promise<UploadStartResponse>;
 }
 
 export interface Uploader {
