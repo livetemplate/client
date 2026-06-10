@@ -215,13 +215,24 @@ export class UploadHandler {
   // pending set, so a startUpload that can't reach the server isn't silent.
   private failStart(uploadName: string, files: File[], message: string): void {
     this.pendingFiles.delete(uploadName);
-    if (!this.onError) return;
-    for (const file of files) {
-      this.onError(
-        { id: "", file, uploadName, progress: 0, bytesUploaded: 0, valid: false, done: false },
+    const onError = this.onError;
+    if (!onError) return;
+    // Distinct synthetic ids per file (no server entry exists yet) so a consumer
+    // keying per-file error state doesn't collapse a multi-file failure.
+    files.forEach((file, i) => {
+      onError(
+        {
+          id: `pending-${uploadName}-${i}`,
+          file,
+          uploadName,
+          progress: 0,
+          bytesUploaded: 0,
+          valid: false,
+          done: false,
+        },
         message
       );
-    }
+    });
   }
 
   /**
@@ -390,21 +401,12 @@ export class UploadHandler {
 
     const url = URL.createObjectURL(entry.file);
     this.previewUrls.set(entry.uploadName, url);
-
-    entry.done = true;
-    entry.progress = 100;
     this.applyPreview(entry.uploadName, url);
 
-    if (this.onComplete) {
-      this.onComplete(entry.uploadName, [entry]);
-    }
-
-    // Clear the input and drop the tracking entry, matching every other
-    // completed-upload path, so re-submitting doesn't re-trigger on the same
-    // file. The blob URL lives in previewUrls (not the input), so the preview
-    // survives the clear.
-    this.clearFileInput(entry.uploadName);
-    this.cleanupEntries(entry.uploadName);
+    // Share the completion path with every other mode (progress 100% tick,
+    // onComplete, input clear, cleanup). The blob URL lives in previewUrls, not
+    // the input, so it survives the clear.
+    this.finishUpload(entry);
   }
 
   /** Point every preview placeholder for uploadName at the given object URL. */
