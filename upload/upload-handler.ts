@@ -410,6 +410,9 @@ export class UploadHandler {
       this.cleanupEntries(entry.uploadName);
     } finally {
       if (entry.abortController) this.pendingUploads.delete(entry.abortController);
+      // Release the DOM reference once the upload is done — the entry may linger
+      // until the cleanup timer fires, and only uploadProxied ever reads it.
+      entry.sourceInput = undefined;
     }
   }
 
@@ -420,12 +423,25 @@ export class UploadHandler {
    * the browser's native form serialization (successful controls only), skipping
    * File values (file inputs are sent as the streaming part) and the reserved
    * lvt-action field. A no-op when the input is outside a form.
+   *
+   * A Proxied upload auto-fires on file selection (not an explicit submit), so it
+   * POSTs the whole enclosing form. Password inputs are excluded by name so
+   * credentials in a co-located form never ride along with an upload the user
+   * didn't deliberately submit; keep other sensitive controls out of a form that
+   * contains an auto-upload file input.
    */
   private appendFormFields(formData: FormData, entry: UploadEntry): void {
     const form = entry.sourceInput?.form;
     if (!form) return;
+    const passwordFields = new Set<string>();
+    for (const el of Array.from(form.elements)) {
+      const input = el as HTMLInputElement;
+      if (input.type === "password" && input.name) passwordFields.add(input.name);
+    }
     for (const [name, value] of new FormData(form).entries()) {
-      if (name === "lvt-action" || value instanceof File) continue;
+      if (name === "lvt-action" || value instanceof File || passwordFields.has(name)) {
+        continue;
+      }
       formData.append(name, value);
     }
   }

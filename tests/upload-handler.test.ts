@@ -272,6 +272,7 @@ describe("UploadHandler", () => {
       const form = document.createElement("form");
       form.innerHTML =
         '<input type="hidden" name="id" value="item-42">' +
+        '<input type="password" name="secret" value="hunter2">' +
         '<input type="file" name="other" lvt-upload="other">' +
         '<input type="file" name="doc" lvt-upload="doc">';
       const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
@@ -303,6 +304,9 @@ describe("UploadHandler", () => {
       expect(fd.get("doc")).toBeInstanceOf(File);
       expect(fd.get("other")).toBeNull();
       expect(fd.get("lvt-action")).toBe("upload_doc_complete");
+      // Password inputs are never serialized into the upload POST — a co-located
+      // credential must not ride along with an auto-fired upload.
+      expect(fd.get("secret")).toBeNull();
     });
 
     it("previews locally without uploading when mode is preview", async () => {
