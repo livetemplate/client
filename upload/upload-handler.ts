@@ -428,11 +428,19 @@ export class UploadHandler {
    * POSTs the whole enclosing form. Password inputs are excluded by name so
    * credentials in a co-located form never ride along with an upload the user
    * didn't deliberately submit; keep other sensitive controls out of a form that
-   * contains an auto-upload file input.
+   * contains an auto-upload file input. (A broader opt-in model — only fields
+   * marked to travel — is tracked upstream as a safer-by-default follow-up.)
+   *
+   * Values are read here, at upload time (after the upload_start round-trip), not
+   * at file-selection time, so edits made between selecting the file and the
+   * upload completing are reflected — the freshest form state wins.
    */
   private appendFormFields(formData: FormData, entry: UploadEntry): void {
     const form = entry.sourceInput?.form;
     if (!form) return;
+    // Collect password field names to exclude. Casting to HTMLInputElement is safe
+    // for the type check: only <input> has type="password"; <select>/<textarea>
+    // simply never match and are serialized normally by FormData below.
     const passwordFields = new Set<string>();
     for (const el of Array.from(form.elements)) {
       const input = el as HTMLInputElement;
