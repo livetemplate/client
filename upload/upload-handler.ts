@@ -26,6 +26,7 @@ import type {
 export class UploadHandler {
   private entries: Map<string, UploadEntry> = new Map();
   private pendingFiles: Map<string, File[]> = new Map(); // uploadName -> files
+  private pendingInputs: Map<string, HTMLInputElement> = new Map(); // uploadName -> triggering input
   private autoUploadConfig: Map<string, boolean> = new Map(); // uploadName -> autoUpload
   private chunkSize: number;
   private uploaders: Map<string, Uploader> = new Map();
@@ -141,8 +142,9 @@ export class UploadHandler {
         if (!files || files.length === 0) return;
 
         // Always send upload_start to get validation and config
-        // But only proceed with chunks if autoUpload is true
-        this.startUpload(uploadName, Array.from(files));
+        // But only proceed with chunks if autoUpload is true. Pass the triggering
+        // input so a Proxied upload can serialize its enclosing form's fields.
+        this.startUpload(uploadName, Array.from(files), input);
       };
 
       input.addEventListener("change", handler);
@@ -154,9 +156,18 @@ export class UploadHandler {
   /**
    * Start upload process for selected files
    */
-  async startUpload(uploadName: string, files: File[]): Promise<void> {
+  async startUpload(
+    uploadName: string,
+    files: File[],
+    sourceInput?: HTMLInputElement
+  ): Promise<void> {
     // Store files temporarily for when server response arrives
     this.pendingFiles.set(uploadName, files);
+    if (sourceInput) {
+      this.pendingInputs.set(uploadName, sourceInput);
+    } else {
+      this.pendingInputs.delete(uploadName);
+    }
 
     // Create file metadata
     const fileMetadata: FileMetadata[] = files.map((file) => ({
@@ -216,6 +227,7 @@ export class UploadHandler {
   // pending set, so a startUpload that can't reach the server isn't silent.
   private failStart(uploadName: string, files: File[], message: string): void {
     this.pendingFiles.delete(uploadName);
+    this.pendingInputs.delete(uploadName);
     const onError = this.onError;
     if (!onError) return;
     // Distinct synthetic ids per file (no server entry exists yet) so a consumer
@@ -259,6 +271,11 @@ export class UploadHandler {
     // Clear pending files
     this.pendingFiles.delete(upload_name);
 
+    // The input that triggered this upload (if any), so a Proxied entry can
+    // serialize its enclosing form's fields. Consumed once, like pendingFiles.
+    const sourceInput = this.pendingInputs.get(upload_name);
+    this.pendingInputs.delete(upload_name);
+
     // Build a map from file name to file object for lookup
     const fileMap = new Map<string, File>();
     for (const file of files) {
@@ -292,6 +309,7 @@ export class UploadHandler {
         // dispatch then only ever sees a concrete mode.
         mode: info.mode ?? (info.external ? "direct" : "volume"),
         external: info.external,
+        sourceInput,
       };
 
       this.entries.set(entry.id, entry);
@@ -376,6 +394,9 @@ export class UploadHandler {
       // Write value fields BEFORE the file part so the server resolves the
       // action regardless of multipart part ordering.
       formData.set("lvt-action", `upload_${entry.uploadName}_complete`);
+      // Then the triggering input's enclosing form fields (e.g. a record id), so
+      // the server can associate the streamed bytes with a record in OnUpload.
+      this.appendFormFields(formData, entry);
       formData.set(entry.uploadName, entry.file, entry.file.name);
 
       await this.postMultipartUpload(formData, entry.abortController.signal);
@@ -389,6 +410,47 @@ export class UploadHandler {
       this.cleanupEntries(entry.uploadName);
     } finally {
       if (entry.abortController) this.pendingUploads.delete(entry.abortController);
+      // Release the DOM reference once the upload is done — the entry may linger
+      // until the cleanup timer fires, and only uploadProxied ever reads it.
+      entry.sourceInput = undefined;
+    }
+  }
+
+  /**
+   * appendFormFields serializes the value fields of the form enclosing the
+   * upload's triggering input into formData, ahead of the file part — so a
+   * Proxied OnUpload handler can read them (e.g. a record id) mid-stream. Uses
+   * the browser's native form serialization (successful controls only), skipping
+   * File values (file inputs are sent as the streaming part) and the reserved
+   * lvt-action field. A no-op when the input is outside a form.
+   *
+   * A Proxied upload auto-fires on file selection (not an explicit submit), so it
+   * POSTs the whole enclosing form. Password inputs are excluded by name so
+   * credentials in a co-located form never ride along with an upload the user
+   * didn't deliberately submit; keep other sensitive controls out of a form that
+   * contains an auto-upload file input. (A broader opt-in model — only fields
+   * marked to travel — is tracked upstream as a safer-by-default follow-up.)
+   *
+   * Values are read here, at upload time (after the upload_start round-trip), not
+   * at file-selection time, so edits made between selecting the file and the
+   * upload completing are reflected — the freshest form state wins.
+   */
+  private appendFormFields(formData: FormData, entry: UploadEntry): void {
+    const form = entry.sourceInput?.form;
+    if (!form) return;
+    // Collect password field names to exclude. Casting to HTMLInputElement is safe
+    // for the type check: only <input> has type="password"; <select>/<textarea>
+    // simply never match and are serialized normally by FormData below.
+    const passwordFields = new Set<string>();
+    for (const el of Array.from(form.elements)) {
+      const input = el as HTMLInputElement;
+      if (input.type === "password" && input.name) passwordFields.add(input.name);
+    }
+    for (const [name, value] of new FormData(form).entries()) {
+      if (name === "lvt-action" || value instanceof File || passwordFields.has(name)) {
+        continue;
+      }
+      formData.append(name, value);
     }
   }
 

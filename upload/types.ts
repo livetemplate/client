@@ -107,6 +107,11 @@ export interface UploadEntry {
   mode?: UploadMode;
   external?: ExternalUploadMeta;
   abortController?: AbortController;
+  // The file input that triggered this upload, when known. Proxied uploads use
+  // its enclosing form to serialize the form's value fields (e.g. a record id)
+  // into the multipart POST, so the server can associate the streamed bytes with
+  // a record inside OnUpload.
+  sourceInput?: HTMLInputElement;
 }
 
 export type UploadProgressCallback = (entry: UploadEntry) => void;
