@@ -261,6 +261,50 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("serializes the triggering input's form fields into a proxied upload, before the file", async () => {
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const proxiedHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      // The file input lives in a form carrying a record id (a value field) and
+      // a second, unrelated file input that must NOT become a value field.
+      const form = document.createElement("form");
+      form.innerHTML =
+        '<input type="hidden" name="id" value="item-42">' +
+        '<input type="file" name="other" lvt-upload="other">' +
+        '<input type="file" name="doc" lvt-upload="doc">';
+      const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await proxiedHandler.startUpload("doc", [file], input);
+      await proxiedHandler.handleUploadStartResponse({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      const fd = postMultipart.mock.calls[0][0] as FormData;
+      // The record id rides along as a value field...
+      expect(fd.get("id")).toBe("item-42");
+      // ...ordered before the streamed file part, so OnUpload sees it mid-stream.
+      const keys = [...fd.keys()];
+      expect(keys.indexOf("id")).toBeLessThan(keys.indexOf("doc"));
+      // The streamed file is still the file part; the other file input is not
+      // serialized as a value field, and the action is untouched.
+      expect(fd.get("doc")).toBeInstanceOf(File);
+      expect(fd.get("other")).toBeNull();
+      expect(fd.get("lvt-action")).toBe("upload_doc_complete");
+    });
+
     it("previews locally without uploading when mode is preview", async () => {
       const createObjectURL = jest
         .fn()
