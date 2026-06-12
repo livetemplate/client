@@ -578,6 +578,17 @@ export class LiveTemplateClient {
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
 
+    // Bind change handlers on file inputs that were SSR'd and already present
+    // at connect time. The post-render block in updateDOM only (re)binds these
+    // when a render adds nodes or touches a directive; a hydrate-idempotent
+    // first render would otherwise leave SSR'd lvt-upload inputs without a
+    // change listener, so AutoUpload-on-select silently no-ops (issue #453).
+    // initializeFileInputs is WeakMap-guarded, so running it here AND in the
+    // post-render path never double-binds.
+    if (this.wrapperElement) {
+      this.uploadHandler.initializeFileInputs(this.wrapperElement);
+    }
+
     // Set up window-* event delegation
     this.eventDelegator.setupWindowEventDelegation();
 
