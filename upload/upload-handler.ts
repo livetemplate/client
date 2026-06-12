@@ -14,6 +14,7 @@ import type {
   ExternalUploadMeta,
   FileMetadata,
   UploadChunkMessage,
+  UploadCompleteHTTPMessage,
   UploadCompleteMessage,
   UploadEntry,
   UploadHandlerOptions,
@@ -42,6 +43,10 @@ export class UploadHandler {
     message: UploadStartMessage,
     signal?: AbortSignal
   ) => Promise<UploadStartResponse>;
+  private postUploadComplete?: (
+    message: UploadCompleteHTTPMessage,
+    signal?: AbortSignal
+  ) => Promise<void>;
   private pendingHandshakes: Set<AbortController> = new Set();
   private pendingUploads: Set<AbortController> = new Set(); // in-flight proxied fetches
   private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
@@ -58,6 +63,7 @@ export class UploadHandler {
     this.postMultipartUpload = options.postMultipartUpload;
     this.isConnected = options.isConnected;
     this.postUploadStart = options.postUploadStart;
+    this.postUploadComplete = options.postUploadComplete;
 
     // Register default uploaders
     this.uploaders.set("s3", new S3Uploader());
@@ -74,7 +80,7 @@ export class UploadHandler {
         this.uploadPreview(entry);
         return;
       case "proxied":
-        void this.uploadProxied(entry);
+        void this.uploadMultipart(entry);
         return;
       case "direct":
         if (entry.external) {
@@ -89,10 +95,19 @@ export class UploadHandler {
         }
         return;
       case "volume":
-      default:
+      default: {
         // entry.mode is normalized to a concrete mode at ingest (see
         // handleUploadStartResponse), so the default is just the Volume path.
-        void this.uploadChunked(entry);
+        // Volume stages bytes over the WebSocket chunk transport; with the
+        // socket down, fall back to a single multipart POST that the server
+        // stages to the field's Dir (#449).
+        const connected = this.isConnected ? this.isConnected() : true;
+        if (!connected) {
+          void this.uploadMultipart(entry);
+        } else {
+          void this.uploadChunked(entry);
+        }
+      }
     }
   }
 
@@ -347,14 +362,33 @@ export class UploadHandler {
       // Start external upload with progress callback
       await uploader.upload(entry, meta, this.onProgress);
 
-      // Notify server of completion
-      const completeMessage: UploadCompleteMessage = {
-        action: "upload_complete",
-        upload_name: entry.uploadName,
-        entry_ids: [entry.id],
-      };
-
-      this.sendMessage(completeMessage);
+      // Notify the server of completion. Over WebSocket the server still holds
+      // the presigned entry, so an entry_ids ack suffices. With the socket down
+      // the per-request registry is gone, so re-send the entry metadata + the
+      // ref we uploaded to and let the server reconstruct the entry (#448).
+      const connected = this.isConnected ? this.isConnected() : true;
+      if (!connected && this.postUploadComplete) {
+        const httpComplete: UploadCompleteHTTPMessage = {
+          action: "upload_complete",
+          upload_name: entry.uploadName,
+          entries: [
+            {
+              client_name: entry.file.name,
+              type: entry.file.type,
+              size: entry.file.size,
+              ref: meta.url,
+            },
+          ],
+        };
+        await this.postUploadComplete(httpComplete, entry.abortController?.signal);
+      } else {
+        const completeMessage: UploadCompleteMessage = {
+          action: "upload_complete",
+          upload_name: entry.uploadName,
+          entry_ids: [entry.id],
+        };
+        this.sendMessage(completeMessage);
+      }
       this.finishUpload(entry);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -368,15 +402,17 @@ export class UploadHandler {
   }
 
   /**
-   * Upload a Proxied file as a single multipart POST to the live URL. The server
-   * streams the bytes straight to the app's OnUpload handler (zero local-disk
-   * staging) and dispatches the upload_<name>_complete action. Independent of
-   * the WebSocket, so it works with the socket disabled.
+   * Upload a file as a single multipart POST to the live URL, carrying the
+   * upload_<name>_complete action and the enclosing form fields. The server
+   * routes the part by the field's configured mode: a Proxied field streams the
+   * bytes to OnUpload (zero local-disk staging), a Volume-with-Dir field stages
+   * them to Dir. Independent of the WebSocket — Proxied always uses this, and
+   * Volume falls back to it when the socket is down (#449).
    */
-  private async uploadProxied(entry: UploadEntry): Promise<void> {
+  private async uploadMultipart(entry: UploadEntry): Promise<void> {
     if (!this.postMultipartUpload) {
       const msg =
-        "Proxied upload unavailable: no multipart transport configured";
+        "Multipart upload unavailable: no multipart transport configured";
       entry.error = msg;
       if (this.onError) this.onError(entry, msg);
       this.cleanupEntries(entry.uploadName);
@@ -411,7 +447,7 @@ export class UploadHandler {
     } finally {
       if (entry.abortController) this.pendingUploads.delete(entry.abortController);
       // Release the DOM reference once the upload is done — the entry may linger
-      // until the cleanup timer fires, and only uploadProxied ever reads it.
+      // until the cleanup timer fires, and only uploadMultipart ever reads it.
       entry.sourceInput = undefined;
     }
   }

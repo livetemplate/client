@@ -79,6 +79,25 @@ export interface UploadCompleteMessage {
   entry_ids: string[];
 }
 
+/**
+ * WebSocket-disabled Direct completion (issue #448). Over WebSocket the server
+ * holds the presigned entry from upload_start; over stateless HTTP that entry is
+ * gone by completion time, so the client re-sends the entry metadata (and the
+ * ref it uploaded to) for the server to reconstruct the completed entry.
+ */
+export interface UploadCompleteHTTPMessage {
+  action: "upload_complete";
+  upload_name: string;
+  entries: CompletedEntryMeta[];
+}
+
+export interface CompletedEntryMeta {
+  client_name: string;
+  type: string;
+  size: number;
+  ref: string;
+}
+
 export interface UploadCompleteResponse {
   upload_name: string;
   success: boolean;
@@ -144,6 +163,17 @@ export interface UploadHandlerOptions {
     message: UploadStartMessage,
     signal?: AbortSignal
   ) => Promise<UploadStartResponse>;
+  /**
+   * Posts an upload_complete handshake over HTTP and applies the server's tree
+   * response. Used when the WebSocket is down so a Direct upload's completion
+   * action runs without a persistent registry (#448): the client re-sends the
+   * entry metadata + ref. Injected by the LiveTemplate client; rejects on a
+   * non-2xx response.
+   */
+  postUploadComplete?: (
+    message: UploadCompleteHTTPMessage,
+    signal?: AbortSignal
+  ) => Promise<void>;
 }
 
 export interface Uploader {

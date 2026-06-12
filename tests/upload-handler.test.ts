@@ -384,6 +384,81 @@ describe("UploadHandler", () => {
       expect(postMultipart).toHaveBeenCalledTimes(1);
     });
 
+    it("completes a disconnected Direct upload over HTTP, re-sending the ref (#448)", async () => {
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "avatar",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "avatar.png",
+            valid: true,
+            auto_upload: true,
+            mode: "direct",
+            external: { uploader: "mock", url: "https://cdn.example/avatar.png" },
+          },
+        ],
+      });
+      const mockUploader = { upload: jest.fn().mockResolvedValue(undefined) };
+      const postUploadComplete = jest.fn().mockResolvedValue(undefined);
+      const directHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => false,
+        postUploadStart,
+        postUploadComplete,
+      });
+      directHandler.registerUploader("mock", mockUploader);
+
+      const file = createMockFile("avatar.png", "imgdata", "image/png");
+      await directHandler.startUpload("avatar", [file]);
+      await jest.runAllTimersAsync();
+
+      // The browser PUT ran, then completion went over HTTP carrying the entry
+      // metadata + the ref it uploaded to — not the WebSocket entry_ids ack.
+      expect(mockUploader.upload).toHaveBeenCalledTimes(1);
+      expect(postUploadComplete).toHaveBeenCalledTimes(1);
+      const msg = postUploadComplete.mock.calls[0][0];
+      expect(msg.upload_name).toBe("avatar");
+      expect(msg.entries[0].ref).toBe("https://cdn.example/avatar.png");
+      expect(msg.entries[0].client_name).toBe("avatar.png");
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_complete" })
+      );
+    });
+
+    it("falls back to a multipart POST for a disconnected Volume upload (#449)", async () => {
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "scan",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "volume",
+          },
+        ],
+      });
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const volumeHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => false,
+        postUploadStart,
+        postMultipartUpload: postMultipart,
+      });
+
+      const file = createMockFile("scan.png", "imgdata", "image/png");
+      await volumeHandler.startUpload("scan", [file]);
+      await jest.runAllTimersAsync();
+
+      // The file went as a single multipart POST (server stages it to Dir)...
+      expect(postMultipart).toHaveBeenCalledTimes(1);
+      const fd = postMultipart.mock.calls[0][0] as FormData;
+      expect(fd.get("lvt-action")).toBe("upload_scan_complete");
+      expect(fd.get("scan")).toBeInstanceOf(File);
+      // ...never over the WebSocket chunk transport.
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_chunk" })
+      );
+    });
+
     it("logs warning for missing files", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
 
