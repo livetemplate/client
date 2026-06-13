@@ -424,6 +424,45 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("surfaces an error for a disconnected Direct upload with no HTTP completion transport (#448)", async () => {
+      const onError = jest.fn();
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "avatar",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "avatar.png",
+            valid: true,
+            auto_upload: true,
+            mode: "direct",
+            external: { uploader: "mock", url: "https://cdn.example/avatar.png" },
+          },
+        ],
+      });
+      const mockUploader = { upload: jest.fn().mockResolvedValue(undefined) };
+      // isConnected:false but no postUploadComplete injected — the completion
+      // must not silently fall back to a sendMessage over the dead socket.
+      const directHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => false,
+        postUploadStart,
+        onError,
+      });
+      directHandler.registerUploader("mock", mockUploader);
+
+      const file = createMockFile("avatar.png", "imgdata", "image/png");
+      await directHandler.startUpload("avatar", [file]);
+      await jest.runAllTimersAsync();
+
+      expect(mockUploader.upload).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ uploadName: "avatar" }),
+        expect.stringContaining("no HTTP transport configured")
+      );
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_complete" })
+      );
+    });
+
     it("falls back to a multipart POST for a disconnected Volume upload (#449)", async () => {
       const postUploadStart = jest.fn().mockResolvedValue({
         upload_name: "scan",

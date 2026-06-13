@@ -367,7 +367,17 @@ export class UploadHandler {
       // the per-request registry is gone, so re-send the entry metadata + the
       // ref we uploaded to and let the server reconstruct the entry (#448).
       const connected = this.isConnected ? this.isConnected() : true;
-      if (!connected && this.postUploadComplete) {
+      if (!connected) {
+        if (!this.postUploadComplete) {
+          // The bytes are already on the CDN, but a sendMessage over the dead
+          // socket would silently drop the completion — surface it instead.
+          const msg =
+            "upload_complete unavailable: WebSocket is down and no HTTP transport configured";
+          entry.error = msg;
+          if (this.onError) this.onError(entry, msg);
+          this.cleanupEntries(entry.uploadName);
+          return;
+        }
         const httpComplete: UploadCompleteHTTPMessage = {
           action: "upload_complete",
           upload_name: entry.uploadName,
