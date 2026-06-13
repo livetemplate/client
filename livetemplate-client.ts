@@ -1177,6 +1177,9 @@ export class LiveTemplateClient {
       );
     }
     const updateResponse: UpdateResponse = await response.json();
+    // No wrapperElement means connect() never resolved (or the root was
+    // unmounted mid-upload); drop the tree as the sibling HTTP fallbacks
+    // (postUploadStartHTTP / postUploadMultipart) do — there's nothing to morph.
     if (this.wrapperElement) {
       this.updateDOM(
         this.wrapperElement,

@@ -69,6 +69,11 @@ export class UploadHandler {
     this.uploaders.set("s3", new S3Uploader());
   }
 
+  /** Whether the WebSocket is usable; true when no isConnected probe is wired. */
+  private connected(): boolean {
+    return this.isConnected ? this.isConnected() : true;
+  }
+
   /**
    * Dispatch a valid upload entry to the transport its mode requires. The server
    * declares the mode per-entry; existing entries that only carry `external`
@@ -101,7 +106,7 @@ export class UploadHandler {
         // Volume stages bytes over the WebSocket chunk transport; with the
         // socket down, fall back to a single multipart POST that the server
         // stages to the field's Dir (#449).
-        const connected = this.isConnected ? this.isConnected() : true;
+        const connected = this.connected();
         if (!connected) {
           void this.uploadMultipart(entry);
         } else {
@@ -201,7 +206,7 @@ export class UploadHandler {
     // UploadStartResponse message (routed to handleUploadStartResponse). With
     // the socket down, post the handshake over HTTP and handle the response
     // inline so mode dispatch (and Direct presign) still work.
-    const connected = this.isConnected ? this.isConnected() : true;
+    const connected = this.connected();
     if (!connected) {
       if (!this.postUploadStart) {
         this.failStart(
@@ -364,8 +369,9 @@ export class UploadHandler {
       // side that holds the entry. If we re-checked after the PUT, a WS that
       // dropped or reconnected mid-upload could make the two disagree: a WS-start
       // entry completed over HTTP (or vice-versa) targets a registry that never
-      // had it. Volume snapshots the same way (in dispatchUpload).
-      const connected = this.isConnected ? this.isConnected() : true;
+      // had it. Volume likewise picks its transport up front, at dispatch time
+      // (a mid-transfer drop within either path is out of scope here).
+      const connected = this.connected();
 
       // Start external upload with progress callback
       await uploader.upload(entry, meta, this.onProgress);
