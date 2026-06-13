@@ -47,6 +47,7 @@ import { ChangeAutoWirer } from "./state/change-auto-wirer";
 import { WebSocketManager } from "./transport/websocket";
 import { UploadHandler } from "./upload/upload-handler";
 import type {
+  UploadCompleteHTTPMessage,
   UploadProgressMessage,
   UploadStartMessage,
   UploadStartResponse,
@@ -243,6 +244,8 @@ export class LiveTemplateClient {
           !this.useHTTP && this.webSocketManager.getReadyState() === 1,
         postUploadStart: (message, signal) =>
           this.postUploadStartHTTP(message, signal),
+        postUploadComplete: (message, signal) =>
+          this.postUploadCompleteHTTP(message, signal),
       }
     );
 
@@ -1101,7 +1104,7 @@ export class LiveTemplateClient {
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).trim();
       throw new Error(
-        `Proxied upload failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+        `Multipart upload failed: ${response.status}${detail ? ` — ${detail}` : ""}`
       );
     }
 
@@ -1143,6 +1146,47 @@ export class LiveTemplateClient {
       );
     }
     return (await response.json()) as UploadStartResponse;
+  }
+
+  /**
+   * Post an upload_complete handshake over HTTP (WebSocket-disabled Direct, #448)
+   * and apply the server's tree response. The client re-sends the entry metadata
+   * + the ref it uploaded to so the server can reconstruct the completed entry
+   * (its per-request registry no longer holds the presigned entry) and run the
+   * upload_<field>_complete action.
+   */
+  private async postUploadCompleteHTTP(
+    message: UploadCompleteHTTPMessage,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await fetch(this.getLiveUrl(), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-Lvt-Upload": "complete",
+      },
+      body: JSON.stringify(message),
+      signal,
+    });
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(
+        `upload_complete handshake failed: ${response.status}${detail ? ` — ${detail}` : ""}`
+      );
+    }
+    const updateResponse: UpdateResponse = await response.json();
+    // No wrapperElement means connect() never resolved (or the root was
+    // unmounted mid-upload); drop the tree as the sibling HTTP fallbacks
+    // (postUploadStartHTTP / postUploadMultipart) do — there's nothing to morph.
+    if (this.wrapperElement) {
+      this.updateDOM(
+        this.wrapperElement,
+        updateResponse.tree,
+        updateResponse.meta
+      );
+    }
   }
 
   /**
