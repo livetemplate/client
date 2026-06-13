@@ -48,7 +48,7 @@ export class UploadHandler {
     signal?: AbortSignal
   ) => Promise<void>;
   private pendingHandshakes: Set<AbortController> = new Set();
-  private pendingUploads: Set<AbortController> = new Set(); // in-flight proxied fetches
+  private pendingUploads: Set<AbortController> = new Set(); // in-flight multipart fetches
   private previewUrls: Map<string, string> = new Map(); // uploadName -> object URL
   private inputHandlers: WeakMap<HTMLInputElement, EventListener> = new WeakMap();
 
@@ -359,6 +359,14 @@ export class UploadHandler {
         throw new Error(`Unknown uploader: ${meta.uploader}`);
       }
 
+      // Snapshot the transport BEFORE the (potentially slow) PUT, so the
+      // completion uses the same transport the upload_start handshake did — the
+      // side that holds the entry. If we re-checked after the PUT, a WS that
+      // dropped or reconnected mid-upload could make the two disagree: a WS-start
+      // entry completed over HTTP (or vice-versa) targets a registry that never
+      // had it. Volume snapshots the same way (in dispatchUpload).
+      const connected = this.isConnected ? this.isConnected() : true;
+
       // Start external upload with progress callback
       await uploader.upload(entry, meta, this.onProgress);
 
@@ -366,7 +374,6 @@ export class UploadHandler {
       // the presigned entry, so an entry_ids ack suffices. With the socket down
       // the per-request registry is gone, so re-send the entry metadata + the
       // ref we uploaded to and let the server reconstruct the entry (#448).
-      const connected = this.isConnected ? this.isConnected() : true;
       if (!connected) {
         if (!this.postUploadComplete) {
           // The bytes are already on the CDN, but a sendMessage over the dead

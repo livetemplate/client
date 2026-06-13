@@ -424,6 +424,48 @@ describe("UploadHandler", () => {
       );
     });
 
+    it("completes Direct on the start-of-upload transport, not a mid-upload reconnect (#448)", async () => {
+      let connected = false; // disconnected when the handshake + dispatch run
+      const postUploadStart = jest.fn().mockResolvedValue({
+        upload_name: "avatar",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "avatar.png",
+            valid: true,
+            auto_upload: true,
+            mode: "direct",
+            external: { uploader: "mock", url: "https://cdn.example/avatar.png" },
+          },
+        ],
+      });
+      const postUploadComplete = jest.fn().mockResolvedValue(undefined);
+      // The slow PUT "reconnects" the socket mid-flight.
+      const mockUploader = {
+        upload: jest.fn().mockImplementation(async () => {
+          connected = true;
+        }),
+      };
+      const directHandler = new UploadHandler(mockSendMessage, {
+        isConnected: () => connected,
+        postUploadStart,
+        postUploadComplete,
+      });
+      directHandler.registerUploader("mock", mockUploader);
+
+      const file = createMockFile("avatar.png", "imgdata", "image/png");
+      await directHandler.startUpload("avatar", [file]);
+      await jest.runAllTimersAsync();
+
+      // The transport was snapshotted before the PUT (disconnected), so completion
+      // stays on HTTP even though the socket came back up during the upload — the
+      // HTTP-start entry only exists in the HTTP completion path.
+      expect(postUploadComplete).toHaveBeenCalledTimes(1);
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "upload_complete" })
+      );
+    });
+
     it("surfaces an error for a disconnected Direct upload with no HTTP completion transport (#448)", async () => {
       const onError = jest.fn();
       const postUploadStart = jest.fn().mockResolvedValue({
