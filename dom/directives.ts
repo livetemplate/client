@@ -1126,18 +1126,29 @@ function attachIframeAutoHeight(
   let resizeObserver: ResizeObserver | null = null;
 
   const applyHeight = () => {
-    const doc = iframe.contentDocument;
-    if (!doc?.documentElement) return;
-    const h = doc.documentElement.scrollHeight;
-    // Skip a 0 height: it means no layout yet (pre-load, or jsdom which
-    // never lays out). A genuinely empty document stays at its default
-    // height until the next `load` re-measures — fine for the preview,
-    // which always has content.
-    if (h > 0) iframe.style.height = `${h}px`;
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc?.documentElement) return;
+      const h = doc.documentElement.scrollHeight;
+      // Skip a 0 height: it means no layout yet (pre-load, or jsdom which
+      // never lays out). A genuinely empty document stays at its default
+      // height until the next `load` re-measures — fine for the preview,
+      // which always has content.
+      if (h > 0) iframe.style.height = `${h}px`;
+    } catch {
+      // contentDocument throws on a cross-origin iframe (this directive
+      // expects same-origin). Isolate the failure so a misconfigured host
+      // can't abort the rest of the render's directive sweep.
+    }
   };
 
   const onLoad = () => {
-    const doc = iframe.contentDocument;
+    let doc: Document | null = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch {
+      return; // cross-origin — nothing we can read or observe
+    }
     if (!doc) return;
     resizeObserver?.disconnect();
     if (typeof ResizeObserver !== "undefined" && doc.documentElement) {
@@ -1962,9 +1973,14 @@ function attachAreaSelect(
   };
 }
 
+// region-select reuses the area-select entry shape (action + cleanup +
+// updateSend); the alias names that intent so the map type doesn't read
+// as "a region map holding area entries".
+type BoxDragEntry = AreaSelectEntry;
+
 // regionSelectArmed / regionSelectWarnedParents mirror the area-select
 // singletons (see those for the Map-not-WeakMap reasoning).
-const regionSelectArmed = new Map<Element, AreaSelectEntry>();
+const regionSelectArmed = new Map<Element, BoxDragEntry>();
 const regionSelectWarnedParents = new WeakSet<Element>();
 
 /**
@@ -2041,7 +2057,7 @@ function attachRegionSelect(
   el: HTMLElement,
   action: string,
   initialSend: AreaSelectSendFn
-): AreaSelectEntry {
+): BoxDragEntry {
   let send = initialSend;
   const handle = attachBoxDragSelect(
     el,
