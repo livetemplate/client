@@ -12,11 +12,14 @@ import {
   handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleHighlightDirectives,
+  handleIframeAutoHeightDirectives,
+  handleRegionSelectDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
   handleURLHashDirective,
   teardownAreaSelectForRoot,
+  teardownRegionSelectForRoot,
   teardownURLHashForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
@@ -670,6 +673,7 @@ export class LiveTemplateClient {
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
+      teardownRegionSelectForRoot(this.wrapperElement);
       teardownURLHashForRoot(this.wrapperElement);
     }
     this.resetSessionState();
@@ -2020,6 +2024,16 @@ export class LiveTemplateClient {
     // send the event delegator uses so the WS/HTTP routing is
     // identical to a normal action.
     handleAreaSelectDirectives(element, (message) => this.send(message));
+    // region-select is the area-select drag spine over an iframe / code
+    // overlay: a drawn box is hit-tested to a source line range. Same
+    // send-callback wiring; the overlay is parent light DOM so it works
+    // on iOS (unlike the deleted in-iframe tap).
+    handleRegionSelectDirectives(element, (message) => this.send(message));
+    // iframe-autoheight sizes the sandboxed HTML-preview iframe to its
+    // content (iframes don't size to content). Selection over the preview
+    // is handled by a parent-document overlay (area/region-select), not
+    // from inside the iframe, so this directive needs no send callback.
+    handleIframeAutoHeightDirectives(element);
     // url-hash bridges server state ↔ location.hash. Same send-callback
     // wiring as area-select: the directive needs to dispatch a server
     // action on user-driven hashchange events (anchor click, address-bar
@@ -2037,9 +2051,10 @@ export class LiveTemplateClient {
     // querySelectorAll which stops at shadow boundaries, and the
     // hydration that follows doesn't run them against the new shadow
     // root either. Treat shadow DOM as a style/structure isolation
-    // primitive only — keep directives in light DOM. Today's consumer
-    // (prereview's HTML preview) wraps sanitised user HTML in shadow
-    // DOM purely for style isolation; no directives go in.
+    // primitive only — keep directives in light DOM. (Consumers that
+    // need a real viewport for untrusted markup — e.g. prereview's HTML
+    // preview — use a sandboxed iframe + handleIframeAutoHeightDirectives
+    // instead, reaching the content via the same-origin contentDocument.)
     handleShadowRootHydration(element);
     setupScrollAway(element);
     setupSpy(element);
