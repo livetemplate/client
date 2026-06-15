@@ -1120,6 +1120,21 @@ export function handleIframeAutoHeightDirectives(rootElement: Element): void {
   }
 }
 
+/**
+ * Cancel iframe auto-height listeners for every armed element under root.
+ * Mirror of teardownAreaSelectForRoot for the client disconnect lifecycle:
+ * the per-render sweep can't fire after a disconnect (no more renders), so
+ * without this the iframe's `load` listener + ResizeObserver would leak,
+ * and each reconnect (e.g. Turbo navigation) would add another.
+ */
+export function teardownIframeAutoHeightForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(iframeAutoHeightArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
 function attachIframeAutoHeight(
   iframe: HTMLIFrameElement
 ): IframeAutoHeightEntry {
@@ -2124,6 +2139,9 @@ function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
       readCodeRange
     );
   }
+  console.warn(
+    `lvt-fx:region-select: unknown data-surface ${JSON.stringify(surface)} (expected "html" or "code")`
+  );
   return null;
 }
 

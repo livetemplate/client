@@ -5,6 +5,7 @@ import {
   handleAreaSelectDirectives,
   handleAutoClickDirectives,
   handleIframeAutoHeightDirectives,
+  teardownIframeAutoHeightForRoot,
   handleRegionSelectDirectives,
   teardownRegionSelectForRoot,
   lineRangeFromBox,
@@ -2585,6 +2586,24 @@ describe("handleIframeAutoHeightDirectives", () => {
     iframe.style.height = "";
     handleIframeAutoHeightDirectives(document.body);
     expect(iframe.style.height).toBe("");
+  });
+
+  it("teardownIframeAutoHeightForRoot removes the load listener (no leak)", () => {
+    const iframe = makeIframe(100);
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("100px");
+
+    teardownIframeAutoHeightForRoot(document.body);
+
+    // After teardown the load listener is gone: a fresh load with taller
+    // content must NOT resize the iframe (proves cleanup ran).
+    Object.defineProperty(
+      iframe.contentDocument!.documentElement,
+      "scrollHeight",
+      { configurable: true, get: () => 999 }
+    );
+    iframe.dispatchEvent(new Event("load"));
+    expect(iframe.style.height).toBe("100px");
   });
 });
 

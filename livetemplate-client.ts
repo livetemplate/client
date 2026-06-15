@@ -19,6 +19,7 @@ import {
   handleToastDirectives,
   handleURLHashDirective,
   teardownAreaSelectForRoot,
+  teardownIframeAutoHeightForRoot,
   teardownRegionSelectForRoot,
   teardownURLHashForRoot,
   teardownAutoClickTimers,
@@ -674,6 +675,7 @@ export class LiveTemplateClient {
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
       teardownRegionSelectForRoot(this.wrapperElement);
+      teardownIframeAutoHeightForRoot(this.wrapperElement);
       teardownURLHashForRoot(this.wrapperElement);
     }
     this.resetSessionState();
