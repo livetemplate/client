@@ -4,6 +4,13 @@ import {
   handleAnimateDirectives,
   handleAreaSelectDirectives,
   handleAutoClickDirectives,
+  handleIframeAutoHeightDirectives,
+  teardownIframeAutoHeightForRoot,
+  handleRegionSelectDirectives,
+  teardownRegionSelectForRoot,
+  lineRangeFromBox,
+  readHTMLRange,
+  readCodeRange,
   handleShadowRootHydration,
   handleURLHashDirective,
   setupFxDOMEventTriggers,
@@ -2524,5 +2531,232 @@ describe("handleURLHashDirective", () => {
 
     expect(window.history.length).toBe(lengthBefore);
     expect(window.location.hash).toBe("#OTHER.md:L9");
+  });
+});
+
+describe("handleIframeAutoHeightDirectives", () => {
+  // Build an iframe whose same-origin contentDocument we can populate +
+  // drive directly, mirroring the sandboxed HTML-preview iframe. jsdom
+  // performs no layout, so scrollHeight is always 0 — fake it so the
+  // directive's `if (h > 0)` guard has something to size to.
+  function makeIframe(scrollHeight: number): HTMLIFrameElement {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("lvt-fx:iframe-autoheight", "");
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument!;
+    doc.body.innerHTML = `<div data-from="2" data-to="4">hi</div>`;
+    Object.defineProperty(doc.documentElement, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    // jsdom doesn't fire 'load' for a srcdoc-less iframe; trigger the
+    // directive's load wiring explicitly.
+    iframe.dispatchEvent(new Event("load"));
+    return iframe;
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("sizes the iframe to its content scrollHeight", () => {
+    const iframe = makeIframe(321);
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("321px");
+  });
+
+  it("re-measures on a subsequent render without re-arming (sync)", () => {
+    const iframe = makeIframe(100);
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("100px");
+
+    // Content reflowed taller; the same element re-syncs on the next pass.
+    Object.defineProperty(
+      iframe.contentDocument!.documentElement,
+      "scrollHeight",
+      { configurable: true, get: () => 250 }
+    );
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("250px");
+  });
+
+  it("ignores iframes without the attribute", () => {
+    const iframe = makeIframe(321);
+    iframe.removeAttribute("lvt-fx:iframe-autoheight");
+    iframe.style.height = "";
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("");
+  });
+
+  it("teardownIframeAutoHeightForRoot removes the load listener (no leak)", () => {
+    const iframe = makeIframe(100);
+    handleIframeAutoHeightDirectives(document.body);
+    expect(iframe.style.height).toBe("100px");
+
+    teardownIframeAutoHeightForRoot(document.body);
+
+    // After teardown the load listener is gone: a fresh load with taller
+    // content must NOT resize the iframe (proves cleanup ran).
+    Object.defineProperty(
+      iframe.contentDocument!.documentElement,
+      "scrollHeight",
+      { configurable: true, get: () => 999 }
+    );
+    iframe.dispatchEvent(new Event("load"));
+    expect(iframe.style.height).toBe("100px");
+  });
+});
+
+describe("lineRangeFromBox", () => {
+  // jsdom does no layout, so fake each candidate's geometry + attributes.
+  function cand(
+    rect: { left: number; top: number; right: number; bottom: number },
+    attrs: Record<string, string>
+  ): Element {
+    return {
+      getBoundingClientRect: () => rect as DOMRect,
+      getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
+    } as unknown as Element;
+  }
+  it("unions the line ranges of every block the box overlaps", () => {
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-from": "2", "data-to": "4" }),
+      cand({ left: 0, top: 20, right: 100, bottom: 40 }, { "data-from": "6", "data-to": "9" }),
+      cand({ left: 0, top: 40, right: 100, bottom: 60 }, { "data-from": "11", "data-to": "12" }),
+    ];
+    // Box covers the first two rows (y 5..30), not the third (y 40..60).
+    const range = lineRangeFromBox(
+      cands,
+      { left: 10, top: 5, right: 90, bottom: 30 },
+      0,
+      0,
+      readHTMLRange
+    );
+    expect(range).toEqual({ from: 2, to: 9 });
+  });
+
+  it("returns null when the box overlaps no candidate", () => {
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-from": "2", "data-to": "4" }),
+    ];
+    const range = lineRangeFromBox(
+      cands,
+      { left: 10, top: 200, right: 90, bottom: 260 },
+      0,
+      0,
+      readHTMLRange
+    );
+    expect(range).toBeNull();
+  });
+
+  it("applies the offset so iframe-content rects map into box space", () => {
+    // Candidate is at content y 0..20; the iframe sits at viewport y 100.
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-from": "5", "data-to": "5" }),
+    ];
+    // Box in viewport coords overlaps only AFTER the +100 offset is applied.
+    const range = lineRangeFromBox(
+      cands,
+      { left: 0, top: 105, right: 100, bottom: 115 },
+      0,
+      100,
+      readHTMLRange
+    );
+    expect(range).toEqual({ from: 5, to: 5 });
+  });
+
+  // A box crossing a diff's add/del boundary must NOT union old-side and
+  // new-side line numbers (different coordinate systems). The topmost row
+  // fixes the side; the other side's rows are excluded.
+  it("restricts to the topmost row's side when a box crosses the diff boundary (old on top)", () => {
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-line": "7", "data-side": "old" }),
+      cand({ left: 0, top: 20, right: 100, bottom: 40 }, { "data-line": "8" }), // new side
+    ];
+    const range = lineRangeFromBox(
+      cands,
+      { left: 0, top: 5, right: 100, bottom: 35 },
+      0,
+      0,
+      readCodeRange
+    );
+    // Only the old-side row survives; the new-side row 8 is excluded.
+    expect(range).toEqual({ from: 7, to: 7, side: "old" });
+  });
+
+  it("restricts to the new side when the topmost row is new", () => {
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-line": "11" }), // new side, on top
+      cand({ left: 0, top: 20, right: 100, bottom: 40 }, { "data-line": "12" }), // new side
+      cand({ left: 0, top: 40, right: 100, bottom: 60 }, { "data-line": "3", "data-side": "old" }),
+    ];
+    const range = lineRangeFromBox(
+      cands,
+      { left: 0, top: 5, right: 100, bottom: 55 },
+      0,
+      0,
+      readCodeRange
+    );
+    // Two new-side rows union; the trailing old-side row 3 is excluded.
+    expect(range).toEqual({ from: 11, to: 12 });
+  });
+
+  it("skips candidates whose readRange returns null", () => {
+    const cands = [
+      cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-from": "0" }), // invalid
+      cand({ left: 0, top: 20, right: 100, bottom: 40 }, { "data-from": "9", "data-to": "9" }),
+    ];
+    const range = lineRangeFromBox(
+      cands,
+      { left: 0, top: 5, right: 100, bottom: 35 },
+      0,
+      0,
+      readHTMLRange
+    );
+    expect(range).toEqual({ from: 9, to: 9 });
+  });
+});
+
+describe("handleRegionSelectDirectives", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  // Build a positioned wrapper containing an overlay host (the parent
+  // positioning context the drag spine warns about otherwise).
+  function makeOverlay(surface: string): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.style.position = "relative";
+    const overlay = document.createElement("div");
+    overlay.setAttribute("lvt-fx:region-select", "selectBlock");
+    overlay.setAttribute("data-surface", surface);
+    wrap.appendChild(overlay);
+    document.body.appendChild(wrap);
+    return overlay;
+  }
+
+  it("arms an overlay and is idempotent across re-arms", () => {
+    const send = jest.fn();
+    const overlay = makeOverlay("code");
+    handleRegionSelectDirectives(document.body, send);
+    // Re-arm with the same action must not throw or rebind destructively.
+    expect(() => handleRegionSelectDirectives(document.body, send)).not.toThrow();
+    expect(overlay.isConnected).toBe(true);
+  });
+
+  it("sweeps the listener when the attribute is removed", () => {
+    const send = jest.fn();
+    const overlay = makeOverlay("html");
+    handleRegionSelectDirectives(document.body, send);
+    overlay.removeAttribute("lvt-fx:region-select");
+    // Second pass should clean up without error.
+    expect(() => handleRegionSelectDirectives(document.body, send)).not.toThrow();
+  });
+
+  it("teardownRegionSelectForRoot cleans armed overlays under the root", () => {
+    const send = jest.fn();
+    makeOverlay("code");
+    handleRegionSelectDirectives(document.body, send);
+    expect(() => teardownRegionSelectForRoot(document.body)).not.toThrow();
   });
 });

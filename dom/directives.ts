@@ -1067,6 +1067,126 @@ export function teardownAreaSelectForRoot(rootElement: Element): void {
   }
 }
 
+// iframeAutoHeightArmed tracks armed `lvt-fx:iframe-autoheight` <iframe>
+// hosts. Map (not WeakMap) so the sweep can iterate to clean up elements
+// whose attribute was removed by a server diff or that were detached —
+// same reasoning as area-select.
+const iframeAutoHeightArmed = new Map<Element, IframeAutoHeightEntry>();
+
+interface IframeAutoHeightEntry {
+  cleanup: () => void;
+  // sync re-measures the iframe height from its content. Called every
+  // render so a reflow that doesn't reload the srcdoc still resizes.
+  sync: () => void;
+}
+
+/**
+ * Apply iframe auto-height directives. `lvt-fx:iframe-autoheight` on a
+ * same-origin `<iframe sandbox="allow-same-origin">` (the prereview HTML
+ * preview) sizes the iframe to its content's scrollHeight on load and
+ * whenever the content reflows (ResizeObserver) — iframes don't size to
+ * their content. The preview is an iframe, not a shadow root, so the
+ * page's own CSS (var()/@media/vw/position:sticky) resolves against a real
+ * viewport (issue #26). Reading scrollHeight requires `allow-same-origin`.
+ *
+ * Selecting a region of the preview to comment on is handled separately,
+ * by an overlay in the PARENT document (lvt-fx:region-select) — not from
+ * inside the iframe: iOS Safari does not deliver iframe-internal events to
+ * parent listeners, so a same-origin contentDocument tap never arrives.
+ *
+ * Idempotent across renders; the sweep at the top cleans up detached /
+ * attribute-cleared iframes.
+ */
+export function handleIframeAutoHeightDirectives(rootElement: Element): void {
+  for (const [element, entry] of Array.from(iframeAutoHeightArmed)) {
+    if (
+      !element.isConnected ||
+      !element.hasAttribute("lvt-fx:iframe-autoheight")
+    ) {
+      entry.cleanup();
+    }
+  }
+
+  const matches = rootElement.querySelectorAll<HTMLIFrameElement>(
+    "iframe[lvt-fx\\:iframe-autoheight]"
+  );
+  for (const el of matches) {
+    const existing = iframeAutoHeightArmed.get(el);
+    if (existing) {
+      existing.sync();
+      continue;
+    }
+    iframeAutoHeightArmed.set(el, attachIframeAutoHeight(el));
+  }
+}
+
+/**
+ * Cancel iframe auto-height listeners for every armed element under root.
+ * Mirror of teardownAreaSelectForRoot for the client disconnect lifecycle:
+ * the per-render sweep can't fire after a disconnect (no more renders), so
+ * without this the iframe's `load` listener + ResizeObserver would leak,
+ * and each reconnect (e.g. Turbo navigation) would add another.
+ */
+export function teardownIframeAutoHeightForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(iframeAutoHeightArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
+function attachIframeAutoHeight(
+  iframe: HTMLIFrameElement
+): IframeAutoHeightEntry {
+  let resizeObserver: ResizeObserver | null = null;
+
+  const applyHeight = () => {
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc?.documentElement) return;
+      const h = doc.documentElement.scrollHeight;
+      // Skip a 0 height: it means no layout yet (pre-load, or jsdom which
+      // never lays out). A genuinely empty document stays at its default
+      // height until the next `load` re-measures — fine for the preview,
+      // which always has content.
+      if (h > 0) iframe.style.height = `${h}px`;
+    } catch {
+      // contentDocument throws on a cross-origin iframe (this directive
+      // expects same-origin). Isolate the failure so a misconfigured host
+      // can't abort the rest of the render's directive sweep.
+    }
+  };
+
+  const onLoad = () => {
+    let doc: Document | null = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch {
+      return; // cross-origin — nothing we can read or observe
+    }
+    if (!doc) return;
+    resizeObserver?.disconnect();
+    if (typeof ResizeObserver !== "undefined" && doc.documentElement) {
+      resizeObserver = new ResizeObserver(() => applyHeight());
+      resizeObserver.observe(doc.documentElement);
+    }
+    applyHeight();
+  };
+
+  iframe.addEventListener("load", onLoad);
+  // srcdoc set before this directive ran may have already loaded.
+  if (iframe.contentDocument?.readyState === "complete") onLoad();
+
+  return {
+    cleanup: () => {
+      iframe.removeEventListener("load", onLoad);
+      resizeObserver?.disconnect();
+      iframeAutoHeightArmed.delete(iframe);
+    },
+    sync: () => applyHeight(),
+  };
+}
+
 // urlHashArmed tracks `lvt-fx:url-hash` listeners and their last-
 // mirrored hash. Same Map-not-WeakMap reasoning as area-select: the
 // sweep iterates to detect elements whose attribute was removed by a
@@ -1504,12 +1624,38 @@ function attachURLHash(
 // against the stale-closure trap a caller would hit if their `send`
 // reference changed across renders — e.g. a reconnect rebuilt the
 // transport.
-function attachAreaSelect(
+// BoxDragResult is the final rectangle handed to a box-drag consumer when
+// a real drag (above the click threshold) completes inside the host.
+interface BoxDragResult {
+  // Clamped drag rectangle in VIEWPORT coordinates (host-bounded). Used by
+  // hit-test consumers (region-select) that compare the box against other
+  // elements' getBoundingClientRect().
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  // The same rectangle as 0..1 fractions of the host's rendered rect. Used
+  // by fraction consumers (area-select on an image).
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// attachBoxDragSelect wires the pointer-drag gesture + live overlay on a
+// host element and invokes onComplete with the final rectangle when the
+// user finishes a drag big enough to count as a selection (not a click).
+// It owns every pointer-capture / re-entrancy / multi-touch / parent-
+// positioning / off-edge-clamping subtlety; consumers differ ONLY in what
+// they do with the result — area-select sends {x,y,w,h} fractions, region-
+// select hit-tests the viewport box to a source line range. This is the
+// shared spine; do not duplicate it.
+function attachBoxDragSelect(
   el: HTMLElement,
-  action: string,
-  initialSend: AreaSelectSendFn
-): AreaSelectEntry {
-  let send = initialSend;
+  warnedParents: WeakSet<Element>,
+  attrName: string,
+  onComplete: (result: BoxDragResult) => void
+): { cleanup: () => void } {
   let overlay: HTMLDivElement | null = null;
   let startClientX = 0;
   let startClientY = 0;
@@ -1608,7 +1754,9 @@ function attachAreaSelect(
       // handlers (if any) run via the platform.
       return;
     }
-    send({ action, data: { x, y, w, h } });
+    // Hand the consumer both the clamped viewport box (x0,y0,x1,y1) and
+    // the host-relative fractions; it decides the payload.
+    onComplete({ left: x0, top: y0, right: x1, bottom: y1, x, y, w, h });
   };
 
   const onPointerLeaveCancel = (e: PointerEvent) => {
@@ -1653,7 +1801,7 @@ function attachAreaSelect(
     // returns "" for unset position). Dedupe via WeakSet so a user
     // dragging repeatedly on the same mis-configured parent gets ONE
     // console message, not one per pointerdown.
-    if (!areaSelectWarnedParents.has(parent)) {
+    if (!warnedParents.has(parent)) {
       const parentPos = window.getComputedStyle(parent).position;
       if (
         parentPos !== "relative" &&
@@ -1662,11 +1810,11 @@ function attachAreaSelect(
         parentPos !== "sticky"
       ) {
         console.warn(
-          "lvt-fx:area-select: parentElement has no positioning context; the drag overlay will be mis-positioned. " +
+          `${attrName}: parentElement has no positioning context; the drag overlay will be mis-positioned. ` +
             "Add position:relative (or absolute/fixed/sticky) to the parent.",
           parent
         );
-        areaSelectWarnedParents.add(parent);
+        warnedParents.add(parent);
       }
     }
     startClientX = e.clientX;
@@ -1808,16 +1956,274 @@ function attachAreaSelect(
     el.removeEventListener("pointerleave", onPointerLeaveCancel);
     el.removeEventListener("dragstart", onDragStart);
     finalize(null, false);
-    areaSelectArmed.delete(el);
   };
 
+  return { cleanup };
+}
+
+// attachAreaSelect wires lvt-fx:area-select on an image host: a drawn box
+// dispatches the action with {x,y,w,h} as 0..1 fractions of the host's
+// rendered rect (image bytes don't reflow, so a pixel rect is stable).
+function attachAreaSelect(
+  el: HTMLElement,
+  action: string,
+  initialSend: AreaSelectSendFn
+): AreaSelectEntry {
+  let send = initialSend;
+  const handle = attachBoxDragSelect(
+    el,
+    areaSelectWarnedParents,
+    "lvt-fx:area-select",
+    (r) => send({ action, data: { x: r.x, y: r.y, w: r.w, h: r.h } })
+  );
   return {
     action,
-    cleanup,
+    cleanup: () => {
+      handle.cleanup();
+      areaSelectArmed.delete(el);
+    },
     updateSend: (s) => {
       send = s;
     },
   };
+}
+
+// region-select reuses the area-select entry shape (action + cleanup +
+// updateSend); the alias names that intent so the map type doesn't read
+// as "a region map holding area entries".
+type BoxDragEntry = AreaSelectEntry;
+
+// regionSelectArmed / regionSelectWarnedParents mirror the area-select
+// singletons (see those for the Map-not-WeakMap reasoning).
+const regionSelectArmed = new Map<Element, BoxDragEntry>();
+const regionSelectWarnedParents = new WeakSet<Element>();
+
+/**
+ * Apply region-select directives. `lvt-fx:region-select="<actionName>"` on
+ * a transparent overlay (parent light DOM) laid over a rendered-HTML
+ * preview iframe or a code view lets the user DRAW A BOX to comment on a
+ * region — the same touch-capable drag as area-select, but the drawn box
+ * is hit-tested to a SOURCE LINE RANGE instead of a pixel rect, so the
+ * comment survives responsive reflow and round-trips with the raw view +
+ * CSV (issue #26 region comments).
+ *
+ * The overlay's `data-surface` selects the hit-test:
+ *   - "html": the box is intersected against the sibling iframe's
+ *     contentDocument `[data-from]`/`[data-to]` blocks, offset by the
+ *     iframe's viewport position (the auto-height iframe doesn't scroll).
+ *   - "code": the box is intersected against the parent's `[data-line]`
+ *     rows in the same document.
+ * Either resolves to `{from, to[, side]}` and dispatches the action; a box
+ * that hits no line-bearing element dispatches nothing.
+ *
+ * The overlay lives in the PARENT document on purpose: iOS Safari does not
+ * deliver events that happen inside an iframe to a parent listener, so the
+ * old in-iframe tap never arrived on a phone. A parent overlay is the same
+ * event path as the file list, which works.
+ *
+ * Idempotent + swept exactly like area-select. The overlay's parent must
+ * establish a positioning context (the shared drag spine warns if not).
+ * Images keep using lvt-fx:area-select (pixel rects are stable).
+ */
+export function handleRegionSelectDirectives(
+  rootElement: Element,
+  send: AreaSelectSendFn
+): void {
+  for (const [element, entry] of Array.from(regionSelectArmed)) {
+    if (!element.isConnected || !element.hasAttribute("lvt-fx:region-select")) {
+      entry.cleanup();
+    }
+  }
+  const matches = rootElement.querySelectorAll<HTMLElement>(
+    "[lvt-fx\\:region-select]"
+  );
+  if (matches.length === 0) return;
+  for (const el of matches) {
+    const action = el.getAttribute("lvt-fx:region-select");
+    if (!action) {
+      console.warn(
+        `lvt-fx:region-select requires an action name, got: ${JSON.stringify(action)}`
+      );
+      continue;
+    }
+    const existing = regionSelectArmed.get(el);
+    if (existing && existing.action === action) {
+      existing.updateSend(send);
+      continue;
+    }
+    if (existing) existing.cleanup();
+    regionSelectArmed.set(el, attachRegionSelect(el, action, send));
+  }
+}
+
+/**
+ * Cancel region-select listeners for every armed element under root.
+ * Mirror of teardownAreaSelectForRoot for the client disconnect lifecycle.
+ */
+export function teardownRegionSelectForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(regionSelectArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
+function attachRegionSelect(
+  el: HTMLElement,
+  action: string,
+  initialSend: AreaSelectSendFn
+): BoxDragEntry {
+  let send = initialSend;
+  const handle = attachBoxDragSelect(
+    el,
+    regionSelectWarnedParents,
+    "lvt-fx:region-select",
+    (r) => {
+      const data = resolveRegion(el, r);
+      if (data) send({ action, data });
+    }
+  );
+  return {
+    action,
+    cleanup: () => {
+      handle.cleanup();
+      regionSelectArmed.delete(el);
+    },
+    updateSend: (s) => {
+      send = s;
+    },
+  };
+}
+
+type LineRange = { from: number; to: number; side?: string };
+
+// previewIframeFor finds the iframe a region overlay covers. The overlay
+// is a sibling of its iframe inside a positioned wrapper and is rendered
+// immediately AFTER it, so the preceding sibling is the target. Prefer
+// that over `wrapper.querySelector("iframe")`, which would silently pick
+// the wrong element if the wrapper ever held more than one iframe; fall
+// back to the first iframe in the wrapper only if the sibling isn't one.
+function previewIframeFor(overlay: HTMLElement): HTMLIFrameElement | null {
+  const prev = overlay.previousElementSibling;
+  if (prev instanceof HTMLIFrameElement) return prev;
+  return (
+    overlay.parentElement?.querySelector<HTMLIFrameElement>("iframe") ?? null
+  );
+}
+
+// resolveRegion hit-tests a drawn box (viewport coords) against the line-
+// bearing elements of the overlay's target surface, returning the source
+// line-range payload or null when the box hit nothing.
+function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
+  const surface = el.getAttribute("data-surface");
+  if (surface === "html") {
+    const iframe = previewIframeFor(el);
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc) return null;
+    const fr = iframe.getBoundingClientRect();
+    return lineRangeFromBox(
+      doc.querySelectorAll("[data-from]"),
+      box,
+      fr.left,
+      fr.top,
+      readHTMLRange
+    );
+  }
+  if (surface === "code") {
+    const root: ParentNode = el.parentElement || document;
+    return lineRangeFromBox(
+      root.querySelectorAll("[data-line]"),
+      box,
+      0,
+      0,
+      readCodeRange
+    );
+  }
+  console.warn(
+    `lvt-fx:region-select: unknown data-surface ${JSON.stringify(surface)} (expected "html" or "code")`
+  );
+  return null;
+}
+
+// readHTMLRange reads a rendered-HTML block's source span from its
+// data-from / data-to attributes (data-to defaults to data-from).
+// Exported so unit tests exercise the real reader, not a copy.
+export function readHTMLRange(el: Element): LineRange | null {
+  const from = parseInt(el.getAttribute("data-from") || "", 10);
+  if (!Number.isFinite(from) || from <= 0) return null;
+  const to = parseInt(el.getAttribute("data-to") || "", 10);
+  return { from, to: Number.isFinite(to) && to >= from ? to : from };
+}
+
+// readCodeRange reads a code row's source line from data-line and its diff
+// side from data-side ("old" rows carry it; everything else is "new").
+// Exported so unit tests exercise the real reader, not a copy.
+export function readCodeRange(el: Element): LineRange | null {
+  const n = parseInt(el.getAttribute("data-line") || "", 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return el.getAttribute("data-side") === "old"
+    ? { from: n, to: n, side: "old" }
+    : { from: n, to: n };
+}
+
+/**
+ * lineRangeFromBox intersects a drawn box (viewport coords) with a set of
+ * line-bearing candidate elements and returns a single-side line range of
+ * those that overlap it — `from` = smallest line, `to` = largest.
+ *
+ * The side of the TOPMOST intersecting row fixes the range's side, and
+ * rows of any OTHER side are then excluded. This matters on a diff: a
+ * `del` row's data-line is its OLD line number, an `add`/context row's is
+ * its NEW number — two different coordinate systems. A box that strays
+ * across the add/del boundary must NOT union those into one range (it
+ * would mis-anchor). Restricting to one side mirrors SelectLine's locked-
+ * side invariant. Rendered HTML has no sides (all undefined), so every
+ * overlapping block contributes.
+ *
+ * offsetX/offsetY shift each candidate's rect into the box's coordinate
+ * space (the iframe's viewport origin for the html surface; 0 for code).
+ * Returns null when no candidate overlaps. Exported for unit testing.
+ */
+export function lineRangeFromBox(
+  candidates: ArrayLike<Element>,
+  box: { left: number; top: number; right: number; bottom: number },
+  offsetX: number,
+  offsetY: number,
+  readRange: (el: Element) => LineRange | null
+): LineRange | null {
+  // First pass: collect overlapping rows with their viewport top so the
+  // topmost can fix the side before we union (a box can cross the diff's
+  // add/del boundary).
+  const hits: { top: number; range: LineRange }[] = [];
+  for (const el of Array.from(candidates)) {
+    const r = el.getBoundingClientRect();
+    const top = r.top + offsetY;
+    const bottom = r.bottom + offsetY;
+    const left = r.left + offsetX;
+    const right = r.right + offsetX;
+    // Skip candidates the box doesn't overlap at all.
+    if (
+      right < box.left ||
+      left > box.right ||
+      bottom < box.top ||
+      top > box.bottom
+    ) {
+      continue;
+    }
+    const range = readRange(el);
+    if (range) hits.push({ top, range });
+  }
+  if (hits.length === 0) return null;
+  hits.sort((a, b) => a.top - b.top);
+  const side = hits[0].range.side;
+  let from = Infinity;
+  let to = -Infinity;
+  for (const { range } of hits) {
+    if (range.side !== side) continue; // exclude the other diff side
+    if (range.from < from) from = range.from;
+    if (range.to > to) to = range.to;
+  }
+  return side ? { from, to, side } : { from, to };
 }
 
 function clampRange(n: number, lo: number, hi: number): number {
