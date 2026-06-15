@@ -1129,6 +1129,10 @@ function attachIframeAutoHeight(
     const doc = iframe.contentDocument;
     if (!doc?.documentElement) return;
     const h = doc.documentElement.scrollHeight;
+    // Skip a 0 height: it means no layout yet (pre-load, or jsdom which
+    // never lays out). A genuinely empty document stays at its default
+    // height until the next `load` re-measures — fine for the preview,
+    // which always has content.
     if (h > 0) iframe.style.height = `${h}px`;
   };
 
@@ -2062,14 +2066,27 @@ function attachRegionSelect(
 
 type LineRange = { from: number; to: number; side?: string };
 
+// previewIframeFor finds the iframe a region overlay covers. The overlay
+// is a sibling of its iframe inside a positioned wrapper and is rendered
+// immediately AFTER it, so the preceding sibling is the target. Prefer
+// that over `wrapper.querySelector("iframe")`, which would silently pick
+// the wrong element if the wrapper ever held more than one iframe; fall
+// back to the first iframe in the wrapper only if the sibling isn't one.
+function previewIframeFor(overlay: HTMLElement): HTMLIFrameElement | null {
+  const prev = overlay.previousElementSibling;
+  if (prev instanceof HTMLIFrameElement) return prev;
+  return (
+    overlay.parentElement?.querySelector<HTMLIFrameElement>("iframe") ?? null
+  );
+}
+
 // resolveRegion hit-tests a drawn box (viewport coords) against the line-
 // bearing elements of the overlay's target surface, returning the source
 // line-range payload or null when the box hit nothing.
 function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
   const surface = el.getAttribute("data-surface");
   if (surface === "html") {
-    // The overlay sits beside the iframe inside a positioned wrapper.
-    const iframe = el.parentElement?.querySelector<HTMLIFrameElement>("iframe");
+    const iframe = previewIframeFor(el);
     const doc = iframe?.contentDocument;
     if (!iframe || !doc) return null;
     const fr = iframe.getBoundingClientRect();
@@ -2096,7 +2113,8 @@ function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
 
 // readHTMLRange reads a rendered-HTML block's source span from its
 // data-from / data-to attributes (data-to defaults to data-from).
-function readHTMLRange(el: Element): LineRange | null {
+// Exported so unit tests exercise the real reader, not a copy.
+export function readHTMLRange(el: Element): LineRange | null {
   const from = parseInt(el.getAttribute("data-from") || "", 10);
   if (!Number.isFinite(from) || from <= 0) return null;
   const to = parseInt(el.getAttribute("data-to") || "", 10);
@@ -2105,7 +2123,8 @@ function readHTMLRange(el: Element): LineRange | null {
 
 // readCodeRange reads a code row's source line from data-line and its diff
 // side from data-side ("old" rows carry it; everything else is "new").
-function readCodeRange(el: Element): LineRange | null {
+// Exported so unit tests exercise the real reader, not a copy.
+export function readCodeRange(el: Element): LineRange | null {
   const n = parseInt(el.getAttribute("data-line") || "", 10);
   if (!Number.isFinite(n) || n <= 0) return null;
   return el.getAttribute("data-side") === "old"

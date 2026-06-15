@@ -8,6 +8,8 @@ import {
   handleRegionSelectDirectives,
   teardownRegionSelectForRoot,
   lineRangeFromBox,
+  readHTMLRange,
+  readCodeRange,
   handleShadowRootHydration,
   handleURLHashDirective,
   setupFxDOMEventTriggers,
@@ -2597,14 +2599,6 @@ describe("lineRangeFromBox", () => {
       getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
     } as unknown as Element;
   }
-  // Read a [data-from]/[data-to] HTML block range (mirrors readHTMLRange).
-  const readHTML = (el: Element) => {
-    const from = parseInt(el.getAttribute("data-from") || "", 10);
-    if (!Number.isFinite(from) || from <= 0) return null;
-    const to = parseInt(el.getAttribute("data-to") || "", 10);
-    return { from, to: Number.isFinite(to) && to >= from ? to : from };
-  };
-
   it("unions the line ranges of every block the box overlaps", () => {
     const cands = [
       cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-from": "2", "data-to": "4" }),
@@ -2617,7 +2611,7 @@ describe("lineRangeFromBox", () => {
       { left: 10, top: 5, right: 90, bottom: 30 },
       0,
       0,
-      readHTML
+      readHTMLRange
     );
     expect(range).toEqual({ from: 2, to: 9 });
   });
@@ -2631,7 +2625,7 @@ describe("lineRangeFromBox", () => {
       { left: 10, top: 200, right: 90, bottom: 260 },
       0,
       0,
-      readHTML
+      readHTMLRange
     );
     expect(range).toBeNull();
   });
@@ -2647,7 +2641,7 @@ describe("lineRangeFromBox", () => {
       { left: 0, top: 105, right: 100, bottom: 115 },
       0,
       100,
-      readHTML
+      readHTMLRange
     );
     expect(range).toEqual({ from: 5, to: 5 });
   });
@@ -2655,14 +2649,6 @@ describe("lineRangeFromBox", () => {
   // A box crossing a diff's add/del boundary must NOT union old-side and
   // new-side line numbers (different coordinate systems). The topmost row
   // fixes the side; the other side's rows are excluded.
-  const readCode = (el: Element) => {
-    const n = parseInt(el.getAttribute("data-line") || "", 10);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return el.getAttribute("data-side") === "old"
-      ? { from: n, to: n, side: "old" }
-      : { from: n, to: n };
-  };
-
   it("restricts to the topmost row's side when a box crosses the diff boundary (old on top)", () => {
     const cands = [
       cand({ left: 0, top: 0, right: 100, bottom: 20 }, { "data-line": "7", "data-side": "old" }),
@@ -2673,7 +2659,7 @@ describe("lineRangeFromBox", () => {
       { left: 0, top: 5, right: 100, bottom: 35 },
       0,
       0,
-      readCode
+      readCodeRange
     );
     // Only the old-side row survives; the new-side row 8 is excluded.
     expect(range).toEqual({ from: 7, to: 7, side: "old" });
@@ -2690,7 +2676,7 @@ describe("lineRangeFromBox", () => {
       { left: 0, top: 5, right: 100, bottom: 55 },
       0,
       0,
-      readCode
+      readCodeRange
     );
     // Two new-side rows union; the trailing old-side row 3 is excluded.
     expect(range).toEqual({ from: 11, to: 12 });
@@ -2706,7 +2692,7 @@ describe("lineRangeFromBox", () => {
       { left: 0, top: 5, right: 100, bottom: 35 },
       0,
       0,
-      readHTML
+      readHTMLRange
     );
     expect(range).toEqual({ from: 9, to: 9 });
   });
