@@ -2179,6 +2179,15 @@ function attachProxyBridge(
   } catch {
     expectedOrigin = "";
   }
+  // Fail closed: if the origin can't be resolved we can't trust any sender, so
+  // reject every inbound message (onMessage) and never broadcast outbound focus
+  // (sync). An unresolved origin should be impossible — the server always
+  // renders an absolute src — so warn if it happens.
+  if (!expectedOrigin) {
+    console.warn(
+      "lvt-fx:proxy-bridge: could not resolve the iframe origin; ignoring all postMessage traffic"
+    );
+  }
 
   // applyPinLayer sizes the pin layer to the document and slides it by -scroll
   // so each marker (percentage-positioned by the server within this layer)
@@ -2196,7 +2205,7 @@ function attachProxyBridge(
   };
 
   const onMessage = (e: MessageEvent) => {
-    if (expectedOrigin && e.origin !== expectedOrigin) return;
+    if (!expectedOrigin || e.origin !== expectedOrigin) return;
     const d = e.data;
     if (!d || d.__prereview !== true) return;
 
@@ -2232,13 +2241,14 @@ function attachProxyBridge(
     if (!token || token === lastFocusToken) return;
     lastFocusToken = token;
     const win = iframe?.contentWindow;
-    if (!win) return;
+    // No "*" fallback — only post to the resolved proxied origin (fail closed).
+    if (!win || !expectedOrigin) return;
     const url = el.getAttribute("data-focus-url") || "";
     const y = parseFloat(el.getAttribute("data-focus-y") || "");
     try {
       win.postMessage(
         { __prereviewFocus: true, url, y: Number.isFinite(y) ? y : 0 },
-        expectedOrigin || "*"
+        expectedOrigin
       );
     } catch {
       // contentWindow gone mid-navigation — the next render retries.

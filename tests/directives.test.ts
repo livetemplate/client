@@ -2969,6 +2969,38 @@ describe("handleProxyBridgeDirectives (--external live-site bridge)", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the iframe origin can't be resolved (no src)", () => {
+    // An iframe with no src → origin can't be resolved → reject all inbound
+    // messages (regardless of sender origin) and never broadcast focus.
+    const stage = document.createElement("div");
+    stage.setAttribute("lvt-fx:proxy-bridge", "setProxyURL");
+    const iframe = document.createElement("iframe"); // deliberately no src
+    const pin = document.createElement("div");
+    pin.setAttribute("data-pin-layer", "");
+    stage.appendChild(iframe);
+    stage.appendChild(pin);
+    document.body.appendChild(stage);
+
+    const send = jest.fn();
+    handleProxyBridgeDirectives(document.body, send);
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { __prereview: true, type: "nav", url: "/x", docW: 1, docH: 1 },
+        origin: "http://anything.example",
+      })
+    );
+    expect(send).not.toHaveBeenCalled();
+
+    const post = jest
+      .spyOn(iframe.contentWindow as Window, "postMessage")
+      .mockImplementation(() => {});
+    stage.setAttribute("data-focus-token", "1");
+    stage.setAttribute("data-focus-url", "/x");
+    stage.setAttribute("data-focus-y", "0.5");
+    handleProxyBridgeDirectives(document.body, send);
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("re-applies the pin-layer size/transform on re-render (morphdom-wipe recovery)", () => {
     const { pin } = makeStage();
     handleProxyBridgeDirectives(document.body, jest.fn());
