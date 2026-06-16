@@ -13,6 +13,7 @@ import {
   handleAutoClickDirectives,
   handleHighlightDirectives,
   handleIframeAutoHeightDirectives,
+  handleProxyBridgeDirectives,
   handleRegionSelectDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
@@ -20,6 +21,7 @@ import {
   handleURLHashDirective,
   teardownAreaSelectForRoot,
   teardownIframeAutoHeightForRoot,
+  teardownProxyBridgeForRoot,
   teardownRegionSelectForRoot,
   teardownURLHashForRoot,
   teardownAutoClickTimers,
@@ -675,6 +677,7 @@ export class LiveTemplateClient {
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
       teardownRegionSelectForRoot(this.wrapperElement);
+      teardownProxyBridgeForRoot(this.wrapperElement);
       teardownIframeAutoHeightForRoot(this.wrapperElement);
       teardownURLHashForRoot(this.wrapperElement);
     }
@@ -2031,6 +2034,11 @@ export class LiveTemplateClient {
     // send-callback wiring; the overlay is parent light DOM so it works
     // on iOS (unlike the deleted in-iframe tap).
     handleRegionSelectDirectives(element, (message) => this.send(message));
+    // proxy-bridge is the --external live-site bridge: it relays the proxied
+    // page's nav (→ setProxyURL) and scroll (→ pin-layer transform, no server
+    // hop) from the cross-origin beacon. Same send-callback wiring; the only
+    // thing that reaches across the cross-origin boundary, read-only.
+    handleProxyBridgeDirectives(element, (message) => this.send(message));
     // iframe-autoheight sizes the sandboxed HTML-preview iframe to its
     // content (iframes don't size to content). Selection over the preview
     // is handled by a parent-document overlay (area/region-select), not
