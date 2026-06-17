@@ -8,6 +8,9 @@ import {
   teardownIframeAutoHeightForRoot,
   handleRegionSelectDirectives,
   teardownRegionSelectForRoot,
+  handleProxyBridgeDirectives,
+  teardownProxyBridgeForRoot,
+  regionRectFromBox,
   lineRangeFromBox,
   readHTMLRange,
   readCodeRange,
@@ -1339,6 +1342,94 @@ describe("handleAreaSelectDirectives", () => {
 
     expect(send).not.toHaveBeenCalled();
     expect(parent.querySelector(".lvt-area-select-overlay")).toBeNull();
+  });
+
+  // dispatchTouch mirrors dispatchPointer but marks the event pointerType=touch
+  // so the spine takes its iOS-recovery path (cancel/lost-capture → finalize).
+  function dispatchTouch(
+    el: HTMLElement,
+    type: "pointerdown" | "pointermove" | "pointercancel" | "lostpointercapture",
+    clientX: number,
+    clientY: number
+  ): void {
+    const e = new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true });
+    Object.defineProperty(e, "pointerId", { value: 1 });
+    Object.defineProperty(e, "isPrimary", { value: true });
+    Object.defineProperty(e, "pointerType", { value: "touch" });
+    el.dispatchEvent(e);
+  }
+
+  it("touch pointercancel KEEPS the drawn region (iOS long touch-drag recovery)", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // A large touch-drag that iOS cancels mid-gesture must still capture the
+    // region drawn so far — the opposite of the mouse pointercancel above.
+    dispatchTouch(target, "pointerdown", 20, 20);
+    dispatchTouch(target, "pointermove", 180, 180);
+    dispatchTouch(target, "pointercancel", 180, 180);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const msg = send.mock.calls[0][0];
+    expect(msg.data.w).toBeCloseTo(0.8, 5); // (180-20)/200
+    expect(msg.data.h).toBeCloseTo(0.8, 5);
+  });
+
+  it("touch lostpointercapture KEEPS the drawn region", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchTouch(target, "pointerdown", 20, 20);
+    dispatchTouch(target, "pointermove", 120, 100);
+    dispatchTouch(target, "lostpointercapture", 120, 100);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].data.w).toBeCloseTo(0.5, 5); // (120-20)/200
+  });
+
+  it("touch lostpointercapture before any move dispatches nothing (zero-area)", () => {
+    // If capture is lost before a single pointermove, lastMove is the
+    // pointerdown event, so finalize sees a zero-area box — the threshold must
+    // reject it, not create a degenerate region.
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchTouch(target, "pointerdown", 50, 50);
+    dispatchTouch(target, "lostpointercapture", 50, 50);
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("a tiny touch cancel is still dropped (area threshold, no stray region)", () => {
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 1000, height: 1000 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    // 8×8 px on a 1000×1000 host → below MIN_AREA_FRACTION in both dims.
+    dispatchTouch(target, "pointerdown", 10, 10);
+    dispatchTouch(target, "pointermove", 18, 18);
+    dispatchTouch(target, "pointercancel", 18, 18);
+
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("is idempotent across renders for the same action", () => {
@@ -2758,5 +2849,278 @@ describe("handleRegionSelectDirectives", () => {
     makeOverlay("code");
     handleRegionSelectDirectives(document.body, send);
     expect(() => teardownRegionSelectForRoot(document.body)).not.toThrow();
+  });
+});
+
+describe("handleProxyBridgeDirectives (--external live-site bridge)", () => {
+  const ORIGIN = "http://127.0.0.1:7778";
+
+  // Build the preview stage: <stage lvt-fx:proxy-bridge="setProxyURL">
+  //   <iframe src=ORIGIN> <div data-pin-layer>
+  function makeStage(): {
+    stage: HTMLElement;
+    iframe: HTMLIFrameElement;
+    pin: HTMLElement;
+  } {
+    const stage = document.createElement("div");
+    stage.setAttribute("lvt-fx:proxy-bridge", "setProxyURL");
+    const iframe = document.createElement("iframe");
+    iframe.src = ORIGIN + "/";
+    const pin = document.createElement("div");
+    pin.setAttribute("data-pin-layer", "");
+    stage.appendChild(iframe);
+    stage.appendChild(pin);
+    document.body.appendChild(stage);
+    return { stage, iframe, pin };
+  }
+
+  function beacon(data: Record<string, unknown>, origin = ORIGIN): void {
+    window.dispatchEvent(new MessageEvent("message", { data, origin }));
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    teardownProxyBridgeForRoot(document.body);
+    document.body.innerHTML = "";
+    jest.restoreAllMocks();
+  });
+
+  it("a nav beacon dispatches setProxyURL with the page url", () => {
+    const send = jest.fn();
+    makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+
+    beacon({ __prereview: true, type: "nav", url: "/pricing", docW: 800, docH: 4000 });
+    expect(send).toHaveBeenCalledWith({ action: "setProxyURL", data: { url: "/pricing" } });
+  });
+
+  it("does not re-dispatch setProxyURL for the same url (dedup)", () => {
+    const send = jest.fn();
+    makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+
+    beacon({ __prereview: true, type: "nav", url: "/pricing", docW: 800, docH: 4000 });
+    beacon({ __prereview: true, type: "scroll", scrollY: 50, docW: 800, docH: 4000 });
+    beacon({ __prereview: true, type: "nav", url: "/pricing", docW: 800, docH: 4000 });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    beacon({ __prereview: true, type: "nav", url: "/dashboard", docW: 800, docH: 4000 });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-pins by sizing the pin layer to the document and translating by -scroll", () => {
+    const send = jest.fn();
+    const { pin } = makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+
+    beacon({ __prereview: true, type: "scroll", scrollX: 0, scrollY: 120, docW: 800, docH: 4000 });
+    expect(pin.style.width).toBe("800px");
+    expect(pin.style.height).toBe("4000px");
+    expect(pin.style.transform).toBe("translate(0px, -120px)");
+  });
+
+  it("ignores messages from a foreign origin", () => {
+    const send = jest.fn();
+    const { pin } = makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+
+    beacon({ __prereview: true, type: "nav", url: "/evil", docW: 9, docH: 9 }, "http://evil.example");
+    expect(send).not.toHaveBeenCalled();
+    expect(pin.style.transform).toBe("");
+  });
+
+  it("ignores non-prereview messages", () => {
+    const send = jest.fn();
+    makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+
+    beacon({ type: "nav", url: "/x" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("teardown removes the window listener (no dispatch after cleanup)", () => {
+    const send = jest.fn();
+    makeStage();
+    handleProxyBridgeDirectives(document.body, send);
+    teardownProxyBridgeForRoot(document.body);
+
+    beacon({ __prereview: true, type: "nav", url: "/after", docW: 1, docH: 1 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("relays a focus request to the iframe only when the focus token changes", () => {
+    const { stage, iframe } = makeStage();
+    stage.setAttribute("data-focus-token", "1");
+    stage.setAttribute("data-focus-url", "/pricing");
+    stage.setAttribute("data-focus-y", "0.42");
+    const post = jest
+      .spyOn(iframe.contentWindow as Window, "postMessage")
+      .mockImplementation(() => {});
+
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    expect(post).toHaveBeenCalledWith(
+      { __prereviewFocus: true, url: "/pricing", y: 0.42 },
+      expect.any(String)
+    );
+
+    // Re-render with the SAME token → no repeat (avoids re-scrolling on every
+    // unrelated server render).
+    post.mockClear();
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    expect(post).not.toHaveBeenCalled();
+
+    // A new token (the user tapped Locate again) → relays again.
+    stage.setAttribute("data-focus-token", "2");
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not relay a focus request when no focus token is set", () => {
+    const { iframe } = makeStage();
+    const post = jest
+      .spyOn(iframe.contentWindow as Window, "postMessage")
+      .mockImplementation(() => {});
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("arms exactly one bridge and ignores a second (shared-metrics guard)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    makeStage();
+    makeStage(); // a second stage — should be ignored
+    const send = jest.fn();
+    handleProxyBridgeDirectives(document.body, send);
+
+    // Only the first bridge is armed; the second triggers the warning.
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).includes("exactly one bridge"))
+    ).toBe(true);
+    // A nav beacon still drives setProxyURL once (the single armed bridge).
+    beacon({ __prereview: true, type: "nav", url: "/p", docW: 1, docH: 1 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the iframe origin can't be resolved (no src)", () => {
+    // An iframe with no src → origin can't be resolved → reject all inbound
+    // messages (regardless of sender origin) and never broadcast focus.
+    const stage = document.createElement("div");
+    stage.setAttribute("lvt-fx:proxy-bridge", "setProxyURL");
+    const iframe = document.createElement("iframe"); // deliberately no src
+    const pin = document.createElement("div");
+    pin.setAttribute("data-pin-layer", "");
+    stage.appendChild(iframe);
+    stage.appendChild(pin);
+    document.body.appendChild(stage);
+
+    const send = jest.fn();
+    handleProxyBridgeDirectives(document.body, send);
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { __prereview: true, type: "nav", url: "/x", docW: 1, docH: 1 },
+        origin: "http://anything.example",
+      })
+    );
+    expect(send).not.toHaveBeenCalled();
+
+    const post = jest
+      .spyOn(iframe.contentWindow as Window, "postMessage")
+      .mockImplementation(() => {});
+    stage.setAttribute("data-focus-token", "1");
+    stage.setAttribute("data-focus-url", "/x");
+    stage.setAttribute("data-focus-y", "0.5");
+    handleProxyBridgeDirectives(document.body, send);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("re-applies the pin-layer size/transform on re-render (morphdom-wipe recovery)", () => {
+    const { pin } = makeStage();
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    beacon({ __prereview: true, type: "scroll", scrollX: 0, scrollY: 100, docW: 800, docH: 4000 });
+    expect(pin.style.transform).toBe("translate(0px, -100px)");
+
+    // A server render re-renders the pin layer; morphdom diffs it against the
+    // template (no inline style) and wipes the imperative styles.
+    pin.removeAttribute("style");
+    expect(pin.style.transform).toBe("");
+
+    // The directive scan runs after morphdom and must restore them from the
+    // cached metrics — otherwise a saved pin vanishes until the next scroll.
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    expect(pin.style.width).toBe("800px");
+    expect(pin.style.height).toBe("4000px");
+    expect(pin.style.transform).toBe("translate(0px, -100px)");
+  });
+});
+
+describe("regionRectFromBox (viewport box → document fractions)", () => {
+  const ORIGIN = "http://127.0.0.1:7778";
+
+  function box(x: number, y: number, w: number, h: number) {
+    // regionRectFromBox only reads x/y/w/h; the rect fields are unused here.
+    return { left: 0, top: 0, right: 0, bottom: 0, x, y, w, h };
+  }
+
+  // Arm the bridge with given page metrics so the module-level PageMetrics is
+  // populated the same way production does (via a beacon message).
+  function armMetrics(m: { scrollX?: number; scrollY?: number; docW: number; docH: number }) {
+    const stage = document.createElement("div");
+    stage.setAttribute("lvt-fx:proxy-bridge", "setProxyURL");
+    const iframe = document.createElement("iframe");
+    iframe.src = ORIGIN + "/";
+    stage.appendChild(iframe);
+    document.body.appendChild(stage);
+    handleProxyBridgeDirectives(document.body, jest.fn());
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: ORIGIN,
+        data: { __prereview: true, type: "scroll", scrollX: 0, scrollY: 0, ...m },
+      })
+    );
+  }
+
+  function overlay(width: number, height: number): HTMLElement {
+    const el = document.createElement("div");
+    el.getBoundingClientRect = jest.fn(
+      () => ({ width, height, left: 0, top: 0, right: width, bottom: height, x: 0, y: 0, toJSON() {} }) as DOMRect
+    );
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    teardownProxyBridgeForRoot(document.body);
+    document.body.innerHTML = "";
+    jest.restoreAllMocks();
+  });
+
+  it("returns null when no metrics have arrived (too-early drag)", () => {
+    // No bridge armed → pageBridgeMetrics is null after teardown in afterEach.
+    expect(regionRectFromBox(overlay(1000, 500), box(0.1, 0.1, 0.2, 0.2))).toBeNull();
+  });
+
+  it("converts a viewport box to document fractions using scroll + doc size", () => {
+    // Overlay = iframe viewport 1000x500; document 1000x5000 scrolled 1000px.
+    // A box at y=0.2 of the viewport → docTop = 1000 + 0.2*500 = 1100 → 1100/5000 = 0.22.
+    armMetrics({ scrollY: 1000, docW: 1000, docH: 5000 });
+    const r = regionRectFromBox(overlay(1000, 500), box(0.1, 0.2, 0.3, 0.4));
+    expect(r).not.toBeNull();
+    expect(r!.x).toBeCloseTo((0 + 0.1 * 1000) / 1000, 5); // 0.1
+    expect(r!.y).toBeCloseTo((1000 + 0.2 * 500) / 5000, 5); // 0.22
+    expect(r!.w).toBeCloseTo((0.3 * 1000) / 1000, 5); // 0.3
+    expect(r!.h).toBeCloseTo((0.4 * 500) / 5000, 5); // 0.04
+  });
+
+  it("clamps document fractions into [0,1]", () => {
+    armMetrics({ scrollY: 4900, docW: 1000, docH: 5000 });
+    // docTop = 4900 + 0.9*500 = 5350 → 5350/5000 = 1.07 → clamps to 1.
+    const r = regionRectFromBox(overlay(1000, 500), box(0, 0.9, 0.5, 0.5));
+    expect(r!.y).toBe(1);
+    expect(r!.h).toBeLessThanOrEqual(1);
   });
 });

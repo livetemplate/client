@@ -1660,6 +1660,15 @@ function attachBoxDragSelect(
   let startClientX = 0;
   let startClientY = 0;
   let pointerId = -1;
+  // pointerType + lastMove let us recover a TOUCH drag that iOS Safari
+  // cancels mid-gesture. iOS fires pointercancel / yanks pointer capture on
+  // long, fast touch-drags (it re-interprets them as a scroll/swipe), which
+  // would otherwise discard a large region the user deliberately drew. For
+  // touch we finalize WITH the last-known position instead of dropping it;
+  // mouse/pen keep the strict discard. (The area threshold in finalize still
+  // rejects an accidental tiny box, so a stray cancel can't create a region.)
+  let pointerType = "";
+  let lastMove: PointerEvent | null = null;
   // Capture the parent at pointerdown time so a server diff that moves
   // the host to a NEW parent mid-drag doesn't split the drag across
   // two positioning contexts. updateOverlay positions against this
@@ -1701,8 +1710,10 @@ function attachBoxDragSelect(
     const capturedPointerId = pointerId;
     const rect = startRect;
     pointerId = -1;
+    pointerType = "";
     dragParent = null;
     startRect = null;
+    lastMove = null;
     try {
       el.releasePointerCapture(capturedPointerId);
     } catch {
@@ -1820,6 +1831,8 @@ function attachBoxDragSelect(
     startClientX = e.clientX;
     startClientY = e.clientY;
     pointerId = e.pointerId;
+    pointerType = e.pointerType;
+    lastMove = e;
     dragParent = parent;
     startRect = el.getBoundingClientRect();
     let captureOk = false;
@@ -1915,6 +1928,7 @@ function attachBoxDragSelect(
       finalize(null, false);
       return;
     }
+    lastMove = e;
     updateOverlay(e);
   };
 
@@ -1929,7 +1943,9 @@ function attachBoxDragSelect(
 
   const onPointerCancel = (e: PointerEvent) => {
     if (e.pointerId !== pointerId) return;
-    finalize(e, false);
+    // iOS cancels long touch-drags it re-reads as a swipe; keep the region
+    // the user drew rather than dropping it (mouse/pen still discard).
+    finalize(e, pointerType === "touch");
   };
   // lostpointercapture handles the rare case where the platform yanks
   // capture (OS gesture, another setPointerCapture call). Guard on
@@ -1937,7 +1953,13 @@ function attachBoxDragSelect(
   // DIFFERENT pointer on the same element, and we mustn't cancel
   // our in-progress drag because of an unrelated release.
   const onLostCapture = (e: PointerEvent) => {
-    if (e.pointerId === pointerId) finalize(null, false);
+    if (e.pointerId !== pointerId) return;
+    // Same touch-recovery as pointercancel: finalize from the last move so a
+    // capture yank mid-touch-drag keeps the region instead of dropping it.
+    // (lastMove is non-null whenever a drag is active — set on pointerdown —
+    // and finalize tolerates a null event anyway, so no extra guard is needed.)
+    const touch = pointerType === "touch";
+    finalize(touch ? lastMove : null, touch);
   };
 
   el.addEventListener("pointerdown", onPointerDown);
@@ -2068,6 +2090,201 @@ export function teardownRegionSelectForRoot(rootElement: Element): void {
   }
 }
 
+// proxyBridgeArmed mirrors the area/region-select singletons: one entry per
+// armed `lvt-fx:proxy-bridge` element, swept on disconnect. sync runs on every
+// render to re-apply the pin-layer transform morphdom wipes + relay a "locate
+// this annotation" request to the iframe.
+type ProxyBridgeEntry = BoxDragEntry & { sync: () => void };
+const proxyBridgeArmed = new Map<Element, ProxyBridgeEntry>();
+
+/**
+ * Apply proxy-bridge directives — the `--external` live-site bridge.
+ * `lvt-fx:proxy-bridge="<actionName>"` on the preview stage (the element
+ * wrapping the proxied `<iframe>` + the `[data-pin-layer]` overlay) listens
+ * for the beacon the proxy injects into the cross-origin page (see
+ * proxy.go). Each beacon message carries the page's scroll + document size:
+ *
+ *   - ANY message updates the shared PageMetrics (so the "page" region
+ *     resolver can convert a drawn box to document fractions) and re-pins the
+ *     saved annotations by sizing the pin layer to the document and
+ *     translating it by -scroll — a pure CSS transform, no server round-trip.
+ *   - a `nav` message additionally dispatches `<actionName>` with `{url}` so
+ *     the server swaps the visible annotation set for the new page.
+ *
+ * This is the only thing that reaches across the cross-origin boundary, and
+ * it's read-only (postMessage in, transform out) — we never touch the
+ * proxied page's DOM. Messages from any origin other than the iframe's are
+ * ignored.
+ *
+ * Idempotent + swept exactly like area/region-select.
+ */
+export function handleProxyBridgeDirectives(
+  rootElement: Element,
+  send: AreaSelectSendFn
+): void {
+  for (const [element, entry] of Array.from(proxyBridgeArmed)) {
+    if (!element.isConnected || !element.hasAttribute("lvt-fx:proxy-bridge")) {
+      entry.cleanup();
+    }
+  }
+  const matches = rootElement.querySelectorAll<HTMLElement>(
+    "[lvt-fx\\:proxy-bridge]"
+  );
+  if (matches.length === 0) return;
+  for (const el of matches) {
+    const action = el.getAttribute("lvt-fx:proxy-bridge");
+    if (!action) {
+      console.warn(
+        `lvt-fx:proxy-bridge requires an action name, got: ${JSON.stringify(action)}`
+      );
+      continue;
+    }
+    const existing = proxyBridgeArmed.get(el);
+    if (existing && existing.action === action) {
+      existing.updateSend(send);
+      existing.sync();
+      continue;
+    }
+    if (existing) existing.cleanup();
+    // Enforce exactly one bridge: pageBridgeMetrics is a module-level singleton,
+    // so a second bridge would share it and the first cleanup() would null it,
+    // blinding the other. External mode renders one stage; a second is a bug
+    // (e.g. a transient double-render) — warn and ignore it rather than collide.
+    if (proxyBridgeArmed.size > 0) {
+      console.warn(
+        "lvt-fx:proxy-bridge: external mode expects exactly one bridge; ignoring an additional one (shared page metrics would collide)."
+      );
+      continue;
+    }
+    const entry = attachProxyBridge(el, action, send);
+    proxyBridgeArmed.set(el, entry);
+    entry.sync();
+  }
+}
+
+/**
+ * Cancel proxy-bridge listeners for every armed element under root.
+ * Mirror of teardownRegionSelectForRoot for the client disconnect lifecycle.
+ */
+export function teardownProxyBridgeForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(proxyBridgeArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
+function attachProxyBridge(
+  el: HTMLElement,
+  action: string,
+  initialSend: AreaSelectSendFn
+): ProxyBridgeEntry {
+  let send = initialSend;
+  let lastURL: string | null = null;
+  let lastFocusToken: string | null = null;
+  const iframe = el.querySelector<HTMLIFrameElement>("iframe");
+  const pinLayer = el.querySelector<HTMLElement>("[data-pin-layer]");
+
+  // Only trust messages from the proxied iframe's own origin.
+  let expectedOrigin = "";
+  try {
+    if (iframe && iframe.src) expectedOrigin = new URL(iframe.src).origin;
+  } catch {
+    expectedOrigin = "";
+  }
+  // Fail closed: if the origin can't be resolved we can't trust any sender, so
+  // reject every inbound message (onMessage) and never broadcast outbound focus
+  // (sync). An unresolved origin should be impossible — the server always
+  // renders an absolute src — so warn if it happens.
+  if (!expectedOrigin) {
+    console.warn(
+      "lvt-fx:proxy-bridge: could not resolve the iframe origin; ignoring all postMessage traffic"
+    );
+  }
+
+  // applyPinLayer sizes the pin layer to the document and slides it by -scroll
+  // so each marker (percentage-positioned by the server within this layer)
+  // tracks its spot on the page. These are INLINE styles set imperatively, so
+  // they must be re-applied after every server render too — morphdom diffs the
+  // pin-layer against the template (which has no inline style) and would
+  // otherwise wipe them, collapsing the layer until the next scroll. See sync().
+  const applyPinLayer = () => {
+    const m = pageBridgeMetrics;
+    if (pinLayer && m && m.docW > 0 && m.docH > 0) {
+      pinLayer.style.width = m.docW + "px";
+      pinLayer.style.height = m.docH + "px";
+      pinLayer.style.transform = `translate(${-m.scrollX}px, ${-m.scrollY}px)`;
+    }
+  };
+
+  const onMessage = (e: MessageEvent) => {
+    if (!expectedOrigin || e.origin !== expectedOrigin) return;
+    const d = e.data;
+    if (!d || d.__prereview !== true) return;
+
+    pageBridgeMetrics = {
+      scrollX: Number(d.scrollX) || 0,
+      scrollY: Number(d.scrollY) || 0,
+      docW: Number(d.docW) || 0,
+      docH: Number(d.docH) || 0,
+    };
+    applyPinLayer();
+
+    if (d.type === "nav") {
+      const url = typeof d.url === "string" ? d.url : "";
+      if (url !== lastURL) {
+        lastURL = url;
+        send({ action, data: { url } });
+      }
+    }
+  };
+  window.addEventListener("message", onMessage);
+
+  // sync runs on EVERY server render (after morphdom). It (1) re-applies the
+  // pin-layer size/transform that morphdom just wiped, so a saved pin doesn't
+  // vanish until the next scroll, and (2) relays a "locate this annotation"
+  // request to the iframe: the server stamps el with data-focus-token (bumps
+  // each tap), data-focus-url (the annotation's page) and data-focus-y (0..1
+  // document fraction); on a changed token we postMessage the iframe, whose
+  // beacon navigates there if needed and scrolls the region into view. Posting
+  // INTO the iframe is allowed cross-origin (only reads are blocked).
+  const sync = () => {
+    applyPinLayer();
+    const token = el.getAttribute("data-focus-token");
+    if (!token || token === lastFocusToken) return;
+    lastFocusToken = token;
+    const win = iframe?.contentWindow;
+    // No "*" fallback — only post to the resolved proxied origin (fail closed).
+    if (!win || !expectedOrigin) return;
+    const url = el.getAttribute("data-focus-url") || "";
+    const y = parseFloat(el.getAttribute("data-focus-y") || "");
+    try {
+      win.postMessage(
+        { __prereviewFocus: true, url, y: Number.isFinite(y) ? y : 0 },
+        expectedOrigin
+      );
+    } catch {
+      // contentWindow gone mid-navigation — the next render retries.
+    }
+  };
+
+  return {
+    action,
+    cleanup: () => {
+      window.removeEventListener("message", onMessage);
+      proxyBridgeArmed.delete(el);
+      // Intentionally drop the shared metrics on teardown — keep this here:
+      // a stale rect from a torn-down bridge must not leak into a new one (the
+      // next beacon re-populates it). Do NOT hoist this out to "simplify".
+      pageBridgeMetrics = null;
+    },
+    updateSend: (s) => {
+      send = s;
+    },
+    sync,
+  };
+}
+
 function attachRegionSelect(
   el: HTMLElement,
   action: string,
@@ -2096,6 +2313,25 @@ function attachRegionSelect(
 }
 
 type LineRange = { from: number; to: number; side?: string };
+// A region on a live (cross-origin) proxied page: a rectangle in 0..1
+// DOCUMENT fractions (not the host-rect fractions the drag spine yields, and
+// not a line range — a live app has no source markers). Survives scroll
+// because it's anchored to the document, not the viewport.
+type RectPayload = { x: number; y: number; w: number; h: number };
+type RegionPayload = LineRange | RectPayload;
+
+// PageMetrics is the proxied page's scroll + document size, reported by the
+// injected beacon (proxy.go) via postMessage. External mode frames exactly
+// one proxied iframe, so a single module-level record is enough; the proxy
+// bridge writes it and the "page" region resolver reads it to convert a
+// drawn box (viewport space) into document fractions.
+type PageMetrics = {
+  scrollX: number;
+  scrollY: number;
+  docW: number;
+  docH: number;
+};
+let pageBridgeMetrics: PageMetrics | null = null;
 
 // previewIframeFor finds the iframe a region overlay covers. The overlay
 // is a sibling of its iframe inside a positioned wrapper and is rendered
@@ -2114,7 +2350,7 @@ function previewIframeFor(overlay: HTMLElement): HTMLIFrameElement | null {
 // resolveRegion hit-tests a drawn box (viewport coords) against the line-
 // bearing elements of the overlay's target surface, returning the source
 // line-range payload or null when the box hit nothing.
-function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
+function resolveRegion(el: HTMLElement, box: BoxDragResult): RegionPayload | null {
   const surface = el.getAttribute("data-surface");
   if (surface === "html") {
     const iframe = previewIframeFor(el);
@@ -2139,10 +2375,52 @@ function resolveRegion(el: HTMLElement, box: BoxDragResult): LineRange | null {
       readCodeRange
     );
   }
+  if (surface === "page") {
+    return regionRectFromBox(el, box);
+  }
   console.warn(
-    `lvt-fx:region-select: unknown data-surface ${JSON.stringify(surface)} (expected "html" or "code")`
+    `lvt-fx:region-select: unknown data-surface ${JSON.stringify(surface)} (expected "html", "code", or "page")`
   );
   return null;
+}
+
+// regionRectFromBox converts a box drawn over the live-site overlay (its
+// x/y/w/h are 0..1 fractions of the overlay's rendered rect, which equals the
+// iframe's VIEWPORT) into 0..1 fractions of the proxied page's DOCUMENT,
+// using the beacon-reported scroll + document size. The overlay is
+// cross-origin, so we can't read the iframe's DOM — these metrics are the
+// only bridge. Returns null when no metrics have arrived yet (no scroll/nav
+// beacon) or the overlay has no size, so a too-early drag is a harmless
+// no-op. Exported so unit tests exercise the real conversion math.
+export function regionRectFromBox(
+  el: HTMLElement,
+  box: BoxDragResult
+): RectPayload | null {
+  const m = pageBridgeMetrics;
+  if (!m || m.docW <= 0 || m.docH <= 0) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  // The drag spine only ever hands us a positive box, but this is exported —
+  // reject a non-positive box rather than letting clampUnit collapse it to 0.
+  if (box.w <= 0 || box.h <= 0) return null;
+  // box.x/y/w/h are OVERLAY-RELATIVE fractions (0..1 of the overlay's own
+  // rect), not viewport-absolute — so the overlay's position on the page
+  // doesn't enter the math. The overlay covers the iframe's viewport, so
+  // box.x*rect.width is the in-viewport pixel offset; adding the beacon's
+  // scroll lifts it into iframe-DOCUMENT pixels, then ÷ doc size → fraction.
+  const docLeft = m.scrollX + box.x * rect.width;
+  const docTop = m.scrollY + box.y * rect.height;
+  return {
+    x: clampUnit(docLeft / m.docW),
+    y: clampUnit(docTop / m.docH),
+    w: clampUnit((box.w * rect.width) / m.docW),
+    h: clampUnit((box.h * rect.height) / m.docH),
+  };
+}
+
+function clampUnit(n: number): number {
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n > 1 ? 1 : n;
 }
 
 // readHTMLRange reads a rendered-HTML block's source span from its
