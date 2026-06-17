@@ -2143,6 +2143,16 @@ export function handleProxyBridgeDirectives(
       continue;
     }
     if (existing) existing.cleanup();
+    // Enforce exactly one bridge: pageBridgeMetrics is a module-level singleton,
+    // so a second bridge would share it and the first cleanup() would null it,
+    // blinding the other. External mode renders one stage; a second is a bug
+    // (e.g. a transient double-render) — warn and ignore it rather than collide.
+    if (proxyBridgeArmed.size > 0) {
+      console.warn(
+        "lvt-fx:proxy-bridge: external mode expects exactly one bridge; ignoring an additional one (shared page metrics would collide)."
+      );
+      continue;
+    }
     const entry = attachProxyBridge(el, action, send);
     proxyBridgeArmed.set(el, entry);
     entry.sync();

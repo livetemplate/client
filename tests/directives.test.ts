@@ -1397,6 +1397,24 @@ describe("handleAreaSelectDirectives", () => {
     expect(send.mock.calls[0][0].data.w).toBeCloseTo(0.5, 5); // (120-20)/200
   });
 
+  it("touch lostpointercapture before any move dispatches nothing (zero-area)", () => {
+    // If capture is lost before a single pointermove, lastMove is the
+    // pointerdown event, so finalize sees a zero-area box — the threshold must
+    // reject it, not create a degenerate region.
+    const [target] = mountTarget(
+      "img",
+      { "lvt-fx:area-select": "selectImageArea" },
+      { left: 0, top: 0, width: 200, height: 200 }
+    );
+    const send = jest.fn();
+    handleAreaSelectDirectives(document.body, send);
+
+    dispatchTouch(target, "pointerdown", 50, 50);
+    dispatchTouch(target, "lostpointercapture", 50, 50);
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("a tiny touch cancel is still dropped (area threshold, no stray region)", () => {
     const [target] = mountTarget(
       "img",
@@ -2967,6 +2985,22 @@ describe("handleProxyBridgeDirectives (--external live-site bridge)", () => {
       .mockImplementation(() => {});
     handleProxyBridgeDirectives(document.body, jest.fn());
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it("arms exactly one bridge and ignores a second (shared-metrics guard)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    makeStage();
+    makeStage(); // a second stage — should be ignored
+    const send = jest.fn();
+    handleProxyBridgeDirectives(document.body, send);
+
+    // Only the first bridge is armed; the second triggers the warning.
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).includes("exactly one bridge"))
+    ).toBe(true);
+    // A nav beacon still drives setProxyURL once (the single armed bridge).
+    beacon({ __prereview: true, type: "nav", url: "/p", docW: 1, docH: 1 });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when the iframe origin can't be resolved (no src)", () => {
