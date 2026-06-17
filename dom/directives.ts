@@ -1710,6 +1710,7 @@ function attachBoxDragSelect(
     const capturedPointerId = pointerId;
     const rect = startRect;
     pointerId = -1;
+    pointerType = "";
     dragParent = null;
     startRect = null;
     lastMove = null;
@@ -2394,6 +2395,11 @@ export function regionRectFromBox(
   if (!m || m.docW <= 0 || m.docH <= 0) return null;
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
+  // box.x/y/w/h are OVERLAY-RELATIVE fractions (0..1 of the overlay's own
+  // rect), not viewport-absolute — so the overlay's position on the page
+  // doesn't enter the math. The overlay covers the iframe's viewport, so
+  // box.x*rect.width is the in-viewport pixel offset; adding the beacon's
+  // scroll lifts it into iframe-DOCUMENT pixels, then ÷ doc size → fraction.
   const docLeft = m.scrollX + box.x * rect.width;
   const docTop = m.scrollY + box.y * rect.height;
   return {
