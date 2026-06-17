@@ -1956,8 +1956,10 @@ function attachBoxDragSelect(
     if (e.pointerId !== pointerId) return;
     // Same touch-recovery as pointercancel: finalize from the last move so a
     // capture yank mid-touch-drag keeps the region instead of dropping it.
-    const m = lastMove;
-    finalize(pointerType === "touch" ? m : null, pointerType === "touch" && m !== null);
+    // (lastMove is non-null whenever a drag is active — set on pointerdown —
+    // and finalize tolerates a null event anyway, so no extra guard is needed.)
+    const touch = pointerType === "touch";
+    finalize(touch ? lastMove : null, touch);
   };
 
   el.addEventListener("pointerdown", onPointerDown);
@@ -2271,6 +2273,9 @@ function attachProxyBridge(
     cleanup: () => {
       window.removeEventListener("message", onMessage);
       proxyBridgeArmed.delete(el);
+      // Intentionally drop the shared metrics on teardown — keep this here:
+      // a stale rect from a torn-down bridge must not leak into a new one (the
+      // next beacon re-populates it). Do NOT hoist this out to "simplify".
       pageBridgeMetrics = null;
     },
     updateSend: (s) => {
@@ -2395,6 +2400,9 @@ export function regionRectFromBox(
   if (!m || m.docW <= 0 || m.docH <= 0) return null;
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
+  // The drag spine only ever hands us a positive box, but this is exported —
+  // reject a non-positive box rather than letting clampUnit collapse it to 0.
+  if (box.w <= 0 || box.h <= 0) return null;
   // box.x/y/w/h are OVERLAY-RELATIVE fractions (0..1 of the overlay's own
   // rect), not viewport-absolute — so the overlay's position on the page
   // doesn't enter the math. The overlay covers the iframe's viewport, so
