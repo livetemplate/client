@@ -231,6 +231,92 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(afterUpdate[1].checked).toBe(false);
   });
 
+  it("server wins for a checkbox with an lvt-on:click handler", () => {
+    // A checkbox whose toggle is routed to the server via lvt-on:click is
+    // server-authoritative: the click is dispatched and the server echoes back
+    // the new state. At morph time the live control's checked is still false
+    // (the toggle is owned by the server, not local optimistic state), and the
+    // server's re-render carries the checked attribute. Server must win without
+    // needing an explicit data-lvt-force-update — issue tinkerdown#292.
+    // Slot 1 is a co-rendered label that changes each push, so every update is
+    // a real morphdom pass (an identical tree short-circuits in updateDOM).
+    const uncheckedTree = {
+      s: [`<div>`, ``, `</div>`],
+      0: `<input type="checkbox" data-key="t1" lvt-on:click="Toggle">`,
+      1: `<span>v1</span>`,
+    };
+    client.updateDOM(wrapper, uncheckedTree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cb.checked).toBe(false);
+
+    // Server responds to the click with the toggled (checked) state.
+    client.updateDOM(wrapper, {
+      0: `<input type="checkbox" data-key="t1" lvt-on:click="Toggle" checked>`,
+      1: `<span>v2</span>`,
+    });
+    expect(
+      wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked
+    ).toBe(true);
+
+    // Inverse: the user optimistically unchecks it (live state now stale), but
+    // the server's next render re-affirms checked. Server authority must win in
+    // both directions — the local control never overrides the server value.
+    wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked = false;
+    client.updateDOM(wrapper, {
+      0: `<input type="checkbox" data-key="t1" lvt-on:click="Toggle" checked>`,
+      1: `<span>v3</span>`,
+    });
+    expect(
+      wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked
+    ).toBe(true);
+  });
+
+  it("server wins for a radio with an lvt-on:click handler", () => {
+    // The server-authoritative path also applies to radios. When every radio in
+    // the group is server-bound, the server sends authoritative state for ALL of
+    // them (here: r1 unchecked, r2 checked), which sidesteps the documented
+    // mid-pass mutual-exclusion limitation.
+    const uncheckedTree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="radio" name="opt" data-key="r1" lvt-on:click="Pick" value="a">` +
+         `<input type="radio" name="opt" data-key="r2" lvt-on:click="Pick" value="b">`,
+    };
+    client.updateDOM(wrapper, uncheckedTree);
+
+    const radios = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(radios[0].checked).toBe(false);
+    expect(radios[1].checked).toBe(false);
+
+    const checkedTree = {
+      0: `<input type="radio" name="opt" data-key="r1" lvt-on:click="Pick" value="a">` +
+         `<input type="radio" name="opt" data-key="r2" lvt-on:click="Pick" value="b" checked>`,
+    };
+    client.updateDOM(wrapper, checkedTree);
+
+    const after = wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    expect(after[0].checked).toBe(false);
+    expect(after[1].checked).toBe(true);
+  });
+
+  it("still preserves user state for a checkbox with NO server-bound handler", () => {
+    // Control: a plain form checkbox (no lvt-on:click) keeps the user's
+    // selection across a server refresh — the default must not regress.
+    const tree = {
+      s: [`<form>`, `</form>`],
+      0: `<input type="checkbox" data-key="p1" value="a">`,
+    };
+    client.updateDOM(wrapper, tree);
+
+    const cb = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    cb.checked = true; // user checks it
+
+    client.updateDOM(wrapper, tree); // server refresh, no checked attribute
+
+    const cbAfter = wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(cbAfter.checked).toBe(true);
+  });
+
   it("preserves radio button checked state across morphdom updates", () => {
     const initialTree = {
       s: [
