@@ -1823,22 +1823,36 @@ export class LiveTemplateClient {
         // state is user input that must survive scan-loop refreshes. Use
         // data-lvt-force-update to let the server override the user state.
         //
-        // Known limitation: force-update on one radio can uncheck a sibling
-        // that was already processed earlier in the same morphdom pass, since
-        // browser mutual exclusion fires synchronously mid-loop. To safely
-        // reset a radio group, send data-lvt-force-update on ALL radios in
-        // the group, not just the one being checked.
+        // Exception: a control with an lvt-on:click handler routes its own
+        // toggle to the server, which echoes back the authoritative state.
+        // There is no pending local-only selection to protect, so the server's
+        // rendered checked attribute must win — otherwise a server-driven
+        // toggle never reflects in the DOM. This makes lvt-on:click checkboxes
+        // server-authoritative without needing an explicit data-lvt-force-update.
+        //
+        // Known limitation: forcing one radio can uncheck a sibling that was
+        // already processed earlier in the same morphdom pass, since browser
+        // mutual exclusion fires synchronously mid-loop. To safely reset a
+        // radio group, make the server send the authoritative state (or
+        // data-lvt-force-update) on ALL radios in the group, not just one.
         if (
           fromEl instanceof HTMLInputElement &&
           toEl instanceof HTMLInputElement &&
           (fromEl.type === "checkbox" || fromEl.type === "radio")
         ) {
-          if (toEl.hasAttribute("data-lvt-force-update")) {
+          const explicitForce = toEl.hasAttribute("data-lvt-force-update");
+          const serverAuthoritative =
+            explicitForce || toEl.hasAttribute("lvt-on:click");
+          if (serverAuthoritative) {
             fromEl.checked = toEl.checked;
             if (fromEl.type === "checkbox") {
               fromEl.indeterminate = toEl.indeterminate;
             }
-            fromEl.removeAttribute("data-lvt-force-update");
+            // data-lvt-force-update is a one-shot signal; strip it so it does
+            // not persist. lvt-on:click is a durable handler — leave it.
+            if (explicitForce) {
+              fromEl.removeAttribute("data-lvt-force-update");
+            }
           } else {
             toEl.checked = fromEl.checked;
             // Align the checked attribute with the property so morphdom's
