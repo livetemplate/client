@@ -31,6 +31,7 @@ import {
   setupFxLifecycleListeners,
   teardownFxLifecycleListeners,
 } from "./dom/directives";
+import { handleResizeDirectives, teardownResizeForRoot } from "./dom/resize";
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
 import { ObserverManager } from "./dom/observer-manager";
@@ -676,6 +677,7 @@ export class LiveTemplateClient {
       teardownScrollAway(this.wrapperElement);
       teardownSpy(this.wrapperElement);
       teardownAreaSelectForRoot(this.wrapperElement);
+      teardownResizeForRoot(this.wrapperElement);
       teardownRegionSelectForRoot(this.wrapperElement);
       teardownProxyBridgeForRoot(this.wrapperElement);
       teardownIframeAutoHeightForRoot(this.wrapperElement);
@@ -1807,6 +1809,28 @@ export class LiveTemplateClient {
           (toEl as Element).setAttribute('open', '');
         }
 
+        // <details lvt-ignore-attrs>: the user's live open/closed state is
+        // authoritative in BOTH directions. Plain lvt-ignore-attrs only revives
+        // attributes the server OMITS, so a server-emitted `open` (e.g. a default-
+        // expanded folder) would re-open after the user collapsed it. Syncing
+        // toEl's `open` to fromEl's live state before morphdom's attr diff keeps
+        // the disclosure where the user left it: the server sets the initial
+        // default on insert (no fromEl yet), the user owns it thereafter, and
+        // data-lvt-force-update lets the server reassert control. Bare <details>
+        // (no opt-in) keep the default server-wins behaviour.
+        if (
+          fromEl instanceof HTMLDetailsElement &&
+          (fromEl as Element).hasAttribute('lvt-ignore-attrs') &&
+          !(toEl as Element).hasAttribute('data-lvt-force-update') &&
+          toEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          if (fromEl.open) {
+            (toEl as Element).setAttribute('open', '');
+          } else {
+            (toEl as Element).removeAttribute('open');
+          }
+        }
+
         // Skip open popovers entirely (top-layer state has no DOM representation).
         if (
           !(toEl as Element).hasAttribute("data-lvt-force-update") &&
@@ -2043,6 +2067,10 @@ export class LiveTemplateClient {
     // send the event delegator uses so the WS/HTTP routing is
     // identical to a normal action.
     handleAreaSelectDirectives(element, (message) => this.send(message));
+    // resize is client-only (updates a CSS var on :root + localStorage), so
+    // unlike area-select it needs no send() callback. Arm/sweep is idempotent
+    // so an in-flight drag survives a re-render.
+    handleResizeDirectives(element);
     // region-select is the area-select drag spine over an iframe / code
     // overlay: a drawn box is hit-tested to a source line range. Same
     // send-callback wiring; the overlay is parent light DOM so it works
