@@ -33,6 +33,10 @@ interface ResizeEntry {
 const resizeArmed = new WeakMap<Element, ResizeEntry>();
 // Tracked so teardownResizeForRoot can sweep without a live DOM query.
 const resizeElements = new Set<Element>();
+// varName -> the host that currently owns that :root custom property. Only the
+// owner clears the property on cleanup, so two hosts sharing a var name don't
+// nuke it for each other; a conflict is warned about at arm time.
+const armedVars = new Map<string, Element>();
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
@@ -161,10 +165,13 @@ function attachResize(host: HTMLElement, varName: string): ResizeEntry {
       handle.removeEventListener("pointermove", onPointerMove);
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
-      // Drop the :root override so a different element can't inherit this one's
-      // width before its own attachResize runs (it restores from localStorage
-      // or the stylesheet default on re-arm).
-      document.documentElement.style.removeProperty(varName);
+      // Drop the :root override so a different element can't inherit this
+      // one's width before its own attachResize runs — but only if we still
+      // own the var, so a host sharing the name keeps it.
+      if (armedVars.get(varName) === host) {
+        document.documentElement.style.removeProperty(varName);
+        armedVars.delete(varName);
+      }
       resizeArmed.delete(host);
       resizeElements.delete(host);
     },
@@ -202,16 +209,26 @@ export function handleResizeDirectives(rootElement: Element): void {
       continue;
     }
     if (resizeArmed.has(el)) continue; // already armed — keep listeners
+    const owner = armedVars.get(varName);
+    if (owner && owner !== el && owner.isConnected) {
+      console.warn(
+        `lvt-fx:resize: "${varName}" is already controlled by another connected element; they will fight over it.`
+      );
+    }
     const entry = attachResize(el, varName);
     resizeArmed.set(el, entry);
     resizeElements.add(el);
+    armedVars.set(varName, el);
   }
 }
 
 /** Cancel resize listeners for every armed element under root (disconnect/destroy). */
 export function teardownResizeForRoot(root: Element): void {
   for (const element of Array.from(resizeElements)) {
-    if (root.contains(element)) {
+    // Also clean up already-detached hosts (e.g. removed via replaceChildren
+    // before teardown) so destroy-time state is clean immediately, not just on
+    // the next handleResizeDirectives sweep.
+    if (root.contains(element) || !element.isConnected) {
       resizeArmed.get(element)?.cleanup();
     }
   }

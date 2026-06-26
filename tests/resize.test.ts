@@ -99,6 +99,27 @@ describe("lvt-fx:resize arm/sweep lifecycle", () => {
     warn.mockRestore();
   });
 
+  it("warns when two connected elements share the same resize var", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.replaceChildren();
+    const wrap = document.createElement("div");
+    wrap.setAttribute("data-lvt-id", "t");
+    for (let i = 0; i < 2; i++) {
+      const host = document.createElement("aside");
+      for (const [k, v] of Object.entries(baseAttrs)) host.setAttribute(k, v);
+      const h = document.createElement("div");
+      h.className = "resize-handle";
+      host.appendChild(h);
+      wrap.appendChild(host);
+    }
+    document.body.appendChild(wrap);
+    handleResizeDirectives(document.body);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("already controlled")
+    );
+    warn.mockRestore();
+  });
+
   it("sweeps the entry when the attribute is removed", () => {
     const host = makeHost(baseAttrs);
     handleResizeDirectives(document.body);

@@ -1818,9 +1818,14 @@ export class LiveTemplateClient {
         // default on insert (no fromEl yet), the user owns it thereafter, and
         // data-lvt-force-update lets the server reassert control. Bare <details>
         // (no opt-in) keep the default server-wins behaviour.
+        //
+        // Ordering: we don't rely on lvt-ignore-attrs to suppress the `open`
+        // diff — we set toEl's `open` to the live value HERE, so morphdom's
+        // subsequent attribute sync copies that same value back onto fromEl (a
+        // no-op for `open`). lvt-ignore-attrs is only the opt-in marker.
         if (
           fromEl instanceof HTMLDetailsElement &&
-          (fromEl as Element).hasAttribute('lvt-ignore-attrs') &&
+          fromEl.hasAttribute('lvt-ignore-attrs') &&
           !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
           if (fromEl.open) {
