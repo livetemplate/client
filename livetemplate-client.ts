@@ -1825,13 +1825,14 @@ export class LiveTemplateClient {
         // no-op for `open`). lvt-ignore-attrs is only the opt-in marker.
         if (
           fromEl instanceof HTMLDetailsElement &&
+          toEl instanceof HTMLDetailsElement &&
           fromEl.hasAttribute('lvt-ignore-attrs') &&
-          !(toEl as Element).hasAttribute('data-lvt-force-update')
+          !toEl.hasAttribute('data-lvt-force-update')
         ) {
           if (fromEl.open) {
-            (toEl as Element).setAttribute('open', '');
+            toEl.setAttribute('open', '');
           } else {
-            (toEl as Element).removeAttribute('open');
+            toEl.removeAttribute('open');
           }
         }
 

@@ -127,8 +127,10 @@ function attachResize(host: HTMLElement, varName: string): ResizeEntry {
   };
 
   const onPointerDown = (e: PointerEvent) => {
-    // Primary button / touch / pen only; ignore secondary buttons.
-    if (e.button !== 0) return;
+    // Primary button / touch / pen only; ignore secondary buttons. Also ignore
+    // a second pointerdown while a drag is in flight (two-finger / pen+touch),
+    // which would otherwise clobber the active drag's start state.
+    if (e.button !== 0 || activePointer !== null) return;
     activePointer = e.pointerId;
     startPos = axis === "y" ? e.clientY : e.clientX;
     // Anchor the drag to the current variable value (the logical size we
@@ -224,11 +226,12 @@ export function handleResizeDirectives(rootElement: Element): void {
 
 /** Cancel resize listeners for every armed element under root (disconnect/destroy). */
 export function teardownResizeForRoot(root: Element): void {
+  // Only sweep elements under THIS root. resizeElements is a module-level
+  // singleton shared across clients, so cleaning up by !isConnected here would
+  // let one client tear down nodes another client briefly detached mid-render.
+  // Disconnected hosts are reclaimed by the handleResizeDirectives sweep.
   for (const element of Array.from(resizeElements)) {
-    // Also clean up already-detached hosts (e.g. removed via replaceChildren
-    // before teardown) so destroy-time state is clean immediately, not just on
-    // the next handleResizeDirectives sweep.
-    if (root.contains(element) || !element.isConnected) {
+    if (root.contains(element)) {
       resizeArmed.get(element)?.cleanup();
     }
   }
