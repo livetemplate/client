@@ -15,6 +15,10 @@
  *     <div class="resize-handle"></div>
  *   </aside>
  *
+ * The handle element needs `touch-action: none` in CSS — onPointerMove calls
+ * preventDefault(), so without it the drag silently interferes with page scroll
+ * on touch devices (iOS/Android).
+ *
  * The CSS variable is set on document.documentElement (:root) rather than the
  * host so it survives morphdom re-renders — the host element is inside the
  * livetemplate-managed subtree and its inline style would be diffed away, but
@@ -123,8 +127,20 @@ function attachResize(host: HTMLElement, varName: string): ResizeEntry {
     if (e.button !== 0) return;
     activePointer = e.pointerId;
     startPos = axis === "y" ? e.clientY : e.clientX;
+    // Anchor the drag to the current variable value (the logical size we
+    // control), not the rendered box — under content-box + padding the rect
+    // differs from the var and the first drag would jump. getComputedStyle on
+    // :root resolves an inline override or the stylesheet default; fall back to
+    // the rendered rect only when the var is unset.
+    const fromVar = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue(varName)
+    );
     const rect = host.getBoundingClientRect();
-    startSize = axis === "y" ? rect.height : rect.width;
+    startSize = Number.isFinite(fromVar)
+      ? fromVar
+      : axis === "y"
+        ? rect.height
+        : rect.width;
     try {
       handle.setPointerCapture(e.pointerId);
     } catch {
@@ -145,6 +161,10 @@ function attachResize(host: HTMLElement, varName: string): ResizeEntry {
       handle.removeEventListener("pointermove", onPointerMove);
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
+      // Drop the :root override so a different element can't inherit this one's
+      // width before its own attachResize runs (it restores from localStorage
+      // or the stylesheet default on re-arm).
+      document.documentElement.style.removeProperty(varName);
       resizeArmed.delete(host);
       resizeElements.delete(host);
     },
