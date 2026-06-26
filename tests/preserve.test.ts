@@ -800,6 +800,114 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(input.getAttribute('aria-invalid')).toBe("true");
   });
 
+  it("details lvt-ignore-attrs: user-collapsed default-OPEN folder stays collapsed", () => {
+    // A server-default-expanded folder (<details open>) that the user collapses
+    // must STAY collapsed across re-renders. Plain lvt-ignore-attrs can't do this
+    // (it only revives server-omitted attrs); the dedicated <details> open-sync
+    // makes the live state win in this direction too.
+    const initialTree = {
+      s: [
+        `<details lvt-ignore-attrs open data-key="d"><summary>changed</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="file" data-key="f">b.go</a>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const details = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(details.open).toBe(true);
+
+    // User collapses the auto-expanded folder.
+    details.removeAttribute("open");
+    expect(details.open).toBe(false);
+
+    // Server re-renders, still emitting `open` (it's a default-open folder), and
+    // updates a child (file selection).
+    client.updateDOM(wrapper, {
+      s: [
+        `<details lvt-ignore-attrs open data-key="d"><summary>changed</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="file selected" data-key="f">b.go</a>`,
+    });
+
+    const after = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(after.open).toBe(false); // stays collapsed — the fix
+    // Child still updated.
+    expect(wrapper.querySelector("a.file")!.className).toBe("file selected");
+  });
+
+  it("details lvt-ignore-attrs: user-opened default-CLOSED folder stays open + children update", () => {
+    const initialTree = {
+      s: [
+        `<details lvt-ignore-attrs data-key="d2"><summary>src</summary>`,
+        `</details>`,
+      ],
+      0: `<a class="file" data-key="f2">a.go</a>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const details = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+
+    details.setAttribute("open", ""); // user expands
+    expect(details.open).toBe(true);
+
+    // Server re-render (still omits open) with a child change.
+    client.updateDOM(wrapper, { 0: `<a class="file selected" data-key="f2">a.go</a>` });
+
+    const after = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(after.open).toBe(true); // stays open
+    expect(wrapper.querySelector("a.file")!.className).toBe("file selected");
+  });
+
+  it("details lvt-ignore-attrs: data-lvt-force-update lets the server reassert open state", () => {
+    const initialTree = {
+      s: [
+        `<details lvt-ignore-attrs open data-key="d3"><summary>x</summary>`,
+        `</details>`,
+      ],
+      0: `<span>v1</span>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const details = wrapper.querySelector("details") as HTMLDetailsElement;
+    details.removeAttribute("open"); // user collapses
+    expect(details.open).toBe(false);
+
+    // Server force-updates to reassert open.
+    client.updateDOM(wrapper, {
+      s: [
+        `<details lvt-ignore-attrs open data-lvt-force-update data-key="d3"><summary>x</summary>`,
+        `</details>`,
+      ],
+      0: `<span>v2</span>`,
+    });
+
+    const after = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(after.open).toBe(true); // server wins under force-update
+    expect(after.hasAttribute("data-lvt-force-update")).toBe(false); // self-clears
+  });
+
+  it("bare <details> (no lvt-ignore-attrs) keeps default server-wins behaviour", () => {
+    // Control: without the opt-in, the user's open state is clobbered by the
+    // server's HTML, matching the documented default.
+    const initialTree = {
+      s: [`<details data-key="d4"><summary>src</summary>`, `</details>`],
+      0: `<a class="file" data-key="f4">c.go</a>`,
+    };
+    client.updateDOM(wrapper, initialTree);
+
+    const details = wrapper.querySelector("details") as HTMLDetailsElement;
+    details.setAttribute("open", "");
+    expect(details.open).toBe(true);
+
+    client.updateDOM(wrapper, { 0: `<a class="file x" data-key="f4">c.go</a>` });
+
+    const after = wrapper.querySelector("details") as HTMLDetailsElement;
+    expect(after.open).toBe(false); // clobbered — server wins
+  });
+
   it("preserves the element's children as well", () => {
     // lvt-ignore is a full-element bail-out: attributes, children,
     // everything stays as-is. Useful for third-party widgets that
