@@ -88,6 +88,17 @@ describe("lvt-fx:resize arm/sweep lifecycle", () => {
     warn.mockRestore();
   });
 
+  it("warns and skips when the value is not a custom property (footgun guard)", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    localStorage.setItem("test.w", "350");
+    makeHost({ ...baseAttrs, "lvt-fx:resize": "width" });
+    handleResizeDirectives(document.body);
+    expect(warn).toHaveBeenCalled();
+    // Must NOT have written a real `width` property onto :root.
+    expect(document.documentElement.style.getPropertyValue("width")).toBe("");
+    warn.mockRestore();
+  });
+
   it("sweeps the entry when the attribute is removed", () => {
     const host = makeHost(baseAttrs);
     handleResizeDirectives(document.body);

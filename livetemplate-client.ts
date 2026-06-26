@@ -1821,8 +1821,7 @@ export class LiveTemplateClient {
         if (
           fromEl instanceof HTMLDetailsElement &&
           (fromEl as Element).hasAttribute('lvt-ignore-attrs') &&
-          !(toEl as Element).hasAttribute('data-lvt-force-update') &&
-          toEl.nodeType === Node.ELEMENT_NODE
+          !(toEl as Element).hasAttribute('data-lvt-force-update')
         ) {
           if (fromEl.open) {
             (toEl as Element).setAttribute('open', '');

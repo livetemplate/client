@@ -101,10 +101,13 @@ function attachResize(host: HTMLElement, varName: string): ResizeEntry {
     }
     host.removeAttribute("data-resizing");
     if (storeKey) {
-      const current = getComputedStyle(host)[
-        axis === "y" ? "height" : "width"
-      ];
-      const px = parseFloat(current);
+      // Persist the value we actually wrote (the :root custom property), not
+      // getComputedStyle(host) — the host's used width can differ from the var
+      // (border-box, padding, calc(), flex), which would restore a wrong size.
+      // This is also a single synchronous read, no forced layout.
+      const px = parseFloat(
+        document.documentElement.style.getPropertyValue(varName)
+      );
       if (Number.isFinite(px)) {
         try {
           window.localStorage.setItem(storeKey, String(Math.round(px)));
@@ -167,6 +170,14 @@ export function handleResizeDirectives(rootElement: Element): void {
     if (!varName) {
       console.warn(
         `lvt-fx:resize requires a CSS variable name, got: ${JSON.stringify(varName)}`
+      );
+      continue;
+    }
+    // Must be a custom property — otherwise we'd set a real CSS property like
+    // `width` on :root, a surprising footgun.
+    if (!varName.startsWith("--")) {
+      console.warn(
+        `lvt-fx:resize value must be a CSS custom property (--name), got: ${JSON.stringify(varName)}`
       );
       continue;
     }
