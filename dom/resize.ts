@@ -59,9 +59,19 @@ function setVar(varName: string, px: number): void {
 
 function attachResize(host: HTMLElement, varName: string): ResizeEntry {
   const handleSel = host.getAttribute("data-resize-handle");
-  const handle: HTMLElement = handleSel
-    ? (host.querySelector<HTMLElement>(handleSel) ?? host)
-    : host;
+  let handle: HTMLElement = host;
+  if (handleSel) {
+    const found = host.querySelector<HTMLElement>(handleSel);
+    if (found) {
+      handle = found;
+    } else {
+      // Selector set but matched nothing — almost certainly a template typo.
+      // Falling back to the whole host as the drag target is surprising, so warn.
+      console.warn(
+        `lvt-fx:resize: data-resize-handle "${handleSel}" matched no element; using the host as the drag target.`
+      );
+    }
+  }
   const axis = (host.getAttribute("data-resize-axis") || "x").toLowerCase();
   const edge = (host.getAttribute("data-resize-edge") || "end").toLowerCase();
   const min = readNumberAttr(host, "data-resize-min", 0);

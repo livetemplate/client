@@ -56,6 +56,25 @@ describe("lvt-fx:resize restore + clamp", () => {
     expect(document.documentElement.style.getPropertyValue("--w")).toBe("200px");
   });
 
+  it("teardownResizeForRoot clears the :root custom property", () => {
+    localStorage.setItem("test.w", "350");
+    makeHost(baseAttrs);
+    handleResizeDirectives(document.body);
+    expect(document.documentElement.style.getPropertyValue("--w")).toBe("350px");
+    teardownResizeForRoot(document.body);
+    expect(document.documentElement.style.getPropertyValue("--w")).toBe("");
+  });
+
+  it("warns and falls back to the host when the handle selector misses", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    makeHost({ ...baseAttrs, "data-resize-handle": ".does-not-exist" });
+    handleResizeDirectives(document.body);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("matched no element")
+    );
+    warn.mockRestore();
+  });
+
   it("does nothing when there is no persisted width", () => {
     makeHost(baseAttrs);
     handleResizeDirectives(document.body);
