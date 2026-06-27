@@ -725,6 +725,23 @@ describe("EventDelegator", () => {
       expect(context.send).toHaveBeenCalledWith({ action: "nextFile", data: {} });
     });
 
+    it("suppresses an opted-in binding while a range input is focused (arrows adjust the slider)", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-range",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="ArrowDown" lvt-mod:skip-when-typing></div>
+          <input id="slider" type="range" />
+        `
+      );
+      (wrapper.querySelector("#slider") as HTMLInputElement).focus();
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+
+      // range inputs are intentionally "editable": the arrow goes to the slider,
+      // not the shortcut.
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
     it("guards keyup bindings too (skip-when-typing is not keydown-only)", () => {
       const { wrapper, context } = setupWindowKeydown(
         "wrapper-guard-keyup",
