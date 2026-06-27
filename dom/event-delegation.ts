@@ -45,6 +45,18 @@ const EDITABLE_SELECTOR = [
   '[contenteditable="true"]',
 ].join(", ");
 
+// deepActiveElement resolves the *actually* focused element across shadow
+// boundaries. document.activeElement returns the shadow HOST when focus is
+// inside a web component's shadow root, so we descend through shadowRoot.
+// activeElement (recursively, for nested shadow DOM) to reach the real input.
+function deepActiveElement(): Element | null {
+  let el: Element | null = document.activeElement;
+  while (el?.shadowRoot?.activeElement) {
+    el = el.shadowRoot.activeElement;
+  }
+  return el;
+}
+
 function isEditableTarget(node: EventTarget | null): boolean {
   return node instanceof Element && node.closest(EDITABLE_SELECTOR) !== null;
 }
@@ -748,7 +760,7 @@ export class EventDelegator {
             // (e.g. Escape-to-cancel) still fire while typing.
             if (
               element.hasAttribute("lvt-mod:skip-when-typing") &&
-              isEditableTarget(document.activeElement)
+              isEditableTarget(deepActiveElement())
             ) {
               return;
             }

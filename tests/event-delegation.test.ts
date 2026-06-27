@@ -688,6 +688,27 @@ describe("EventDelegator", () => {
       expect(context.send).not.toHaveBeenCalled();
     });
 
+    it("suppresses an opted-in binding while a shadow-DOM input is focused", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-shadow",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <div id="host"></div>
+        `
+      );
+      // document.activeElement returns the shadow HOST, so the guard must
+      // descend through shadowRoot.activeElement to find the real input.
+      const host = wrapper.querySelector("#host") as HTMLElement;
+      const root = host.attachShadow({ mode: "open" });
+      const input = document.createElement("textarea");
+      root.appendChild(input);
+      input.focus();
+
+      pressKey("j");
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
     it("fires an opted-in binding when focus is on a non-editable element", () => {
       const { wrapper, context } = setupWindowKeydown(
         "wrapper-guard-button",
