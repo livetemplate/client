@@ -623,6 +623,107 @@ describe("EventDelegator", () => {
     });
   });
 
+  describe("window keydown skip-when-typing guard", () => {
+    const setupWindowKeydown = (wrapperId: string, innerHTML: string) => {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-lvt-id", wrapperId);
+      wrapper.innerHTML = innerHTML;
+      document.body.appendChild(wrapper);
+
+      const context = createContext(wrapper);
+      const delegator = new EventDelegator(
+        context,
+        createLogger({ scope: "EventDelegatorTest", level: "silent" })
+      );
+      delegator.setupWindowEventDelegation();
+      return { wrapper, context };
+    };
+
+    const pressKey = (key: string) => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    };
+
+    it("suppresses an opted-in binding while a textarea is focused", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-textarea",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <textarea id="composer"></textarea>
+        `
+      );
+      (wrapper.querySelector("#composer") as HTMLTextAreaElement).focus();
+
+      pressKey("j");
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("suppresses an opted-in binding while a text input is focused", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-input",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <input id="filter" type="text" />
+        `
+      );
+      (wrapper.querySelector("#filter") as HTMLInputElement).focus();
+
+      pressKey("j");
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("suppresses an opted-in binding while a contenteditable region is focused", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-ce",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <div id="rich" contenteditable="true" tabindex="0"></div>
+        `
+      );
+      (wrapper.querySelector("#rich") as HTMLElement).focus();
+
+      pressKey("j");
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("fires an opted-in binding when focus is on a non-editable element", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-button",
+        `
+          <div lvt-on:window:keydown="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <button id="go" type="button">go</button>
+        `
+      );
+      (wrapper.querySelector("#go") as HTMLButtonElement).focus();
+
+      pressKey("j");
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({ action: "nextFile", data: {} });
+    });
+
+    it("fires a binding WITHOUT the opt-in even while a textarea is focused (Escape case)", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-escape",
+        `
+          <div lvt-on:window:keydown="clearSelection" lvt-key="Escape"></div>
+          <textarea id="composer"></textarea>
+        `
+      );
+      (wrapper.querySelector("#composer") as HTMLTextAreaElement).focus();
+
+      pressKey("Escape");
+
+      expect(context.send).toHaveBeenCalledTimes(1);
+      expect(context.send).toHaveBeenCalledWith({
+        action: "clearSelection",
+        data: {},
+      });
+    });
+  });
+
   describe("orphan buttons (formless standalone)", () => {
     it("button with name triggers action", () => {
       const wrapper = document.createElement("div");

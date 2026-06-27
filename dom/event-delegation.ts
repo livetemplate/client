@@ -31,6 +31,24 @@ const DRAG_EVENTS = new Set([
   "dragleave",
 ]);
 
+// Elements where the user is "typing" — text-entry inputs, textareas, selects
+// (type-ahead), and contenteditable regions. Button/checkbox/radio inputs are
+// deliberately excluded: they accept activation keys, not text, so a global
+// shortcut should still fire when one of them is focused. Used by the opt-in
+// `lvt-mod:skip-when-typing` guard on window keyboard bindings.
+const EDITABLE_SELECTOR = [
+  'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
+    + ':not([type="checkbox"]):not([type="radio"])',
+  "textarea",
+  "select",
+  '[contenteditable=""]',
+  '[contenteditable="true"]',
+].join(", ");
+
+function isEditableTarget(node: EventTarget | null): boolean {
+  return node instanceof Element && node.closest(EDITABLE_SELECTOR) !== null;
+}
+
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
@@ -721,6 +739,17 @@ export class EventDelegator {
             const keyFilter = element.getAttribute("lvt-key");
             const keyboardEvent = e as KeyboardEvent;
             if (keyFilter && keyboardEvent.key !== keyFilter) {
+              return;
+            }
+
+            // Opt-in guard: suppress this binding while the user is typing in an
+            // editable element, so e.g. "j" typed into a comment box doesn't
+            // trigger a navigation shortcut. Bindings WITHOUT this attribute
+            // (e.g. Escape-to-cancel) still fire while typing.
+            if (
+              element.hasAttribute("lvt-mod:skip-when-typing") &&
+              isEditableTarget(document.activeElement)
+            ) {
               return;
             }
           }
