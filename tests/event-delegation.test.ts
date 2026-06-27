@@ -757,6 +757,21 @@ describe("EventDelegator", () => {
       expect(context.send).not.toHaveBeenCalled();
     });
 
+    it("guards a skip-when-typing binding even without an lvt-key filter", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-nokey",
+        `
+          <div lvt-on:window:keydown="ping" lvt-mod:skip-when-typing></div>
+          <textarea id="composer"></textarea>
+        `
+      );
+      (wrapper.querySelector("#composer") as HTMLTextAreaElement).focus();
+
+      pressKey("x"); // any key — no lvt-key filter on the binding
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
     it("fires a binding WITHOUT the opt-in even while a textarea is focused (Escape case)", () => {
       const { wrapper, context } = setupWindowKeydown(
         "wrapper-guard-escape",

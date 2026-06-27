@@ -46,6 +46,7 @@ const EDITABLE_SELECTOR = [
   "select",
   '[contenteditable=""]',
   '[contenteditable="true"]',
+  '[contenteditable="plaintext-only"]',
 ].join(", ");
 
 // deepActiveElement resolves the *actually* focused element across shadow
@@ -747,20 +748,21 @@ export class EventDelegator {
           const action = element.getAttribute(attrName);
           if (!action) return;
 
-          if (
-            (eventType === "keydown" || eventType === "keyup") &&
-            element.hasAttribute("lvt-key")
-          ) {
-            const keyFilter = element.getAttribute("lvt-key");
+          if (eventType === "keydown" || eventType === "keyup") {
             const keyboardEvent = e as KeyboardEvent;
-            if (keyFilter && keyboardEvent.key !== keyFilter) {
-              return;
+            if (element.hasAttribute("lvt-key")) {
+              const keyFilter = element.getAttribute("lvt-key");
+              if (keyFilter && keyboardEvent.key !== keyFilter) {
+                return;
+              }
             }
 
             // Opt-in guard: suppress this binding while the user is typing in an
             // editable element, so e.g. "j" typed into a comment box doesn't
-            // trigger a navigation shortcut. Bindings WITHOUT this attribute
-            // (e.g. Escape-to-cancel) still fire while typing.
+            // trigger a navigation shortcut. Applies whenever the attribute is
+            // present — independent of lvt-key — so a guarded binding without a
+            // key filter is still suppressed while typing. Bindings WITHOUT this
+            // attribute (e.g. Escape-to-cancel) still fire while typing.
             if (
               element.hasAttribute("lvt-mod:skip-when-typing") &&
               isEditableTarget(deepActiveElement())
