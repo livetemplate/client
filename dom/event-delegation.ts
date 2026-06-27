@@ -42,7 +42,8 @@ const DRAG_EVENTS = new Set([
 // Used by the opt-in `lvt-mod:skip-when-typing` guard on window key bindings.
 const EDITABLE_SELECTOR = [
   'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
-    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"]):not([type="file"])',
+    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"]):not([type="file"])'
+    + ':not([type="color"])',
   "textarea",
   "select",
   '[contenteditable=""]',
@@ -63,7 +64,7 @@ function deepActiveElement(): Element | null {
 }
 
 function isEditableTarget(node: Element | null): boolean {
-  return node instanceof Element && node.closest(EDITABLE_SELECTOR) !== null;
+  return node !== null && node.closest(EDITABLE_SELECTOR) !== null;
 }
 
 export interface EventDelegationContext {
