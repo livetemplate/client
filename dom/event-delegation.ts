@@ -32,16 +32,17 @@ const DRAG_EVENTS = new Set([
 ]);
 
 // Elements where the user is "typing" — text-entry inputs, textareas, selects
-// (type-ahead), and contenteditable regions. Button/submit/reset/checkbox/
-// radio/image inputs are deliberately excluded: they accept activation keys,
-// not text, so a global shortcut should still fire when one of them is focused.
-// input[type="range"] is intentionally NOT excluded — it responds to arrow
-// keys, so suppressing arrow-bound shortcuts while a slider is focused lets the
-// slider consume the arrows. Used by the opt-in `lvt-mod:skip-when-typing`
-// guard on window keyboard bindings.
+// (type-ahead), and contenteditable regions. Inputs that act as buttons rather
+// than text fields — button/submit/reset/checkbox/radio/image/file — are
+// deliberately excluded: they accept activation keys, not text, so a global
+// shortcut should still fire when one of them is focused. The rest stay in
+// scope, including the keys-but-no-typing cases: input[type="range"] (arrows
+// move the slider) and input[type="number"] (arrows step + you type digits) —
+// suppressing shortcuts while one is focused lets the control consume the key.
+// Used by the opt-in `lvt-mod:skip-when-typing` guard on window key bindings.
 const EDITABLE_SELECTOR = [
   'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
-    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"])',
+    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"]):not([type="file"])',
   "textarea",
   "select",
   '[contenteditable=""]',
