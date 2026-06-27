@@ -32,10 +32,13 @@ const DRAG_EVENTS = new Set([
 ]);
 
 // Elements where the user is "typing" — text-entry inputs, textareas, selects
-// (type-ahead), and contenteditable regions. Button/checkbox/radio inputs are
-// deliberately excluded: they accept activation keys, not text, so a global
-// shortcut should still fire when one of them is focused. Used by the opt-in
-// `lvt-mod:skip-when-typing` guard on window keyboard bindings.
+// (type-ahead), and contenteditable regions. Button/submit/reset/checkbox/
+// radio/image inputs are deliberately excluded: they accept activation keys,
+// not text, so a global shortcut should still fire when one of them is focused.
+// input[type="range"] is intentionally NOT excluded — it responds to arrow
+// keys, so suppressing arrow-bound shortcuts while a slider is focused lets the
+// slider consume the arrows. Used by the opt-in `lvt-mod:skip-when-typing`
+// guard on window keyboard bindings.
 const EDITABLE_SELECTOR = [
   'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
     + ':not([type="checkbox"]):not([type="radio"]):not([type="image"])',
@@ -57,7 +60,7 @@ function deepActiveElement(): Element | null {
   return el;
 }
 
-function isEditableTarget(node: EventTarget | null): boolean {
+function isEditableTarget(node: Element | null): boolean {
   return node instanceof Element && node.closest(EDITABLE_SELECTOR) !== null;
 }
 
