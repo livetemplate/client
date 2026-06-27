@@ -38,7 +38,7 @@ const DRAG_EVENTS = new Set([
 // `lvt-mod:skip-when-typing` guard on window keyboard bindings.
 const EDITABLE_SELECTOR = [
   'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
-    + ':not([type="checkbox"]):not([type="radio"])',
+    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"])',
   "textarea",
   "select",
   '[contenteditable=""]',

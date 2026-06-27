@@ -725,6 +725,21 @@ describe("EventDelegator", () => {
       expect(context.send).toHaveBeenCalledWith({ action: "nextFile", data: {} });
     });
 
+    it("guards keyup bindings too (skip-when-typing is not keydown-only)", () => {
+      const { wrapper, context } = setupWindowKeydown(
+        "wrapper-guard-keyup",
+        `
+          <div lvt-on:window:keyup="nextFile" lvt-key="j" lvt-mod:skip-when-typing></div>
+          <textarea id="composer"></textarea>
+        `
+      );
+      (wrapper.querySelector("#composer") as HTMLTextAreaElement).focus();
+
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "j" }));
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
     it("fires a binding WITHOUT the opt-in even while a textarea is focused (Escape case)", () => {
       const { wrapper, context } = setupWindowKeydown(
         "wrapper-guard-escape",
