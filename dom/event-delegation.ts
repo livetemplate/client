@@ -22,6 +22,63 @@ const NON_BUBBLING = new Set(["mouseenter", "mouseleave", "focus", "blur"]);
 // Wire MIME for the dragged element's data-key. Set on dragstart, read on drop.
 const LVT_DRAG_MIME = "application/x-lvt-key";
 
+/**
+ * Match a KeyboardEvent against an `lvt-key` filter.
+ *
+ * The filter is either a bare `KeyboardEvent.key` value ("Enter", "Escape",
+ * "j", "+") — matched verbatim, regardless of modifiers, for backward
+ * compatibility — or a modifier combo joined by "+", whose FINAL segment is
+ * the key and whose leading segments are required modifiers:
+ *
+ *   Mod              metaKey || ctrlKey  (the platform command key: ⌘ macOS, Ctrl elsewhere)
+ *   Meta / Cmd       metaKey
+ *   Ctrl / Control   ctrlKey
+ *   Shift            shiftKey
+ *   Alt / Option     altKey
+ *
+ * e.g. `lvt-key="Mod+Enter"`, `lvt-key="Shift+ArrowDown"`. Matching is lenient:
+ * modifiers beyond those named are ignored. Returns `combo` so the caller can
+ * `preventDefault()` a chord (a deliberate Mod+Enter shouldn't also type a
+ * newline into the focused field). The literal "+" key stays matchable as the
+ * bare filter "+".
+ */
+export function keyFilterMatches(
+  e: KeyboardEvent,
+  filter: string
+): { matched: boolean; combo: boolean } {
+  if (!filter.includes("+") || filter === "+") {
+    return { matched: e.key === filter, combo: false };
+  }
+  const parts = filter.split("+");
+  const key = parts[parts.length - 1];
+  if (e.key !== key) return { matched: false, combo: true };
+  for (const mod of parts.slice(0, -1)) {
+    switch (mod.toLowerCase()) {
+      case "mod":
+        if (!(e.metaKey || e.ctrlKey)) return { matched: false, combo: true };
+        break;
+      case "meta":
+      case "cmd":
+        if (!e.metaKey) return { matched: false, combo: true };
+        break;
+      case "ctrl":
+      case "control":
+        if (!e.ctrlKey) return { matched: false, combo: true };
+        break;
+      case "shift":
+        if (!e.shiftKey) return { matched: false, combo: true };
+        break;
+      case "alt":
+      case "option":
+        if (!e.altKey) return { matched: false, combo: true };
+        break;
+      default:
+        return { matched: false, combo: true }; // unknown modifier token
+    }
+  }
+  return { matched: true, combo: true };
+}
+
 const DRAG_EVENTS = new Set([
   "dragstart",
   "dragover",
@@ -384,9 +441,16 @@ export class EventDelegator {
             ) {
               const keyFilter = actionElement.getAttribute("lvt-key");
               const keyboardEvent = e as KeyboardEvent;
-              if (keyFilter && keyboardEvent.key !== keyFilter) {
-                element = element.parentElement;
-                continue;
+              if (keyFilter) {
+                const { matched, combo } = keyFilterMatches(
+                  keyboardEvent,
+                  keyFilter
+                );
+                if (!matched) {
+                  element = element.parentElement;
+                  continue;
+                }
+                if (combo) keyboardEvent.preventDefault();
               }
             }
 
@@ -754,8 +818,15 @@ export class EventDelegator {
             const keyboardEvent = e as KeyboardEvent;
             if (element.hasAttribute("lvt-key")) {
               const keyFilter = element.getAttribute("lvt-key");
-              if (keyFilter && keyboardEvent.key !== keyFilter) {
-                return;
+              if (keyFilter) {
+                const { matched, combo } = keyFilterMatches(
+                  keyboardEvent,
+                  keyFilter
+                );
+                if (!matched) {
+                  return;
+                }
+                if (combo) keyboardEvent.preventDefault();
               }
             }
 

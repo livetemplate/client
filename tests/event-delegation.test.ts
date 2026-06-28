@@ -1,6 +1,7 @@
 import {
   EventDelegator,
   EventDelegationContext,
+  keyFilterMatches,
 } from "../dom/event-delegation";
 import { createLogger } from "../utils/logger";
 
@@ -654,6 +655,36 @@ describe("EventDelegator", () => {
       (wrapper.querySelector("#composer") as HTMLTextAreaElement).focus();
 
       pressKey("j");
+
+      expect(context.send).not.toHaveBeenCalled();
+    });
+
+    it("fires a Mod+Enter binding on Cmd/Ctrl+Enter and prevents the default", () => {
+      const { context } = setupWindowKeydown(
+        "wrapper-mod-enter",
+        `<form lvt-on:window:keydown="addComment" lvt-key="Mod+Enter"></form>`
+      );
+      const e = new KeyboardEvent("keydown", {
+        key: "Enter",
+        metaKey: true,
+        cancelable: true,
+      });
+      const prevented = jest.spyOn(e, "preventDefault");
+      window.dispatchEvent(e);
+
+      expect(context.send).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "addComment" })
+      );
+      // The chord is consumed so it doesn't also type a newline into the field.
+      expect(prevented).toHaveBeenCalled();
+    });
+
+    it("does NOT fire a Mod+Enter binding on a plain Enter (newline preserved)", () => {
+      const { context } = setupWindowKeydown(
+        "wrapper-mod-enter-plain",
+        `<form lvt-on:window:keydown="addComment" lvt-key="Mod+Enter"></form>`
+      );
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 
       expect(context.send).not.toHaveBeenCalled();
     });
@@ -1952,5 +1983,71 @@ describe("EventDelegator", () => {
         expect.objectContaining({ action: "save", submitter: "save" })
       );
     });
+  });
+});
+
+describe("keyFilterMatches (lvt-key)", () => {
+  const ev = (key: string, mods: Partial<KeyboardEventInit> = {}) =>
+    new KeyboardEvent("keydown", { key, ...mods });
+
+  it("matches a bare key verbatim regardless of modifiers (back-compat)", () => {
+    expect(keyFilterMatches(ev("Enter"), "Enter")).toEqual({
+      matched: true,
+      combo: false,
+    });
+    // A bare "Enter" filter still matches a modified Enter — unchanged from
+    // the old exact-equality behavior, so existing bindings are untouched.
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Enter")).toEqual({
+      matched: true,
+      combo: false,
+    });
+    expect(keyFilterMatches(ev("Escape"), "Enter").matched).toBe(false);
+    expect(keyFilterMatches(ev("j"), "j").matched).toBe(true);
+  });
+
+  it("matches the literal '+' key as a bare filter", () => {
+    expect(keyFilterMatches(ev("+"), "+")).toEqual({
+      matched: true,
+      combo: false,
+    });
+  });
+
+  it("Mod+Enter matches metaKey OR ctrlKey, never a plain Enter", () => {
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Mod+Enter")).toEqual(
+      { matched: true, combo: true }
+    );
+    expect(keyFilterMatches(ev("Enter", { ctrlKey: true }), "Mod+Enter")).toEqual(
+      { matched: true, combo: true }
+    );
+    expect(keyFilterMatches(ev("Enter"), "Mod+Enter")).toEqual({
+      matched: false,
+      combo: true,
+    });
+  });
+
+  it("distinguishes Meta+ from Ctrl+", () => {
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Meta+Enter").matched).toBe(true);
+    expect(keyFilterMatches(ev("Enter", { ctrlKey: true }), "Meta+Enter").matched).toBe(false);
+    expect(keyFilterMatches(ev("Enter", { ctrlKey: true }), "Control+Enter").matched).toBe(true);
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Ctrl+Enter").matched).toBe(false);
+  });
+
+  it("supports Shift, Alt, and multi-modifier combos", () => {
+    expect(keyFilterMatches(ev("ArrowDown", { shiftKey: true }), "Shift+ArrowDown").matched).toBe(true);
+    expect(keyFilterMatches(ev("ArrowDown"), "Shift+ArrowDown").matched).toBe(false);
+    expect(keyFilterMatches(ev("s", { metaKey: true, shiftKey: true }), "Mod+Shift+s").matched).toBe(true);
+    expect(keyFilterMatches(ev("s", { metaKey: true }), "Mod+Shift+s").matched).toBe(false);
+  });
+
+  it("is lenient about extra modifiers beyond those named", () => {
+    expect(keyFilterMatches(ev("Enter", { metaKey: true, shiftKey: true }), "Mod+Enter").matched).toBe(true);
+  });
+
+  it("rejects an unknown modifier token", () => {
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Hyper+Enter").matched).toBe(false);
+  });
+
+  it("requires the key to match even with the right modifiers", () => {
+    expect(keyFilterMatches(ev("Escape", { metaKey: true }), "Mod+Enter").matched).toBe(false);
   });
 });
