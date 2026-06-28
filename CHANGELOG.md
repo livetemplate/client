@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.14.5] - 2026-06-28
+
+### Changes
+
+- Add opt-in lvt-mod:skip-when-typing guard for window keyboard bindings (#137) (2276693)
+
+
+
 ## [v0.14.4] - 2026-06-26
 
 ### Changes
