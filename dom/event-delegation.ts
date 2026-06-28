@@ -31,6 +31,42 @@ const DRAG_EVENTS = new Set([
   "dragleave",
 ]);
 
+// Elements where the user is "typing" — text-entry inputs, textareas, selects
+// (type-ahead), and contenteditable regions. Inputs that act as buttons rather
+// than text fields — button/submit/reset/checkbox/radio/image/file — are
+// deliberately excluded: they accept activation keys, not text, so a global
+// shortcut should still fire when one of them is focused. The rest stay in
+// scope, including the keys-but-no-typing cases: input[type="range"] (arrows
+// move the slider) and input[type="number"] (arrows step + you type digits) —
+// suppressing shortcuts while one is focused lets the control consume the key.
+// Used by the opt-in `lvt-mod:skip-when-typing` guard on window key bindings.
+const EDITABLE_SELECTOR = [
+  'input:not([type="button"]):not([type="submit"]):not([type="reset"])'
+    + ':not([type="checkbox"]):not([type="radio"]):not([type="image"]):not([type="file"])'
+    + ':not([type="color"])',
+  "textarea",
+  "select",
+  '[contenteditable=""]',
+  '[contenteditable="true"]',
+  '[contenteditable="plaintext-only"]',
+].join(", ");
+
+// deepActiveElement resolves the *actually* focused element across shadow
+// boundaries. document.activeElement returns the shadow HOST when focus is
+// inside a web component's shadow root, so we descend through shadowRoot.
+// activeElement (recursively, for nested shadow DOM) to reach the real input.
+function deepActiveElement(): Element | null {
+  let el: Element | null = document.activeElement;
+  while (el?.shadowRoot?.activeElement) {
+    el = el.shadowRoot.activeElement;
+  }
+  return el;
+}
+
+function isEditableTarget(node: Element | null): boolean {
+  return node !== null && node.closest(EDITABLE_SELECTOR) !== null;
+}
+
 export interface EventDelegationContext {
   getWrapperElement(): Element | null;
   getRateLimitedHandlers(): WeakMap<Element, Map<string, Function>>;
@@ -714,13 +750,25 @@ export class EventDelegator {
           const action = element.getAttribute(attrName);
           if (!action) return;
 
-          if (
-            (eventType === "keydown" || eventType === "keyup") &&
-            element.hasAttribute("lvt-key")
-          ) {
-            const keyFilter = element.getAttribute("lvt-key");
+          if (eventType === "keydown" || eventType === "keyup") {
             const keyboardEvent = e as KeyboardEvent;
-            if (keyFilter && keyboardEvent.key !== keyFilter) {
+            if (element.hasAttribute("lvt-key")) {
+              const keyFilter = element.getAttribute("lvt-key");
+              if (keyFilter && keyboardEvent.key !== keyFilter) {
+                return;
+              }
+            }
+
+            // Opt-in guard: suppress this binding while the user is typing in an
+            // editable element, so e.g. "j" typed into a comment box doesn't
+            // trigger a navigation shortcut. Applies whenever the attribute is
+            // present — independent of lvt-key — so a guarded binding without a
+            // key filter is still suppressed while typing. Bindings WITHOUT this
+            // attribute (e.g. Escape-to-cancel) still fire while typing.
+            if (
+              element.hasAttribute("lvt-mod:skip-when-typing") &&
+              isEditableTarget(deepActiveElement())
+            ) {
               return;
             }
           }
