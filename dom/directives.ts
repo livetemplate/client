@@ -1187,6 +1187,154 @@ function attachIframeAutoHeight(
   };
 }
 
+// PreviewBlock is one rendered-HTML block's source line range plus its rect in
+// the PREVIEW IFRAME's own viewport coordinates, as posted out by the in-iframe
+// bridge beacon (previewBridgeJS, prereview/gitdiff/previewbridge.go). The
+// preview iframe is an opaque-origin sandbox (`sandbox="allow-scripts"`) so it
+// can run the page's own scripts (e.g. the Tailwind Play CDN that generates the
+// CSS) without ever reaching the parent — which also means the parent can no
+// longer read its `contentDocument`. region-select reads these posted rects
+// instead of the iframe DOM.
+//
+// Contract with the beacon (keep in sync):
+//   - from/to are 1-BASED source line numbers (the iframe's data-from/data-to);
+//     attachPreviewBridge drops any block with from <= 0.
+//   - left/top/right/bottom are VIEWPORT-relative (getBoundingClientRect), so
+//     lineRangeFromBlocks shifts them by the iframe element's own viewport
+//     offset — NOT document/scroll-relative coords.
+type PreviewBlock = {
+  from: number;
+  to: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+// previewBlockRects caches the latest blocks posted by each preview iframe's
+// bridge, keyed per iframe. A Map (not WeakMap) lets the directive sweep clear
+// a stale entry when its iframe is detached/replaced (a file switch re-creates
+// the iframe via its data-key). Multiple previews never coexist today, but
+// keying per iframe keeps region-select correct if they ever do.
+const previewBlockRects = new Map<HTMLIFrameElement, PreviewBlock[]>();
+
+// previewBridgeArmed tracks armed `lvt-fx:preview-bridge` <iframe> hosts.
+// Map-not-WeakMap for the same sweep reasoning as iframe-autoheight.
+const previewBridgeArmed = new Map<Element, PreviewBridgeEntry>();
+
+interface PreviewBridgeEntry {
+  cleanup: () => void;
+  // sync re-applies the last posted height after every server render, because
+  // morphdom diffs the iframe against the template (which has no inline style)
+  // and would otherwise wipe the imperatively-set height. Mirrors how
+  // iframe-autoheight re-measures in its sync().
+  sync: () => void;
+}
+
+/**
+ * Apply `lvt-fx:preview-bridge` directives. This is the cross-origin successor
+ * to iframe-autoheight for prereview's HTML preview: the iframe is now an
+ * opaque-origin `sandbox="allow-scripts"` frame (so a previewed page's own JS
+ * runs but can never touch the parent app), and the parent therefore can't read
+ * `contentDocument`. The in-iframe beacon posts two message types out:
+ *
+ *   - `{type:"size", height}`  → set the iframe height (auto-height).
+ *   - `{type:"blocks", blocks}` → cache the `[data-from]` block rects so the
+ *     parent-document region-select overlay can hit-test a drawn box without
+ *     reading the iframe DOM (see resolveRegion's "html" branch).
+ *
+ * Idempotent + swept exactly like iframe-autoheight.
+ */
+export function handlePreviewBridgeDirectives(rootElement: Element): void {
+  for (const [element, entry] of Array.from(previewBridgeArmed)) {
+    if (!element.isConnected || !element.hasAttribute("lvt-fx:preview-bridge")) {
+      entry.cleanup();
+    }
+  }
+  const matches = rootElement.querySelectorAll<HTMLIFrameElement>(
+    "iframe[lvt-fx\\:preview-bridge]"
+  );
+  for (const el of matches) {
+    const existing = previewBridgeArmed.get(el);
+    if (existing) {
+      existing.sync();
+      continue;
+    }
+    previewBridgeArmed.set(el, attachPreviewBridge(el));
+  }
+}
+
+/**
+ * Cancel preview-bridge listeners for every armed iframe under root. Mirror of
+ * teardownIframeAutoHeightForRoot for the client disconnect lifecycle.
+ */
+export function teardownPreviewBridgeForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(previewBridgeArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
+function attachPreviewBridge(iframe: HTMLIFrameElement): PreviewBridgeEntry {
+  let lastHeight = 0;
+  const applyHeight = () => {
+    if (lastHeight > 0) iframe.style.height = `${lastHeight}px`;
+  };
+
+  const onMessage = (e: MessageEvent) => {
+    // The preview iframe is an opaque-origin srcdoc, so e.origin is "null" and
+    // there is no iframe.src to resolve a trusted origin from. Authenticate by
+    // SOURCE WINDOW IDENTITY instead: only this iframe's own contentWindow.
+    // Everything else (including the page's own postMessage traffic to other
+    // targets) is ignored.
+    if (e.source !== iframe.contentWindow) return;
+    const d = e.data;
+    if (!d || d.__lvtPreview !== true) return;
+
+    if (d.type === "size") {
+      const h = Number(d.height);
+      if (Number.isFinite(h) && h > 0) {
+        lastHeight = h;
+        applyHeight();
+      }
+      return;
+    }
+    if (d.type === "blocks") {
+      const raw = Array.isArray(d.blocks) ? d.blocks : [];
+      const clean: PreviewBlock[] = [];
+      for (const b of raw) {
+        const from = Number(b?.from);
+        const to = Number(b?.to);
+        const left = Number(b?.left);
+        const top = Number(b?.top);
+        const right = Number(b?.right);
+        const bottom = Number(b?.bottom);
+        if (
+          ![from, to, left, top, right, bottom].every((n) =>
+            Number.isFinite(n)
+          ) ||
+          from <= 0
+        ) {
+          continue;
+        }
+        clean.push({ from, to: to >= from ? to : from, left, top, right, bottom });
+      }
+      previewBlockRects.set(iframe, clean);
+    }
+  };
+  window.addEventListener("message", onMessage);
+
+  return {
+    cleanup: () => {
+      window.removeEventListener("message", onMessage);
+      previewBlockRects.delete(iframe);
+      previewBridgeArmed.delete(iframe);
+    },
+    sync: () => applyHeight(),
+  };
+}
+
 // urlHashArmed tracks `lvt-fx:url-hash` listeners and their last-
 // mirrored hash. Same Map-not-WeakMap reasoning as area-select: the
 // sweep iterates to detect elements whose attribute was removed by a
@@ -2354,16 +2502,15 @@ function resolveRegion(el: HTMLElement, box: BoxDragResult): RegionPayload | nul
   const surface = el.getAttribute("data-surface");
   if (surface === "html") {
     const iframe = previewIframeFor(el);
-    const doc = iframe?.contentDocument;
-    if (!iframe || !doc) return null;
+    if (!iframe) return null;
+    // Opaque-origin sandbox: we can't read the iframe DOM, so hit-test the
+    // block rects the in-iframe bridge posted out (cached by preview-bridge).
+    // Null until the first beacon arrives — a too-early drag is a harmless
+    // no-op, mirroring the cross-origin "page" branch below.
+    const blocks = previewBlockRects.get(iframe);
+    if (!blocks || blocks.length === 0) return null;
     const fr = iframe.getBoundingClientRect();
-    return lineRangeFromBox(
-      doc.querySelectorAll("[data-from]"),
-      box,
-      fr.left,
-      fr.top,
-      readHTMLRange
-    );
+    return lineRangeFromBlocks(blocks, box, fr.left, fr.top);
   }
   if (surface === "code") {
     const root: ParentNode = el.parentElement || document;
@@ -2491,6 +2638,53 @@ export function lineRangeFromBox(
     const range = readRange(el);
     if (range) hits.push({ top, range });
   }
+  return unionHits(hits);
+}
+
+/**
+ * lineRangeFromBlocks is the cross-origin twin of lineRangeFromBox for the HTML
+ * preview: instead of reading the iframe DOM (impossible under an opaque-origin
+ * sandbox), it hit-tests the drawn box against block rects POSTED OUT of the
+ * iframe by its bridge beacon (PreviewBlock, in iframe-viewport coords).
+ * offsetX/offsetY shift each block into the box's coordinate space (the iframe's
+ * viewport origin on the parent page). Same overlap + union semantics as
+ * lineRangeFromBox; rendered HTML has no diff sides, so every overlap unions.
+ * Returns null when nothing overlaps.
+ */
+export function lineRangeFromBlocks(
+  blocks: PreviewBlock[],
+  box: { left: number; top: number; right: number; bottom: number },
+  offsetX: number,
+  offsetY: number
+): LineRange | null {
+  const hits: { top: number; range: LineRange }[] = [];
+  for (const b of blocks) {
+    const top = b.top + offsetY;
+    const bottom = b.bottom + offsetY;
+    const left = b.left + offsetX;
+    const right = b.right + offsetX;
+    if (
+      right < box.left ||
+      left > box.right ||
+      bottom < box.top ||
+      top > box.bottom
+    ) {
+      continue;
+    }
+    hits.push({ top, range: { from: b.from, to: b.to } });
+  }
+  return unionHits(hits);
+}
+
+/**
+ * unionHits collapses the overlapping line-bearing hits into a single-side
+ * range: the TOPMOST hit fixes the side (a diff's del rows carry OLD line
+ * numbers, add/context rows NEW — two coordinate systems that must not union),
+ * then only same-side hits contribute `from`=min / `to`=max. Rendered HTML has
+ * no sides (all undefined), so every hit contributes. Shared by lineRangeFromBox
+ * (element rects) and lineRangeFromBlocks (posted rects). Null when no hits.
+ */
+function unionHits(hits: { top: number; range: LineRange }[]): LineRange | null {
   if (hits.length === 0) return null;
   hits.sort((a, b) => a.top - b.top);
   const side = hits[0].range.side;

@@ -13,6 +13,7 @@ import {
   handleAutoClickDirectives,
   handleHighlightDirectives,
   handleIframeAutoHeightDirectives,
+  handlePreviewBridgeDirectives,
   handleProxyBridgeDirectives,
   handleRegionSelectDirectives,
   handleScrollDirectives,
@@ -21,6 +22,7 @@ import {
   handleURLHashDirective,
   teardownAreaSelectForRoot,
   teardownIframeAutoHeightForRoot,
+  teardownPreviewBridgeForRoot,
   teardownProxyBridgeForRoot,
   teardownRegionSelectForRoot,
   teardownURLHashForRoot,
@@ -681,6 +683,7 @@ export class LiveTemplateClient {
       teardownRegionSelectForRoot(this.wrapperElement);
       teardownProxyBridgeForRoot(this.wrapperElement);
       teardownIframeAutoHeightForRoot(this.wrapperElement);
+      teardownPreviewBridgeForRoot(this.wrapperElement);
       teardownURLHashForRoot(this.wrapperElement);
     }
     this.resetSessionState();
@@ -2091,6 +2094,13 @@ export class LiveTemplateClient {
     // is handled by a parent-document overlay (area/region-select), not
     // from inside the iframe, so this directive needs no send callback.
     handleIframeAutoHeightDirectives(element);
+    // preview-bridge is the opaque-origin successor to iframe-autoheight for the
+    // HTML preview: the iframe runs the page's own scripts (sandbox=allow-scripts)
+    // so contentDocument is unreadable, and the in-iframe beacon posts the height
+    // (auto-size) + the [data-from] block rects (region-select hit-testing) out
+    // via postMessage. No send callback — it only caches + sizes; region-select
+    // does the sending.
+    handlePreviewBridgeDirectives(element);
     // url-hash bridges server state ↔ location.hash. Same send-callback
     // wiring as area-select: the directive needs to dispatch a server
     // action on user-driven hashchange events (anchor click, address-bar
