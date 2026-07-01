@@ -2238,6 +2238,571 @@ export function teardownRegionSelectForRoot(rootElement: Element): void {
   }
 }
 
+// ── text-select ────────────────────────────────────────────────────────────
+// lvt-fx:text-select="<action>" on a container captures a NATIVE text selection
+// (window.getSelection) over line-bearing children and dispatches a CHARACTER
+// range to the server, so a reviewer can comment on a word / phrase / multi-line
+// span — not just whole lines. Unlike area/region-select (draw a box, hit-test
+// rects), it reads the browser's own selection, so it works with mouse, touch,
+// AND keyboard from one code path.
+//
+// Contract (kept generic — no host-app class names):
+//   - each line is an element carrying `data-line` (1-based source line) and,
+//     optionally, `data-side="old"` (a diff's deleted side; anything else is the
+//     "new" side) — the SAME markers region-select's data-surface="code" reads.
+//   - within a line, the selectable text lives in a descendant marked
+//     `data-line-text` (so a gutter / line-number prefix is excluded from the
+//     column count); if absent, the line element itself is the text container.
+//
+// Offsets are RUNE counts (Unicode code points) into the text container's
+// textContent, which the host must keep equal to the raw source line so the
+// server can re-locate the span by splitting the raw line at [fromCol, toCol).
+//
+// Trigger: a single debounced document `selectionchange` — uniform across
+// mouse / touch / keyboard (pointerup/keyup miss touch-handle drags and
+// keyboard selection). Non-collapsed + settled selection inside the host →
+// show a floating "Comment" button at the selection; collapsed → hide it.
+interface TextSelectEntry {
+  action: string;
+  cleanup: () => void;
+  updateSend: (send: AreaSelectSendFn) => void;
+  // sync re-draws the block caret after each render (morphdom wipes the overlay
+  // and the is-cursor line may have moved).
+  sync: () => void;
+}
+
+const textSelectArmed = new Map<Element, TextSelectEntry>();
+
+// A character range within (or across) source lines. side undefined == "new".
+type TextRange = {
+  fromLine: number;
+  fromCol: number;
+  toLine: number;
+  toCol: number;
+  side?: string;
+  text: string;
+};
+
+const TEXT_SELECT_BUTTON_ATTR = "data-lvt-text-select-button";
+const TEXT_SELECT_DEBOUNCE_MS = 150;
+
+// runeLen counts Unicode code points, not UTF-16 code units, so it matches
+// Go's []rune length: a surrogate-pair char (e.g. an emoji) is one column on
+// both the client and the server.
+function runeLen(s: string): number {
+  return [...s].length;
+}
+
+// lineTextContainer walks up from a selection-boundary node to its
+// `[data-line]` row and returns the row plus its text container (the
+// `[data-line-text]` descendant, or the row itself). Returns null when the
+// boundary is outside the host, outside any line, or inside a line but outside
+// its text container (e.g. a drag that started in the gutter) — the caller then
+// bails rather than compute a column against the wrong element.
+function lineTextContainer(
+  node: Node | null,
+  host: Element
+): { line: Element; content: Element } | null {
+  const start: Element | null =
+    node && node.nodeType === Node.TEXT_NODE
+      ? node.parentElement
+      : (node as Element | null);
+  if (!start || !host.contains(start)) return null;
+  const line = start.closest("[data-line]");
+  if (!line || !host.contains(line)) return null;
+  const content = line.querySelector("[data-line-text]") ?? line;
+  // `contains` is reflexive (an element contains itself), so this also holds
+  // when the boundary sits directly on the content element.
+  if (!content.contains(start)) return null;
+  return { line, content };
+}
+
+// colWithin returns the rune offset of (node, offset) from the start of
+// content, or -1 if the boundary is not inside content.
+function colWithin(content: Element, node: Node, offset: number): number {
+  const r = document.createRange();
+  r.selectNodeContents(content);
+  try {
+    r.setEnd(node, offset);
+  } catch {
+    return -1;
+  }
+  return runeLen(r.toString());
+}
+
+// textOffsetsFromSelection resolves a native selection to a source character
+// range, or null when it can't be represented (collapsed, outside the host,
+// or crossing the diff old/new boundary). Exported so unit tests exercise the
+// real resolver rather than a copy.
+export function textOffsetsFromSelection(
+  sel: Selection | null,
+  host: Element
+): TextRange | null {
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0); // normalized: start precedes end in doc order
+  const startCtx = lineTextContainer(range.startContainer, host);
+  const endCtx = lineTextContainer(range.endContainer, host);
+  if (!startCtx || !endCtx) return null;
+  const startRow = readCodeRange(startCtx.line);
+  const endRow = readCodeRange(endCtx.line);
+  if (!startRow || !endRow) return null;
+  // A diff's old and new sides are separate content streams; a single
+  // character range can't span them. (ctx + add lines are both "new", so only
+  // a del/new boundary crosses — a rare drag, safe to drop.)
+  if ((startRow.side ?? "new") !== (endRow.side ?? "new")) return null;
+  const fromCol = colWithin(startCtx.content, range.startContainer, range.startOffset);
+  const toCol = colWithin(endCtx.content, range.endContainer, range.endOffset);
+  if (fromCol < 0 || toCol < 0) return null;
+  const text = range.toString();
+  if (text.length === 0) return null;
+  return {
+    fromLine: startRow.from,
+    fromCol,
+    toLine: endRow.from,
+    toCol,
+    side: startRow.side,
+    text,
+  };
+}
+
+// selectionInsideHost reports whether the current selection's common ancestor
+// is within host (so a selection that starts in the diff but ends in a comment
+// card, or lives elsewhere on the page, is ignored).
+function selectionInsideHost(sel: Selection | null, host: Element): boolean {
+  if (!sel || sel.rangeCount === 0) return false;
+  return host.contains(sel.getRangeAt(0).commonAncestorContainer);
+}
+
+function attachTextSelect(
+  el: HTMLElement,
+  action: string,
+  initialSend: AreaSelectSendFn
+): TextSelectEntry {
+  let send = initialSend;
+  let button: HTMLButtonElement | null = null;
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  // Keyboard block caret — a client-only visual overlay over one character.
+  // Its LINE follows the server's is-cursor line (Up/Down move it via the
+  // existing CursorUp/Down); its COLUMN is client-owned (Left/Right). Selection
+  // (Shift+Arrow) extends from the caret via getSelection().modify() on the
+  // non-editable text — no contenteditable needed.
+  let caretEl: HTMLElement | null = null;
+  let caretCol = 0; // current rune column of the caret
+  let goalCol = 0; // remembered column for vertical (line) moves
+  let selecting = false; // a Shift-selection is in progress (caret hidden)
+  let lastLine: Element | null = null; // detect line changes to restore goalCol
+
+  const hideButton = () => {
+    if (button) {
+      button.remove();
+      button = null;
+    }
+  };
+
+  // ── caret geometry helpers ──
+  const runesOf = (s: string): string[] => [...s];
+  const lineContentOf = (line: Element): HTMLElement =>
+    line.querySelector<HTMLElement>("[data-line-text]") ?? (line as HTMLElement);
+  const lineRuneLen = (content: Element): number =>
+    runesOf(content.textContent ?? "").length;
+
+  // activeCursorLine is the line the caret sits on: the server is-cursor line
+  // when present, else the first line — so a caret is visible from page load.
+  const activeCursorLine = (): Element | null =>
+    el.querySelector("[data-line].is-cursor") ?? el.querySelector("[data-line]");
+
+  // nodePointAtRune maps a rune column within content to a DOM (node, offset)
+  // point (offset is UTF-16, as the DOM requires), clamped to the content end.
+  const nodePointAtRune = (
+    content: Element,
+    col: number
+  ): { node: Node; offset: number } => {
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    let acc = 0;
+    let last: Text | null = null;
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      last = t;
+      const runes = runesOf(t.data);
+      if (acc + runes.length >= col) {
+        return { node: t, offset: runes.slice(0, col - acc).join("").length };
+      }
+      acc += runes.length;
+    }
+    return last ? { node: last, offset: last.length } : { node: content, offset: 0 };
+  };
+
+  // caretCharRect is the viewport rect of the character cell at col (the block
+  // the caret paints over), or the whole (empty) content box for a blank line.
+  const caretCharRect = (content: Element, col: number, len: number): DOMRect | null => {
+    const r = document.createRange();
+    if (len === 0) {
+      // Empty line: no character to sit on — a collapsed range rect can be
+      // zero-height, so use the content box and paint a thin bar at its start.
+      const cr = content.getBoundingClientRect();
+      return new DOMRect(cr.left, cr.top, 2, cr.height || 16);
+    }
+    const a = nodePointAtRune(content, col);
+    const b = nodePointAtRune(content, col + 1);
+    try {
+      r.setStart(a.node, a.offset);
+      r.setEnd(b.node, b.offset);
+    } catch {
+      return null;
+    }
+    const rects = r.getClientRects();
+    return rects.length ? rects[0] : r.getBoundingClientRect();
+  };
+
+  const removeCaret = () => {
+    if (caretEl) {
+      caretEl.remove();
+      caretEl = null;
+    }
+  };
+
+  // renderCaret (re)draws the block caret over the character at (active line,
+  // caretCol). Called on every render (sync) and after each horizontal move.
+  // Hidden while a selection is in progress — the native highlight shows then.
+  const renderCaret = () => {
+    const line = activeCursorLine();
+    if (!line || selecting) {
+      removeCaret();
+      lastLine = line;
+      return;
+    }
+    const content = lineContentOf(line);
+    const len = lineRuneLen(content);
+    if (line !== lastLine) {
+      // Arrived on a new line (Up/Down): restore the remembered goal column.
+      caretCol = Math.min(goalCol, Math.max(len - 1, 0));
+    }
+    lastLine = line;
+    caretCol = Math.max(0, Math.min(caretCol, Math.max(len - 1, 0)));
+    const rect = caretCharRect(content, caretCol, len);
+    if (!rect) {
+      removeCaret();
+      return;
+    }
+    if (!caretEl) {
+      caretEl = document.createElement("div");
+      caretEl.setAttribute("data-lvt-text-caret", "");
+      caretEl.setAttribute("aria-hidden", "true");
+    }
+    if (caretEl.parentElement !== el) el.appendChild(caretEl);
+    const host = el.getBoundingClientRect();
+    caretEl.style.cssText =
+      "position:absolute;pointer-events:none;z-index:var(--lvt-text-caret-z-index,4);" +
+      "border-radius:2px;background:var(--lvt-text-caret-bg,rgba(31,111,235,0.4));" +
+      "box-shadow:var(--lvt-text-caret-shadow,0 0 0 1px var(--lvt-text-caret-border,#1f6feb));" +
+      `left:${rect.left - host.left + el.scrollLeft}px;` +
+      `top:${rect.top - host.top + el.scrollTop}px;` +
+      `width:${Math.max(rect.width, 2)}px;height:${rect.height}px;`;
+  };
+
+  // collapseSelectionAtCaret puts a collapsed selection at the caret so
+  // modify("extend", …) starts the selection FROM the caret (not line start).
+  const collapseSelectionAtCaret = () => {
+    const line = activeCursorLine();
+    if (!line) return;
+    const p = nodePointAtRune(lineContentOf(line), caretCol);
+    const sel = window.getSelection();
+    if (!sel) return;
+    const r = document.createRange();
+    r.setStart(p.node, p.offset);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  };
+
+  // colOfCaret reads a collapsed selection's column back as a rune offset (used
+  // after a word move, where the browser's engine found the boundary).
+  const colOfCaret = (content: Element): number => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return -1;
+    const r = document.createRange();
+    r.selectNodeContents(content);
+    try {
+      r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+    } catch {
+      return -1;
+    }
+    return runesOf(r.toString()).length;
+  };
+
+  const isEditableFocus = (): boolean => {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a) return false;
+    const tag = a.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || a.isContentEditable;
+  };
+
+  // moveCaret shifts the caret one character/word and re-renders it; any active
+  // selection collapses.
+  const moveCaret = (dir: "forward" | "backward", granularity: "character" | "word") => {
+    selecting = false;
+    hideButton();
+    const line = activeCursorLine();
+    if (!line) return;
+    const content = lineContentOf(line);
+    const len = lineRuneLen(content);
+    if (granularity === "word") {
+      collapseSelectionAtCaret();
+      const sel = window.getSelection();
+      if (sel && typeof sel.modify === "function") {
+        sel.modify("move", dir, "word");
+        const c = colOfCaret(content);
+        if (c >= 0) caretCol = c;
+      }
+      window.getSelection()?.removeAllRanges();
+    } else {
+      caretCol += dir === "forward" ? 1 : -1;
+    }
+    caretCol = Math.max(0, Math.min(caretCol, Math.max(len - 1, 0)));
+    goalCol = caretCol;
+    renderCaret();
+  };
+
+  // extendSelection grows a native selection from the caret with modify() — the
+  // browser's text engine handles word boundaries — over the NON-editable text.
+  const extendSelection = (
+    dir: "forward" | "backward",
+    granularity: "character" | "word"
+  ) => {
+    if (!activeCursorLine()) return;
+    if (!selecting) {
+      collapseSelectionAtCaret(); // anchor at the caret
+      selecting = true;
+      removeCaret(); // native highlight replaces the block caret
+    }
+    const sel = window.getSelection();
+    if (sel && typeof sel.modify === "function") {
+      sel.modify("extend", dir, granularity);
+    }
+    // selectionchange → evaluate → the Comment button appears.
+  };
+
+  // confirmSelection dispatches the current selection as a text comment and
+  // resets — shared by the floating button (mouse/touch) and Enter (keyboard).
+  const confirmSelection = () => {
+    const data = textOffsetsFromSelection(window.getSelection(), el);
+    if (data) send({ action, data });
+    hideButton();
+    selecting = false;
+    window.getSelection()?.removeAllRanges();
+    // The caret re-renders after the server's render (via sync()).
+  };
+
+  const showButton = (box: DOMRect) => {
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute(TEXT_SELECT_BUTTON_ATTR, "");
+      button.textContent = "Comment";
+      // preventDefault on pointerdown keeps the native selection alive when the
+      // button is tapped (a default pointerdown would move focus and collapse
+      // it before our click handler reads the range).
+      button.addEventListener("pointerdown", (e) => e.preventDefault());
+      button.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmSelection();
+      });
+      document.body.appendChild(button);
+    }
+    // Fixed to the viewport, centered above the selection's end. Visual look
+    // is a sensible default overridable via --lvt-text-select-* custom props
+    // (mirrors area-select's --lvt-area-select-* convention). The overlay lives
+    // on document.body (outside the themed subtree), so it can't inherit host
+    // theme tokens — hence concrete fallbacks here.
+    // Touch devices show a NATIVE selection callout (iOS "Copy | Look Up …")
+    // anchored ABOVE the selection, rendered in an OS layer that beats any
+    // z-index. So on a coarse pointer, put our button just BELOW the selection
+    // (clear of that callout, still near where the user is looking); a mouse
+    // keeps the compact anchor just above the selection.
+    const coarse =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const cx = Math.round(box.left + box.width / 2);
+    const position = coarse
+      ? `left:${cx}px;top:${Math.round(box.bottom + 10)}px;transform:translateX(-50%);`
+      : `left:${cx}px;top:${Math.round(box.top)}px;transform:translate(-50%,calc(-100% - 6px));`;
+    button.style.cssText =
+      "position:fixed;z-index:var(--lvt-text-select-z-index,9999);margin:0;" +
+      "padding:var(--lvt-text-select-pad,10px 20px);cursor:pointer;white-space:nowrap;" +
+      "font:var(--lvt-text-select-font,600 16px/1.2 system-ui,-apple-system,sans-serif);" +
+      "color:var(--lvt-text-select-fg,#fff);background:var(--lvt-text-select-bg,#1f6feb);" +
+      "border:var(--lvt-text-select-border,0);border-radius:var(--lvt-text-select-radius,9px);" +
+      "box-shadow:var(--lvt-text-select-shadow,0 4px 16px rgba(0,0,0,0.35));" +
+      position;
+  };
+
+  const evaluate = () => {
+    const sel = window.getSelection();
+    if (!selectionInsideHost(sel, el)) {
+      hideButton();
+      return;
+    }
+    const range = textOffsetsFromSelection(sel, el);
+    if (!range) {
+      hideButton();
+      return;
+    }
+    showButton(sel!.getRangeAt(0).getBoundingClientRect());
+  };
+
+  const onSelectionChange = () => {
+    if (debounce !== null) clearTimeout(debounce);
+    debounce = setTimeout(evaluate, TEXT_SELECT_DEBOUNCE_MS);
+  };
+
+  // Capture-phase click guard: when a non-collapsed selection lives inside the
+  // host, swallow the click so the delegated (document-bubble) lvt-on:click on
+  // a line never fires — a drag-select's completing click would otherwise
+  // select the whole line. Capture on the host runs before the document-bubble
+  // delegation, and stopPropagation prevents the bubble entirely, so the line
+  // action is suppressed while the selection (and our button) survive.
+  const onClickCapture = (e: MouseEvent) => {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && selectionInsideHost(sel, el)) {
+      e.stopPropagation();
+    }
+  };
+
+  // Single window-capture key handler — fires before the document-bubble
+  // lvt-on:keydown="selectLine" AND regardless of focus, so the caret works
+  // without stealing focus:
+  //   - Left/Right → move the block caret (Ctrl/Alt = word); Up/Down fall
+  //     through to the server's CursorUp/Down (is-cursor line move; the caret
+  //     re-syncs after that render).
+  //   - Shift+Left/Right → extend a selection from the caret.
+  //   - Enter with a live selection → commit it (never selectLine).
+  //   - Escape → drop the selection, restore the caret.
+  // While a text field (composer / filter) is focused, arrows are left to it.
+  const onKeydown = (e: KeyboardEvent) => {
+    // Bail entirely while a text field (composer / filter) is focused: this is a
+    // window-CAPTURE listener, so without this an Enter meant as a textarea
+    // newline — or an Escape meant to dismiss a field — would be hijacked to
+    // commit/cancel a still-live document selection (e.g. select via Shift+
+    // Arrow, then Tab into the composer without clearing the selection).
+    if (isEditableFocus()) return;
+    // Scope to interactions that belong to THIS diff. Since it's a window-
+    // capture listener, without this it would swallow Left/Right/Enter/Escape
+    // for the whole page (breaking an unrelated arrow-key widget — dropdown,
+    // carousel — the user has focused). Handle only when nothing else has focus
+    // (page-load / body state, so the on-load caret is still keyboard-drivable)
+    // or focus is within the host.
+    const a = document.activeElement;
+    const scoped =
+      !a || a === document.body || a === document.documentElement || el.contains(a);
+    if (!scoped) return;
+    const sel = window.getSelection();
+    const haveSel = !!sel && !sel.isCollapsed && selectionInsideHost(sel, el);
+    if (e.key === "Enter" && haveSel) {
+      e.preventDefault();
+      e.stopPropagation();
+      confirmSelection();
+      return;
+    }
+    if (e.key === "Escape" && (selecting || haveSel)) {
+      e.preventDefault();
+      e.stopPropagation();
+      selecting = false;
+      window.getSelection()?.removeAllRanges();
+      hideButton();
+      renderCaret();
+      return;
+    }
+    const dir =
+      e.key === "ArrowRight" ? "forward" : e.key === "ArrowLeft" ? "backward" : null;
+    if (!dir) return; // Up/Down → server cursor; everything else ignored
+    const granularity: "character" | "word" = e.ctrlKey || e.altKey ? "word" : "character";
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) extendSelection(dir, granularity);
+    else moveCaret(dir, granularity);
+  };
+
+  document.addEventListener("selectionchange", onSelectionChange);
+  el.addEventListener("click", onClickCapture, true);
+  // NOTE: caret state (activeCursorLine/caretCol/selecting) is per-instance, and
+  // each armed element adds its own window keydown listener. This assumes ONE
+  // armed text-select host at a time (the diff view's single `.code`). If two are
+  // ever armed simultaneously, each keystroke would drive both carets, since
+  // stopPropagation doesn't stop sibling listeners on the same window target.
+  window.addEventListener("keydown", onKeydown, true);
+
+  return {
+    action,
+    cleanup: () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      el.removeEventListener("click", onClickCapture, true);
+      window.removeEventListener("keydown", onKeydown, true);
+      if (debounce !== null) clearTimeout(debounce);
+      removeCaret();
+      hideButton();
+      textSelectArmed.delete(el);
+    },
+    sync: renderCaret,
+    updateSend: (s) => {
+      send = s;
+    },
+  };
+}
+
+/**
+ * Apply text-select directives. `lvt-fx:text-select="<actionName>"` arms a
+ * container so a native text selection over its line-bearing children shows a
+ * floating "Comment" button that dispatches the character range on click.
+ * Idempotent + swept exactly like area/region-select (Map, not WeakMap, so the
+ * sweep can iterate to tear down elements whose attribute a server diff
+ * removed).
+ */
+export function handleTextSelectDirectives(
+  rootElement: Element,
+  send: AreaSelectSendFn
+): void {
+  for (const [element, entry] of Array.from(textSelectArmed)) {
+    if (!element.isConnected || !element.hasAttribute("lvt-fx:text-select")) {
+      entry.cleanup();
+    }
+  }
+  const matches = rootElement.querySelectorAll<HTMLElement>("[lvt-fx\\:text-select]");
+  if (matches.length === 0) return;
+  for (const el of matches) {
+    const action = el.getAttribute("lvt-fx:text-select");
+    if (!action) {
+      console.warn(
+        `lvt-fx:text-select requires an action name, got: ${JSON.stringify(action)}`
+      );
+      continue;
+    }
+    const existing = textSelectArmed.get(el);
+    if (existing && existing.action === action) {
+      existing.updateSend(send);
+      existing.sync(); // re-draw the caret after this render
+      continue;
+    }
+    if (existing) existing.cleanup();
+    const entry = attachTextSelect(el, action, send);
+    textSelectArmed.set(el, entry);
+    entry.sync(); // draw the caret on first mount (visible from load)
+  }
+}
+
+/**
+ * Cancel text-select listeners for every armed element under root.
+ * Mirror of teardownRegionSelectForRoot for the client disconnect lifecycle.
+ */
+export function teardownTextSelectForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(textSelectArmed)) {
+    if (rootElement.contains(element)) {
+      entry.cleanup();
+    }
+  }
+}
+
 // proxyBridgeArmed mirrors the area/region-select singletons: one entry per
 // armed `lvt-fx:proxy-bridge` element, swept on disconnect. sync runs on every
 // render to re-apply the pin-layer transform morphdom wipes + relay a "locate
