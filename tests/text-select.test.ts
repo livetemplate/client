@@ -254,3 +254,64 @@ describe("keyboard scoping (regression: bot review round 2 of #140)", () => {
     expect(ev.defaultPrevented).toBe(false); // left for the focused widget
   });
 });
+
+// mountBlocks builds a rendered-Markdown-style host: data-surface="block" with
+// [data-from]/[data-to] blocks holding rendered HTML (text ≠ source columns).
+function mountBlocks(
+  blocks: Array<{ from: number; to: number; html: string }>
+): { host: HTMLElement; blocks: HTMLElement[] } {
+  const host = document.createElement("div");
+  host.setAttribute("lvt-fx:text-select", "selectText");
+  host.setAttribute("data-surface", "block");
+  const els: HTMLElement[] = [];
+  for (const b of blocks) {
+    const el = document.createElement("div");
+    el.setAttribute("data-from", String(b.from));
+    el.setAttribute("data-to", String(b.to));
+    el.innerHTML = b.html;
+    host.appendChild(el);
+    els.push(el);
+  }
+  document.body.appendChild(host);
+  return { host, blocks: els };
+}
+
+describe("textOffsetsFromSelection — block surface (rendered Markdown)", () => {
+  it("resolves a within-block selection to the block's source line range + phrase", () => {
+    const { host, blocks } = mountBlocks([{ from: 10, to: 12, html: "<p>buy <strong>bulk</strong> items</p>" }]);
+    // select "bulk items" spanning the <strong> and the following text node
+    const strong = blocks[0].querySelector("strong")!.firstChild as Text; // "bulk"
+    const tail = blocks[0].querySelector("p")!.lastChild as Text; // " items"
+    const sel = selectRange(strong, 0, tail, 6);
+    const r = textOffsetsFromSelection(sel, host);
+    expect(r).toMatchObject({ fromLine: 10, toLine: 12, fromCol: 0, toCol: 0, side: "new" });
+    expect(r!.text).toContain("bulk items");
+  });
+
+  it("spans multiple blocks: from start block's from to end block's to", () => {
+    const { host, blocks } = mountBlocks([
+      { from: 5, to: 5, html: "<p>first line</p>" },
+      { from: 6, to: 8, html: "<p>second block</p>" },
+    ]);
+    const a = blocks[0].querySelector("p")!.firstChild as Text;
+    const b = blocks[1].querySelector("p")!.firstChild as Text;
+    const sel = selectRange(a, 0, b, 6);
+    const r = textOffsetsFromSelection(sel, host);
+    expect(r).toMatchObject({ fromLine: 5, toLine: 8, fromCol: 0, toCol: 0 });
+  });
+
+  it("returns null when the selection is outside any block", () => {
+    const { host } = mountBlocks([{ from: 1, to: 1, html: "<p>x</p>" }]);
+    const outside = document.createElement("p");
+    outside.textContent = "elsewhere";
+    document.body.appendChild(outside);
+    const t = outside.firstChild as Text;
+    expect(textOffsetsFromSelection(selectRange(t, 0, t, 4), host)).toBeNull();
+  });
+
+  it("returns null for a collapsed selection", () => {
+    const { host, blocks } = mountBlocks([{ from: 1, to: 1, html: "<p>abc</p>" }]);
+    const t = blocks[0].querySelector("p")!.firstChild as Text;
+    expect(textOffsetsFromSelection(selectRange(t, 1, t, 1), host)).toBeNull();
+  });
+});
