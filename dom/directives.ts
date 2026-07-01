@@ -2687,6 +2687,16 @@ function attachTextSelect(
     // commit/cancel a still-live document selection (e.g. select via Shift+
     // Arrow, then Tab into the composer without clearing the selection).
     if (isEditableFocus()) return;
+    // Scope to interactions that belong to THIS diff. Since it's a window-
+    // capture listener, without this it would swallow Left/Right/Enter/Escape
+    // for the whole page (breaking an unrelated arrow-key widget — dropdown,
+    // carousel — the user has focused). Handle only when nothing else has focus
+    // (page-load / body state, so the on-load caret is still keyboard-drivable)
+    // or focus is within the host.
+    const a = document.activeElement;
+    const scoped =
+      !a || a === document.body || a === document.documentElement || el.contains(a);
+    if (!scoped) return;
     const sel = window.getSelection();
     const haveSel = !!sel && !sel.isCollapsed && selectionInsideHost(sel, el);
     if (e.key === "Enter" && haveSel) {

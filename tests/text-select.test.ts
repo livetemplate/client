@@ -213,3 +213,44 @@ describe("keyboard commit gating (regression: bot review of #140)", () => {
     expect(send.mock.calls[0][0]).toMatchObject({ action: "selectText" });
   });
 });
+
+describe("keyboard scoping (regression: bot review round 2 of #140)", () => {
+  const emptyRects = Object.assign([], { item: () => null }) as unknown as DOMRectList;
+  const zeroRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
+  beforeAll(() => {
+    (Range.prototype as any).getClientRects = () => emptyRects;
+    (Range.prototype as any).getBoundingClientRect = () => zeroRect;
+  });
+
+  it("ignores Enter when an unrelated non-editable widget is focused", () => {
+    const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    host.setAttribute("lvt-fx:text-select", "selectText");
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5); // live selection
+
+    // Focus an unrelated widget OUTSIDE the host (e.g. a custom dropdown button).
+    const widget = document.createElement("button");
+    document.body.appendChild(widget);
+    widget.focus();
+    expect(document.activeElement).toBe(widget);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    );
+    expect(send).not.toHaveBeenCalled(); // the widget owns the key, not us
+  });
+
+  it("does not preventDefault ArrowRight when an unrelated widget is focused", () => {
+    const { host } = mountCode([{ line: 1, tokens: ["alpha"] }]);
+    host.setAttribute("lvt-fx:text-select", "selectText");
+    handleTextSelectDirectives(document.body, jest.fn());
+    const widget = document.createElement("button");
+    document.body.appendChild(widget);
+    widget.focus();
+
+    const ev = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false); // left for the focused widget
+  });
+});
