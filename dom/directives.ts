@@ -2681,6 +2681,12 @@ function attachTextSelect(
   //   - Escape → drop the selection, restore the caret.
   // While a text field (composer / filter) is focused, arrows are left to it.
   const onKeydown = (e: KeyboardEvent) => {
+    // Bail entirely while a text field (composer / filter) is focused: this is a
+    // window-CAPTURE listener, so without this an Enter meant as a textarea
+    // newline — or an Escape meant to dismiss a field — would be hijacked to
+    // commit/cancel a still-live document selection (e.g. select via Shift+
+    // Arrow, then Tab into the composer without clearing the selection).
+    if (isEditableFocus()) return;
     const sel = window.getSelection();
     const haveSel = !!sel && !sel.isCollapsed && selectionInsideHost(sel, el);
     if (e.key === "Enter" && haveSel) {
@@ -2698,7 +2704,6 @@ function attachTextSelect(
       renderCaret();
       return;
     }
-    if (isEditableFocus()) return;
     const dir =
       e.key === "ArrowRight" ? "forward" : e.key === "ArrowLeft" ? "backward" : null;
     if (!dir) return; // Up/Down → server cursor; everything else ignored
@@ -2711,6 +2716,11 @@ function attachTextSelect(
 
   document.addEventListener("selectionchange", onSelectionChange);
   el.addEventListener("click", onClickCapture, true);
+  // NOTE: caret state (activeCursorLine/caretCol/selecting) is per-instance, and
+  // each armed element adds its own window keydown listener. This assumes ONE
+  // armed text-select host at a time (the diff view's single `.code`). If two are
+  // ever armed simultaneously, each keystroke would drive both carets, since
+  // stopPropagation doesn't stop sibling listeners on the same window target.
   window.addEventListener("keydown", onKeydown, true);
 
   return {

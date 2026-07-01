@@ -1,4 +1,8 @@
-import { textOffsetsFromSelection } from "../dom/directives";
+import {
+  textOffsetsFromSelection,
+  handleTextSelectDirectives,
+  teardownTextSelectForRoot,
+} from "../dom/directives";
 
 // Build a `.code` host whose lines mirror prereview's structure: each line is a
 // [data-line] row with a gutter span (excluded from offsets) and a
@@ -55,6 +59,7 @@ function tokenText(content: HTMLElement, tokenIndex: number): Text {
 }
 
 afterEach(() => {
+  teardownTextSelectForRoot(document.body); // drop any armed window keydown listeners
   document.body.replaceChildren();
   window.getSelection()?.removeAllRanges();
 });
@@ -160,5 +165,51 @@ describe("textOffsetsFromSelection", () => {
     const t = outside.firstChild as Text;
     const sel = selectRange(t, 0, t, 4);
     expect(textOffsetsFromSelection(sel, host)).toBeNull();
+  });
+});
+
+describe("keyboard commit gating (regression: bot review of #140)", () => {
+  // Arming renders the block caret, which reads Range layout geometry. jsdom
+  // does no layout (getClientRects is absent), so stub the two Range layout
+  // methods — real geometry is covered by the chromedp e2e, not here.
+  const emptyRects = Object.assign([], { item: () => null }) as unknown as DOMRectList;
+  const zeroRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
+  beforeAll(() => {
+    (Range.prototype as any).getClientRects = () => emptyRects;
+    (Range.prototype as any).getBoundingClientRect = () => zeroRect;
+  });
+
+  it("does NOT commit on Enter while a text field is focused, even with a live host selection", () => {
+    const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    host.setAttribute("lvt-fx:text-select", "selectText");
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+
+    // A live, non-collapsed selection inside the host...
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5);
+    // ...but focus is in an unrelated textarea (e.g. the composer). Tab does not
+    // collapse the document selection, so haveSel is still true.
+    const ta = document.createElement("textarea");
+    document.body.appendChild(ta);
+    ta.focus();
+    expect(document.activeElement).toBe(ta);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    );
+    expect(send).not.toHaveBeenCalled(); // Enter belongs to the textarea, not us
+  });
+
+  it("DOES commit on Enter when focus is not in a text field", () => {
+    const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    host.setAttribute("lvt-fx:text-select", "selectText");
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5); // "alpha"
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ action: "selectText" });
   });
 });
