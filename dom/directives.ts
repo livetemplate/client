@@ -2330,15 +2330,46 @@ function colWithin(content: Element, node: Node, offset: number): number {
   return runeLen(r.toString());
 }
 
-// textOffsetsFromSelection resolves a native selection to a source character
-// range, or null when it can't be represented (collapsed, outside the host,
-// or crossing the diff old/new boundary). Exported so unit tests exercise the
-// real resolver rather than a copy.
+// blockRangeFromSelection resolves a native selection over a RENDERED surface
+// (Markdown/HTML preview, host data-surface="block") to a SOURCE line range +
+// the selected text. Rendered text can't map to source columns (`**b**` renders
+// as `b`), so columns are 0 and the range is the [data-from, data-to] span of
+// the blocks the selection touches — with the exact rendered phrase captured as
+// `text` (quoted in the comment and used for drift/context). Rendered content is
+// always the new side.
+function blockRangeFromSelection(sel: Selection, host: Element): TextRange | null {
+  const range = sel.getRangeAt(0); // doc-ordered: start precedes end
+  const blockOf = (node: Node | null): Element | null => {
+    const start = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null);
+    if (!start || !host.contains(start)) return null;
+    const b = start.closest("[data-from]");
+    return b && host.contains(b) ? b : null;
+  };
+  const startBlock = blockOf(range.startContainer);
+  const endBlock = blockOf(range.endContainer);
+  if (!startBlock || !endBlock) return null;
+  const from = parseInt(startBlock.getAttribute("data-from") || "", 10);
+  const to = parseInt(endBlock.getAttribute("data-to") || "", 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from < 1 || to < from) return null;
+  const text = range.toString();
+  if (text.length === 0) return null;
+  return { fromLine: from, fromCol: 0, toLine: to, toCol: 0, side: "new", text };
+}
+
+// textOffsetsFromSelection resolves a native selection to a source range + the
+// selected text, or null when it can't be represented. On the default "code"
+// surface it yields a character range (rune columns) against [data-line] rows;
+// on a "block" surface (host data-surface="block", rendered Markdown/HTML) it
+// yields a line range against [data-from]/[data-to] blocks. Exported so unit
+// tests exercise the real resolver rather than a copy.
 export function textOffsetsFromSelection(
   sel: Selection | null,
   host: Element
 ): TextRange | null {
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  if (host.getAttribute("data-surface") === "block") {
+    return blockRangeFromSelection(sel, host);
+  }
   const range = sel.getRangeAt(0); // normalized: start precedes end in doc order
   const startCtx = lineTextContainer(range.startContainer, host);
   const endCtx = lineTextContainer(range.endContainer, host);
@@ -2379,6 +2410,9 @@ function attachTextSelect(
   initialSend: AreaSelectSendFn
 ): TextSelectEntry {
   let send = initialSend;
+  // Surface: "code" (diff/raw — character ranges + a keyboard block caret) or
+  // "block" (rendered Markdown/HTML — line ranges, no caret, arrows left alone).
+  const surface = el.getAttribute("data-surface") === "block" ? "block" : "code";
   let button: HTMLButtonElement | null = null;
   let debounce: ReturnType<typeof setTimeout> | null = null;
   // Keyboard block caret — a client-only visual overlay over one character.
@@ -2714,6 +2748,10 @@ function attachTextSelect(
       renderCaret();
       return;
     }
+    // Arrow-key caret is a code-surface affordance only. On a rendered "block"
+    // surface there's no caret, so leave arrows to the browser (scroll) rather
+    // than hijacking them.
+    if (surface !== "code") return;
     const dir =
       e.key === "ArrowRight" ? "forward" : e.key === "ArrowLeft" ? "backward" : null;
     if (!dir) return; // Up/Down → server cursor; everything else ignored
