@@ -16,6 +16,7 @@ import {
   handlePreviewBridgeDirectives,
   handleProxyBridgeDirectives,
   handleRegionSelectDirectives,
+  handleTextSelectDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
@@ -25,6 +26,7 @@ import {
   teardownPreviewBridgeForRoot,
   teardownProxyBridgeForRoot,
   teardownRegionSelectForRoot,
+  teardownTextSelectForRoot,
   teardownURLHashForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
@@ -681,6 +683,7 @@ export class LiveTemplateClient {
       teardownAreaSelectForRoot(this.wrapperElement);
       teardownResizeForRoot(this.wrapperElement);
       teardownRegionSelectForRoot(this.wrapperElement);
+      teardownTextSelectForRoot(this.wrapperElement);
       teardownProxyBridgeForRoot(this.wrapperElement);
       teardownIframeAutoHeightForRoot(this.wrapperElement);
       teardownPreviewBridgeForRoot(this.wrapperElement);
@@ -2084,6 +2087,11 @@ export class LiveTemplateClient {
     // send-callback wiring; the overlay is parent light DOM so it works
     // on iOS (unlike the deleted in-iframe tap).
     handleRegionSelectDirectives(element, (message) => this.send(message));
+    // text-select captures a native text selection over the diff and dispatches
+    // a character range (word / phrase / multi-line span). Same send-callback
+    // wiring; uses window.getSelection rather than a drawn box, so it covers
+    // mouse, touch, and keyboard from one path.
+    handleTextSelectDirectives(element, (message) => this.send(message));
     // proxy-bridge is the --external live-site bridge: it relays the proxied
     // page's nav (→ setProxyURL) and scroll (→ pin-layer transform, no server
     // hop) from the cross-origin beacon. Same send-callback wiring; the only
