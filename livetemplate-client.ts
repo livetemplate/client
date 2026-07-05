@@ -141,13 +141,18 @@ export class LiveTemplateClient {
   // Liveness heartbeat: an app-level ping/pong the client drives to detect a
   // dead OR zombie socket (a socket that still reports OPEN but whose TCP is
   // gone — a documented iOS/mobile behaviour that fires no `close` event, so
-  // neither onDisconnected nor visibilitychange can catch it). When enabled
-  // (heartbeatMs > 0, set from `data-lvt-heartbeat-ms`), every tick sends
+  // neither onDisconnected nor visibilitychange can catch it). Every tick sends
   // {action:"__ping__"} and expects a {pong:true} within a fraction of the
   // interval; a missing pong ⇒ reconnect (which re-syncs via the server's
-  // push-on-connect render). Disabled by default so the framework's
-  // conservative posture is unchanged for apps that don't opt in.
-  private heartbeatMs: number = 0;
+  // push-on-connect render).
+  //
+  // ON BY DEFAULT at DEFAULT_HEARTBEAT_MS — a socket that silently dies should
+  // recover everywhere, not only in apps that remembered to opt in. Tune or
+  // OPT OUT with `data-lvt-heartbeat-ms`: "0" disables it, any value ≥ 1000 sets
+  // the interval. The retry cadence is one interval (bounded by `reconnecting`),
+  // so this is a gentle self-heal, not the tight loop `autoReconnect` guards.
+  private static readonly DEFAULT_HEARTBEAT_MS = 20000;
+  private heartbeatMs: number = LiveTemplateClient.DEFAULT_HEARTBEAT_MS;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pongDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -424,18 +429,18 @@ export class LiveTemplateClient {
           }
         }
 
-        // Liveness heartbeat: opt-in via `data-lvt-heartbeat-ms="<N>"` on the
-        // wrapper (server-set), falling back to <body> like the debounce attr.
-        // When set, the client pings every N ms and reconnects if a pong doesn't
-        // come back — catching dead/zombie sockets that fire no close event.
+        // Liveness heartbeat: ON by default (see the field). Override via
+        // `data-lvt-heartbeat-ms` on the wrapper (server-set), falling back to
+        // <body> like the debounce attr: "0" opts OUT, any value ≥ 1000 sets the
+        // interval. An absent/typo'd value keeps the default. The 1s floor avoids
+        // a pathological tight ping loop from a fat-fingered "20" etc.
         const heartbeatAttr =
           wrapper.getAttribute("data-lvt-heartbeat-ms") ??
           document.body?.getAttribute("data-lvt-heartbeat-ms") ??
           null;
         if (heartbeatAttr !== null && /^\d+$/.test(heartbeatAttr)) {
           const hb = parseInt(heartbeatAttr, 10);
-          // Floor at 1s to avoid a pathological tight ping loop from a typo.
-          if (Number.isFinite(hb) && hb >= 1000) {
+          if (hb === 0 || hb >= 1000) {
             client.heartbeatMs = hb;
           }
         }

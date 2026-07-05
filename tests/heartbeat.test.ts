@@ -105,12 +105,13 @@ describe("Liveness heartbeat", () => {
     jest.restoreAllMocks();
   });
 
-  // Connect with the heartbeat enabled (heartbeatMs is set pre-connect, exactly
-  // as autoInit does from the data-lvt-heartbeat-ms attribute).
+  // Connect with an explicit heartbeat interval (set pre-connect, exactly as
+  // autoInit does from data-lvt-heartbeat-ms). enabled=false opts OUT (0), since
+  // the heartbeat is ON by default now.
   async function connectWithHeartbeat(enabled: boolean): Promise<void> {
     createWrapper();
     client = new LiveTemplateClient({ logLevel: "error" });
-    if (enabled) (client as any).heartbeatMs = HB;
+    (client as any).heartbeatMs = enabled ? HB : 0;
     const connectPromise = client.connect();
     await jest.advanceTimersByTimeAsync(0); // resolve HEAD fetch
     mockSockets[0]?.simulateOpen();
@@ -121,7 +122,20 @@ describe("Liveness heartbeat", () => {
     return sock.sent.filter((m) => m.includes("__ping__")).length;
   }
 
-  it("sends no ping when not opted in", async () => {
+  it("is on by default (no override) and pings at the default interval", async () => {
+    createWrapper();
+    client = new LiveTemplateClient({ logLevel: "error" });
+    const def = (client as any).heartbeatMs;
+    expect(def).toBeGreaterThanOrEqual(1000); // default is a real interval, not 0
+    const connectPromise = client.connect();
+    await jest.advanceTimersByTimeAsync(0);
+    mockSockets[0]?.simulateOpen();
+    await connectPromise;
+    await jest.advanceTimersByTimeAsync(def);
+    expect(pingsSent(mockSockets[0])).toBe(1);
+  });
+
+  it("sends no ping when opted out (heartbeatMs=0)", async () => {
     await connectWithHeartbeat(false);
     await jest.advanceTimersByTimeAsync(HB * 2);
     expect(pingsSent(mockSockets[0])).toBe(0);
