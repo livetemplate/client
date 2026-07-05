@@ -1855,6 +1855,33 @@ export class LiveTemplateClient {
           return false;
         }
 
+        // Preserve the one-shot scroll/autofocus guards across morphdom. The
+        // guards — data-lvt-iv-done (for lvt-fx:scroll="into-view") and
+        // data-lvt-autofocused (for lvt-autofocus) — are runtime-only attributes
+        // the server never emits, so morphdom would strip them on every render
+        // (toEl lacks them), making BOTH directives re-fire on every unrelated
+        // re-render: re-scrolling the page / re-stealing focus to a stale target
+        // (e.g. a 750ms status poll yanking the viewport back to the last-jumped
+        // comment). Copy the guard onto toEl WHILE its directive is still present
+        // so morphdom keeps it; if the server dropped the directive the guard
+        // falls away naturally and the directive re-arms when re-applied (so
+        // deliberately re-navigating to the same element still scrolls). This is
+        // why lvt-fx:animate is immune — it guards via a WeakSet that survives
+        // morphdom; these two guard via attributes, which do not.
+        if (
+          fromEl.nodeType === Node.ELEMENT_NODE &&
+          toEl.nodeType === Node.ELEMENT_NODE
+        ) {
+          const f = fromEl as Element;
+          const t = toEl as Element;
+          if (f.getAttribute("data-lvt-iv-done") === "1" && t.hasAttribute("lvt-fx:scroll")) {
+            t.setAttribute("data-lvt-iv-done", "1");
+          }
+          if (f.getAttribute("data-lvt-autofocused") === "true" && t.hasAttribute("lvt-autofocus")) {
+            t.setAttribute("data-lvt-autofocused", "true");
+          }
+        }
+
         // Track newly-introduced directive attributes so the post-render
         // scan can wire any new lvt-fx:/lvt-on:/lvt-el: bindings even on
         // renders that wouldn't otherwise trigger a wrapper-wide scan.
