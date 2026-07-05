@@ -138,6 +138,24 @@ export class LiveTemplateClient {
   private pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
   private visibilityReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Liveness heartbeat: an app-level ping/pong the client drives to detect a
+  // dead OR zombie socket (a socket that still reports OPEN but whose TCP is
+  // gone — a documented iOS/mobile behaviour that fires no `close` event, so
+  // neither onDisconnected nor visibilitychange can catch it). Every tick sends
+  // {action:"__ping__"} and expects a {pong:true} within a fraction of the
+  // interval; a missing pong ⇒ reconnect (which re-syncs via the server's
+  // push-on-connect render).
+  //
+  // ON BY DEFAULT at DEFAULT_HEARTBEAT_MS — a socket that silently dies should
+  // recover everywhere, not only in apps that remembered to opt in. Tune or
+  // OPT OUT with `data-lvt-heartbeat-ms`: "0" disables it, any value ≥ 1000 sets
+  // the interval. The retry cadence is one interval (bounded by `reconnecting`),
+  // so this is a gentle self-heal, not the tight loop `autoReconnect` guards.
+  private static readonly DEFAULT_HEARTBEAT_MS = 20000;
+  private heartbeatMs: number = LiveTemplateClient.DEFAULT_HEARTBEAT_MS;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pongDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(options: LiveTemplateClientOptions = {}) {
     const { logger: providedLogger, logLevel, debug, ...restOptions } = options;
     const resolvedLevel = logLevel ?? (debug ? "debug" : "info");
@@ -331,6 +349,9 @@ export class LiveTemplateClient {
 
         this.options.onConnect?.();
         this.wrapperElement?.dispatchEvent(new Event("lvt:connected"));
+        // Arm the liveness heartbeat on every (re)connect. Idempotent, and a
+        // no-op unless the app opted in via data-lvt-heartbeat-ms.
+        this.startHeartbeat();
       },
       onDisconnected: () => {
         this.ws = null;
@@ -408,6 +429,22 @@ export class LiveTemplateClient {
           }
         }
 
+        // Liveness heartbeat: ON by default (see the field). Override via
+        // `data-lvt-heartbeat-ms` on the wrapper (server-set), falling back to
+        // <body> like the debounce attr: "0" opts OUT, any value ≥ 1000 sets the
+        // interval. An absent/typo'd value keeps the default. The 1s floor avoids
+        // a pathological tight ping loop from a fat-fingered "20" etc.
+        const heartbeatAttr =
+          wrapper.getAttribute("data-lvt-heartbeat-ms") ??
+          document.body?.getAttribute("data-lvt-heartbeat-ms") ??
+          null;
+        if (heartbeatAttr !== null && /^\d+$/.test(heartbeatAttr)) {
+          const hb = parseInt(heartbeatAttr, 10);
+          if (hb === 0 || hb >= 1000) {
+            client.heartbeatMs = hb;
+          }
+        }
+
         client.connect().catch((error) => {
           autoInitLogger.error("Auto-initialization connect failed:", error);
         });
@@ -432,6 +469,13 @@ export class LiveTemplateClient {
     response: UpdateResponse,
     event?: MessageEvent<string>
   ): void {
+    // Liveness pong ({pong:true}) — the reply to our heartbeat ping. It carries
+    // no `tree`, so recognise and consume it BEFORE the error/diff paths: clear
+    // the pending pong-deadline and return. Cheapest possible discriminator.
+    if ((response as unknown as { pong?: boolean }).pong) {
+      this.onPong();
+      return;
+    }
     // Error envelope (proposal §3 / V14): a distinct wire message
     // { type:"error", code, topic? } — NOT an UpdateResponse (it carries no
     // `tree`). Surface as an `lvt:error` CustomEvent on the wrapper and
@@ -669,6 +713,7 @@ export class LiveTemplateClient {
     this.useHTTP = false;
     this.hiddenAt = 0;
     this.reconnecting = false;
+    this.stopHeartbeat();
     this.teardownVisibilityReconnect();
     this.uploadHandler.revokePreviews();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
@@ -842,6 +887,92 @@ export class LiveTemplateClient {
     } finally {
       this.reconnecting = false;
     }
+  }
+
+  // startHeartbeat arms the liveness interval (idempotent; no-op unless
+  // heartbeatMs > 0). Called on every (re)connect from onConnected.
+  private startHeartbeat(): void {
+    if (this.heartbeatMs <= 0 || this.heartbeatTimer !== null) return;
+    this.heartbeatTimer = setInterval(
+      () => this.heartbeatTick(),
+      this.heartbeatMs
+    );
+  }
+
+  // stopHeartbeat clears the interval and any pending pong-deadline. Called by
+  // disconnect() so a torn-down client leaves no timers behind.
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.pongDeadlineTimer !== null) {
+      clearTimeout(this.pongDeadlineTimer);
+      this.pongDeadlineTimer = null;
+    }
+  }
+
+  // heartbeatTick sends one ping and arms a pong-deadline. Skips while hidden
+  // (the visibility path owns that case), mid-reconnect, or in HTTP mode.
+  private heartbeatTick(): void {
+    if (
+      this.useHTTP ||
+      this.reconnecting ||
+      (typeof document !== "undefined" && document.hidden)
+    ) {
+      return;
+    }
+    const readyState = this.webSocketManager.getReadyState();
+    // undefined ⇒ no transport (intentionally disconnected) → nothing to probe.
+    if (readyState === undefined) return;
+    // Not OPEN (CLOSING/CLOSED) while we still believe we're live ⇒ dead socket
+    // that fired no usable close on this client → reconnect.
+    if (readyState !== 1) {
+      this.onHeartbeatDead("socket not open");
+      return;
+    }
+    // A still-pending deadline means the previous ping went unanswered; let it
+    // fire rather than stacking a second probe.
+    if (this.pongDeadlineTimer !== null) return;
+    try {
+      // Send the ping directly over the socket — never via send()'s HTTP
+      // fallback, which would trigger a full render instead of a pong.
+      this.webSocketManager.send(JSON.stringify({ action: "__ping__" }));
+    } catch {
+      this.onHeartbeatDead("ping send threw");
+      return;
+    }
+    // Expect a pong within half the interval (min 2s). A zombie socket accepts
+    // the send() silently but never delivers the reply — that's what this
+    // deadline catches.
+    const deadline = Math.max(2000, Math.floor(this.heartbeatMs / 2));
+    this.pongDeadlineTimer = setTimeout(() => {
+      this.pongDeadlineTimer = null;
+      this.onHeartbeatDead("pong timeout");
+    }, deadline);
+  }
+
+  // onPong clears the pending deadline — the socket answered, so it's alive.
+  private onPong(): void {
+    if (this.pongDeadlineTimer !== null) {
+      clearTimeout(this.pongDeadlineTimer);
+      this.pongDeadlineTimer = null;
+    }
+  }
+
+  // onHeartbeatDead reconnects a socket the heartbeat judged dead. Reuses the
+  // visibility-reconnect path (re-open the WS; the server pushes a fresh render
+  // on connect, re-syncing any state missed during the outage). The
+  // `reconnecting` guard bounds this to one attempt in flight; the next tick
+  // retries if it's still down — a gentle, self-healing cadence, not a storm.
+  private onHeartbeatDead(reason: string): void {
+    if (this.reconnecting) return;
+    if (this.pongDeadlineTimer !== null) {
+      clearTimeout(this.pongDeadlineTimer);
+      this.pongDeadlineTimer = null;
+    }
+    this.logger.info(`Heartbeat: socket dead (${reason}) — reconnecting`);
+    void this.performVisibilityReconnect();
   }
 
   /**
