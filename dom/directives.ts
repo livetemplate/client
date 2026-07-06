@@ -2803,6 +2803,127 @@ export function teardownTextSelectForRoot(rootElement: Element): void {
   }
 }
 
+// ─── viewport-report (read-progress reporting) ──────────────────────────────
+// `lvt-fx:viewport-report="<action>"` on a SCROLL CONTAINER reports, debounced,
+// the `data-key` of the topmost and bottommost tracked descendant currently
+// intersecting the container's viewport, so the SERVER can track how far the
+// user has read and where they left off. Deliberately DUMB — it only reports
+// keys; all logic (read-range accumulation, high-water mark, restore target)
+// lives server-side, which keeps it a general primitive and makes the behaviour
+// unit-testable without a browser.
+//
+// Which descendants count is chosen by `data-lvt-viewport-items` (a CSS
+// selector, default "[data-key]"); each must carry a `data-key`. A report fires
+// on scroll (debounced), once on attach (the initial viewport), and on resize.
+// The payload is `{ topKey, bottomKey }`; a report is suppressed while the
+// visible extremes are unchanged.
+type ViewportReportEntry = {
+  action: string;
+  cleanup: () => void;
+  updateSend: (send: AreaSelectSendFn) => void;
+};
+const viewportReportArmed = new Map<Element, ViewportReportEntry>();
+const VIEWPORT_REPORT_DEBOUNCE_MS = 250;
+
+function attachViewportReport(
+  container: HTMLElement,
+  action: string,
+  initialSend: AreaSelectSendFn
+): ViewportReportEntry {
+  let send = initialSend;
+  const itemSelector =
+    container.getAttribute("data-lvt-viewport-items") || "[data-key]";
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTop = "";
+  let lastBottom = "";
+
+  const compute = () => {
+    const view = container.getBoundingClientRect();
+    let topKey = "";
+    let bottomKey = "";
+    // Items are in document order, so the FIRST with any vertical overlap is the
+    // topmost visible and the LAST is the bottommost.
+    container.querySelectorAll<HTMLElement>(itemSelector).forEach((it) => {
+      const key = it.getAttribute("data-key");
+      if (!key) return;
+      const r = it.getBoundingClientRect();
+      if (r.bottom <= view.top || r.top >= view.bottom) return; // fully off-screen
+      if (topKey === "") topKey = key;
+      bottomKey = key;
+    });
+    if (topKey === "" && bottomKey === "") return; // nothing tracked in view yet
+    if (topKey === lastTop && bottomKey === lastBottom) return; // no change
+    lastTop = topKey;
+    lastBottom = bottomKey;
+    send({ action, data: { topKey, bottomKey } });
+  };
+
+  const schedule = () => {
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(compute, VIEWPORT_REPORT_DEBOUNCE_MS);
+  };
+
+  container.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule, { passive: true });
+  schedule(); // capture the initial viewport once layout settles
+
+  return {
+    action,
+    updateSend: (s) => {
+      send = s;
+    },
+    cleanup: () => {
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      container.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      viewportReportArmed.delete(container);
+    },
+  };
+}
+
+/**
+ * Apply `lvt-fx:viewport-report` directives: arm each matching scroll container
+ * once (idempotent across re-renders — an existing entry with the same action
+ * just refreshes its send callback), and sweep entries whose element left the
+ * DOM or lost the attribute.
+ */
+export function handleViewportReportDirectives(
+  rootElement: Element,
+  send: AreaSelectSendFn
+): void {
+  for (const [element, entry] of Array.from(viewportReportArmed)) {
+    if (
+      !element.isConnected ||
+      !element.hasAttribute("lvt-fx:viewport-report")
+    ) {
+      entry.cleanup();
+    }
+  }
+  rootElement
+    .querySelectorAll<HTMLElement>("[lvt-fx\\:viewport-report]")
+    .forEach((el) => {
+      const action = el.getAttribute("lvt-fx:viewport-report");
+      if (!action) {
+        console.warn("lvt-fx:viewport-report requires an action name");
+        return;
+      }
+      const existing = viewportReportArmed.get(el);
+      if (existing && existing.action === action) {
+        existing.updateSend(send);
+        return;
+      }
+      if (existing) existing.cleanup();
+      viewportReportArmed.set(el, attachViewportReport(el, action, send));
+    });
+}
+
+/** Cancel viewport-report listeners for every armed element under root. */
+export function teardownViewportReportForRoot(rootElement: Element): void {
+  for (const [element, entry] of Array.from(viewportReportArmed)) {
+    if (rootElement.contains(element)) entry.cleanup();
+  }
+}
+
 // proxyBridgeArmed mirrors the area/region-select singletons: one entry per
 // armed `lvt-fx:proxy-bridge` element, swept on disconnect. sync runs on every
 // render to re-apply the pin-layer transform morphdom wipes + relay a "locate
