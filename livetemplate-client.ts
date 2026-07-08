@@ -17,6 +17,7 @@ import {
   handleProxyBridgeDirectives,
   handleRegionSelectDirectives,
   handleTextSelectDirectives,
+  handleViewportReportDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
   handleToastDirectives,
@@ -27,6 +28,7 @@ import {
   teardownProxyBridgeForRoot,
   teardownRegionSelectForRoot,
   teardownTextSelectForRoot,
+  teardownViewportReportForRoot,
   teardownURLHashForRoot,
   teardownAutoClickTimers,
   setupToastClickOutside,
@@ -729,6 +731,7 @@ export class LiveTemplateClient {
       teardownResizeForRoot(this.wrapperElement);
       teardownRegionSelectForRoot(this.wrapperElement);
       teardownTextSelectForRoot(this.wrapperElement);
+      teardownViewportReportForRoot(this.wrapperElement);
       teardownProxyBridgeForRoot(this.wrapperElement);
       teardownIframeAutoHeightForRoot(this.wrapperElement);
       teardownPreviewBridgeForRoot(this.wrapperElement);
@@ -2250,6 +2253,10 @@ export class LiveTemplateClient {
     // wiring; uses window.getSelection rather than a drawn box, so it covers
     // mouse, touch, and keyboard from one path.
     handleTextSelectDirectives(element, (message) => this.send(message));
+    // viewport-report tracks how far the reviewer has scrolled/read and reports
+    // the visible line keys to the server (read-progress). Same send wiring;
+    // dumb reporter, server owns the logic.
+    handleViewportReportDirectives(element, (message) => this.send(message));
     // proxy-bridge is the --external live-site bridge: it relays the proxied
     // page's nav (→ setProxyURL) and scroll (→ pin-layer transform, no server
     // hop) from the cross-origin beacon. Same send-callback wiring; the only
