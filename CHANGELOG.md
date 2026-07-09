@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.5] - 2026-07-09
+
+### Changes
+
+- ci: pin publish npm back to 11 (npm 12 --provenance is broken) (bc68eab)
+
+
+
 ## [v0.16.4] - 2026-07-09
 
 ### Changes
