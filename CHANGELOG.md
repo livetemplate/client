@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.4] - 2026-07-09
+
+### Changes
+
+- chore(ci): bump CI to Node 22, return publish to npm@latest (#146) (c9141ad)
+- ci: pin npm to the 11 line in publish workflow (Node 20 compat) (#145) (f1a0c1d)
+
+
+
 ## [v0.16.3] - 2026-07-09
 
 ### Changes
