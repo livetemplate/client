@@ -26,12 +26,15 @@ jobs:
       # bundled with Node (Node 22 ships npm 10.x). Without this upgrade the npm
       # CLI sends setup-node's placeholder NODE_AUTH_TOKEN to the registry
       # instead of falling through to the OIDC exchange, and publish fails with
-      # a misleading E404 PUT error. Node 22 (Active LTS) satisfies npm@latest's
-      # engines (npm 12 needs node ^22.22.2 || ^24.15.0 || >=26.0.0), so @latest
-      # installs cleanly here — the old Node 20 runner is what previously forced
-      # a pin to npm 11.
+      # a misleading E404 PUT error.
+      #
+      # Pin to npm 11, NOT @latest: npm 12.0.0's `npm publish --provenance` is
+      # broken — its bundled libnpmpublish can't resolve the `sigstore` module
+      # (MODULE_NOT_FOUND), so provenance publishing aborts. npm 11.x publishes
+      # with provenance + OIDC correctly (it's what shipped v0.16.2). Revisit
+      # @latest once npm 12's provenance regression is fixed.
       - name: Upgrade npm to a version that supports OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci
