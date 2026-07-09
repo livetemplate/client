@@ -27,8 +27,14 @@ jobs:
       # CLI sends setup-node's placeholder NODE_AUTH_TOKEN to the registry
       # instead of falling through to the OIDC exchange, and publish fails
       # with a misleading E404 PUT error.
+      #
+      # Pin to the npm 11 line (NOT @latest): npm 12 dropped Node 20 support
+      # (engines: node ^22.22.2 || ^24.15.0 || >=26.0.0), so `npm@latest` on
+      # this Node 20 runner fails to install with EBADENGINE and the publish
+      # job never runs. Every npm 11.x supports Node ^20.17.0 AND OIDC
+      # (>= 11.5.1), so this stays compatible until the runner moves to Node 22+.
       - name: Upgrade npm to a version that supports OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci
