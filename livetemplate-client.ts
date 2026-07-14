@@ -44,6 +44,7 @@ import { ObserverManager } from "./dom/observer-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
+import { reapplyClientOwnedState } from "./dom/client-owned-state";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
@@ -1883,6 +1884,12 @@ export class LiveTemplateClient {
           if (f.getAttribute("data-lvt-autofocused") === "true" && t.hasAttribute("lvt-autofocus")) {
             t.setAttribute("data-lvt-autofocused", "true");
           }
+          // Re-apply state the client owns (lvt-el:toggleClass/addClass/setAttr/...) onto toEl,
+          // so morphdom stamps it back onto the live element instead of overwriting it with the
+          // server's class/attrs. Unlike the guards above this is NOT gated on the directive
+          // still being present — it's persistent state, not a one-shot latch, and a
+          // data-lvt-target'd binding lands on an element that has no lvt-el:* attribute.
+          reapplyClientOwnedState(f, t);
         }
 
         // Track newly-introduced directive attributes so the post-render
