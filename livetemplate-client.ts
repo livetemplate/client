@@ -44,7 +44,7 @@ import { ObserverManager } from "./dom/observer-manager";
 import { LoadingIndicator } from "./dom/loading-indicator";
 import { FormDisabler } from "./dom/form-disabler";
 import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
-import { reapplyClientOwnedState } from "./dom/client-owned-state";
+import { preserveOneShotGuards, reapplyClientOwnedState } from "./dom/client-owned-state";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
 import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
@@ -1859,36 +1859,21 @@ export class LiveTemplateClient {
           return false;
         }
 
-        // Preserve the one-shot scroll/autofocus guards across morphdom. The
-        // guards — data-lvt-iv-done (for lvt-fx:scroll="into-view") and
-        // data-lvt-autofocused (for lvt-autofocus) — are runtime-only attributes
-        // the server never emits, so morphdom would strip them on every render
-        // (toEl lacks them), making BOTH directives re-fire on every unrelated
-        // re-render: re-scrolling the page / re-stealing focus to a stale target
-        // (e.g. a 750ms status poll yanking the viewport back to the last-jumped
-        // comment). Copy the guard onto toEl WHILE its directive is still present
-        // so morphdom keeps it; if the server dropped the directive the guard
-        // falls away naturally and the directive re-arms when re-applied (so
-        // deliberately re-navigating to the same element still scrolls). This is
-        // why lvt-fx:animate is immune — it guards via a WeakSet that survives
-        // morphdom; these two guard via attributes, which do not.
+        // Carry client-created DOM state across the morph. The server never emits any of it, so
+        // toEl lacks it and morphdom's attribute diff would strip it on every render. Both helpers
+        // write onto toEl — the hook runs before morphAttrs, which stamps toEl onto the live
+        // element — and both are registered in dom/client-owned-state.ts:
+        //   - one-shot latch guards (lvt-fx:scroll, lvt-autofocus), gated on their directive so
+        //     they re-arm if the server drops it;
+        //   - the lvt-el: class/attr overlay (toggleClass, setAttr, ...), which is persistent
+        //     state and deliberately NOT directive-gated.
         if (
           fromEl.nodeType === Node.ELEMENT_NODE &&
           toEl.nodeType === Node.ELEMENT_NODE
         ) {
           const f = fromEl as Element;
           const t = toEl as Element;
-          if (f.getAttribute("data-lvt-iv-done") === "1" && t.hasAttribute("lvt-fx:scroll")) {
-            t.setAttribute("data-lvt-iv-done", "1");
-          }
-          if (f.getAttribute("data-lvt-autofocused") === "true" && t.hasAttribute("lvt-autofocus")) {
-            t.setAttribute("data-lvt-autofocused", "true");
-          }
-          // Re-apply state the client owns (lvt-el:toggleClass/addClass/setAttr/...) onto toEl,
-          // so morphdom stamps it back onto the live element instead of overwriting it with the
-          // server's class/attrs. Unlike the guards above this is NOT gated on the directive
-          // still being present — it's persistent state, not a one-shot latch, and a
-          // data-lvt-target'd binding lands on an element that has no lvt-el:* attribute.
+          preserveOneShotGuards(f, t);
           reapplyClientOwnedState(f, t);
         }
 

@@ -36,6 +36,47 @@
  * `data-lvt-target` binding, whose resolved target carries no `lvt-el:*` attribute at all.
  */
 
+/**
+ * One-shot latch guards: runtime-only attributes a directive stamps on the live DOM to record that
+ * it has already fired once. The server never emits them, so morphdom strips them on every render
+ * unless we copy them onto `toEl` — and the directive then re-fires on every unrelated re-render.
+ *
+ * Unlike the overlay below, these ARE gated on their directive still being present: they are
+ * latches, so when the server drops the directive the guard must fall away and the directive
+ * re-arm on re-add (deliberately re-navigating to the same element should scroll again).
+ *
+ * This is a table rather than an if-chain because the chain was how `data-lvt-scroll-sticky` came
+ * to ship broken: it enumerated two of the three guards, and the third was simply forgotten. A new
+ * one-shot directive registers a row here instead of hand-writing another branch.
+ *
+ * (`lvt-fx:animate` needs no row — it latches via a WeakSet, which morphdom cannot touch.)
+ */
+const ONE_SHOT_GUARDS: ReadonlyArray<{
+  /** the runtime-only attribute the directive stamps */
+  guard: string;
+  /** the value it stamps, and the value we restore */
+  value: string;
+  /** preserve the guard only while this directive is still on the element */
+  directive: string;
+}> = [
+  // lvt-fx:scroll="into-view" — else a background poll re-scrolls the viewport to a stale target.
+  { guard: "data-lvt-iv-done", value: "1", directive: "lvt-fx:scroll" },
+  // lvt-autofocus — else any render re-steals focus.
+  { guard: "data-lvt-autofocused", value: "true", directive: "lvt-autofocus" },
+  // lvt-fx:scroll="bottom-sticky" — else every render force-jumps a scrolled-up reader to the
+  // bottom (behavior:"instant"), making the near-bottom threshold check dead code.
+  { guard: "data-lvt-scroll-sticky", value: "1", directive: "lvt-fx:scroll" },
+];
+
+/** Copy any still-armed one-shot guards onto `toEl` so morphdom keeps them. */
+export function preserveOneShotGuards(fromEl: Element, toEl: Element): void {
+  for (const { guard, value, directive } of ONE_SHOT_GUARDS) {
+    if (fromEl.getAttribute(guard) === value && toEl.hasAttribute(directive)) {
+      toEl.setAttribute(guard, value);
+    }
+  }
+}
+
 interface OwnedState {
   /** class → true if the client added it, false if the client removed it. */
   classes: Map<string, boolean>;

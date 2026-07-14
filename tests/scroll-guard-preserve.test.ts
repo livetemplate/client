@@ -69,6 +69,36 @@ describe("one-shot scroll/autofocus guards survive morphdom", () => {
     expect(scrollSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("bottom-sticky does NOT force-jump a scrolled-up user on a later render (guard preserved)", () => {
+    // data-lvt-scroll-sticky is the same kind of one-shot guard. Unpreserved, `initialized` was
+    // false on every render, so bottom-sticky re-ran its first-encounter branch — an unconditional
+    // scrollTo(bottom, behavior:"instant") — yanking back any user who had scrolled up to read
+    // history, and making the near-bottom threshold check dead code.
+    const scrollToSpy = jest.fn();
+    (Element.prototype as any).scrollTo = scrollToSpy;
+    // jsdom has no layout: a viewport far from the bottom (500 - 0 - 100 = 400 > 100 threshold).
+    Object.defineProperty(Element.prototype, "scrollHeight", { value: 500, configurable: true });
+    Object.defineProperty(Element.prototype, "clientHeight", { value: 100, configurable: true });
+    Object.defineProperty(Element.prototype, "scrollTop", { value: 0, configurable: true });
+
+    client.updateDOM(wrapper, {
+      s: [`<div class="log" lvt-fx:scroll="bottom-sticky"><span class="sib">`, `</span></div>`],
+      0: "a",
+    });
+    const log = wrapper.querySelector(".log") as HTMLElement;
+    expect(scrollToSpy).toHaveBeenCalledTimes(1); // first paint pins to the bottom
+    expect(scrollToSpy).toHaveBeenLastCalledWith({ top: 500, behavior: "instant" });
+    expect(log.dataset.lvtScrollSticky).toBe("1");
+
+    // The user has scrolled up. A later render must leave them where they are.
+    client.updateDOM(wrapper, { 0: "b" });
+
+    expect(wrapper.querySelector(".log")).toBe(log); // node reused
+    expect(log.dataset.lvtScrollSticky).toBe("1"); // guard PRESERVED across the morph
+    expect(scrollToSpy).toHaveBeenCalledTimes(1); // NOT force-jumped — the fix
+    expect(wrapper.querySelector(".sib")!.textContent).toBe("b"); // real update still landed
+  });
+
   it("preserves data-lvt-autofocused while lvt-autofocus stays present", () => {
     client.updateDOM(wrapper, {
       s: [`<textarea class="target" lvt-autofocus></textarea><span class="sib">`, `</span>`],
