@@ -151,6 +151,26 @@ describe("client-owned lvt-el state survives morphdom", () => {
     expect((wrapper.querySelector(".tb-dropdown") as HTMLElement).classList.contains("open")).toBe(false);
   });
 
+  it("lets setAttr:class and toggleClass coexist without stomping each other", () => {
+    // setAttr writes the whole class attribute; toggleClass writes one token. The overlay applies
+    // attrs before classes so the wholesale write lands first and the token layers on top.
+    client.updateDOM(wrapper, {
+      s: [`<div class="row"></div><span class="sib">`, `</span>`],
+      0: "a",
+    });
+    const row = wrapper.querySelector(".row") as HTMLElement;
+
+    executeAction(row, "setAttr", "class:row selected");
+    executeAction(row, "toggleClass", "open");
+
+    client.updateDOM(wrapper, { 0: "b" });
+
+    const after = wrapper.querySelector("div") as HTMLElement;
+    expect(after.classList.contains("selected")).toBe(true); // setAttr's value survives
+    expect(after.classList.contains("open")).toBe(true); // and the toggled class wasn't stomped
+    expect(wrapper.querySelector(".sib")!.textContent).toBe("b");
+  });
+
   it("does not leak one element's state onto another", () => {
     const recorded = document.createElement("div");
     executeAction(recorded, "addClass", "open");

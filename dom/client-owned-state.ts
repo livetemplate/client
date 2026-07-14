@@ -58,20 +58,32 @@ const ONE_SHOT_GUARDS: ReadonlyArray<{
   value: string;
   /** preserve the guard only while this directive is still on the element */
   directive: string;
+  /**
+   * ...and, when the directive's VALUE selects a mode, only while that mode is still selected.
+   * Two lvt-fx:scroll modes latch separately (into-view and bottom-sticky), so presence of
+   * `lvt-fx:scroll` alone is not enough: if a node switched modes, matching on presence would
+   * carry the old mode's guard over and stop the directive re-arming when the mode came back.
+   */
+  directiveValue?: string;
 }> = [
   // lvt-fx:scroll="into-view" — else a background poll re-scrolls the viewport to a stale target.
-  { guard: "data-lvt-iv-done", value: "1", directive: "lvt-fx:scroll" },
-  // lvt-autofocus — else any render re-steals focus.
+  { guard: "data-lvt-iv-done", value: "1", directive: "lvt-fx:scroll", directiveValue: "into-view" },
+  // lvt-autofocus — else any render re-steals focus. Valueless: presence is the whole directive.
   { guard: "data-lvt-autofocused", value: "true", directive: "lvt-autofocus" },
   // lvt-fx:scroll="bottom-sticky" — else every render force-jumps a scrolled-up reader to the
   // bottom (behavior:"instant"), making the near-bottom threshold check dead code.
-  { guard: "data-lvt-scroll-sticky", value: "1", directive: "lvt-fx:scroll" },
+  { guard: "data-lvt-scroll-sticky", value: "1", directive: "lvt-fx:scroll", directiveValue: "bottom-sticky" },
 ];
 
 /** Copy any still-armed one-shot guards onto `toEl` so morphdom keeps them. */
 export function preserveOneShotGuards(fromEl: Element, toEl: Element): void {
-  for (const { guard, value, directive } of ONE_SHOT_GUARDS) {
-    if (fromEl.getAttribute(guard) === value && toEl.hasAttribute(directive)) {
+  for (const { guard, value, directive, directiveValue } of ONE_SHOT_GUARDS) {
+    if (fromEl.getAttribute(guard) !== value) continue;
+    const stillArmed =
+      directiveValue === undefined
+        ? toEl.hasAttribute(directive)
+        : toEl.getAttribute(directive) === directiveValue;
+    if (stillArmed) {
       toEl.setAttribute(guard, value);
     }
   }
@@ -116,22 +128,15 @@ export function recordAttr(element: Element, name: string, value: string | null)
  * So whatever we put on `toEl` here is what morphdom stamps onto the live DOM.
  *
  * Entries that the server has come to agree with are dropped as we go (see the file header).
+ *
+ * Attributes are applied BEFORE classes on purpose: a whole-attribute write (`lvt-el:setAttr`
+ * with name `class`) replaces the class list wholesale, so it has to land first and let the
+ * per-token class overlay layer on top. The other order would let setAttr stomp the classes the
+ * overlay had just restored.
  */
 export function reapplyClientOwnedState(fromEl: Element, toEl: Element): void {
   const state = ownedState.get(fromEl);
   if (!state) return;
-
-  for (const [className, added] of state.classes) {
-    if (toEl.classList.contains(className) === added) {
-      state.classes.delete(className); // server agrees — it reowns the class
-      continue;
-    }
-    if (added) {
-      toEl.classList.add(className);
-    } else {
-      toEl.classList.remove(className);
-    }
-  }
 
   for (const [name, value] of state.attrs) {
     // getAttribute already returns null for an absent attribute, which is exactly how a
@@ -144,6 +149,18 @@ export function reapplyClientOwnedState(fromEl: Element, toEl: Element): void {
       toEl.removeAttribute(name);
     } else {
       toEl.setAttribute(name, value);
+    }
+  }
+
+  for (const [className, added] of state.classes) {
+    if (toEl.classList.contains(className) === added) {
+      state.classes.delete(className); // server agrees — it reowns the class
+      continue;
+    }
+    if (added) {
+      toEl.classList.add(className);
+    } else {
+      toEl.classList.remove(className);
     }
   }
 

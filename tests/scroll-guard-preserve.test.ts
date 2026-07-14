@@ -99,6 +99,24 @@ describe("one-shot scroll/autofocus guards survive morphdom", () => {
     expect(wrapper.querySelector(".sib")!.textContent).toBe("b"); // real update still landed
   });
 
+  it("re-arms into-view when the SAME node switches scroll mode and comes back", () => {
+    // into-view and bottom-sticky latch separately but share the lvt-fx:scroll attribute — the
+    // MODE lives in its value (directives.ts: `const mode = config`). Preserving a guard on mere
+    // presence of lvt-fx:scroll would carry data-lvt-iv-done across a switch to bottom-sticky, so
+    // when the node returned to into-view it would never scroll again.
+    client.updateDOM(wrapper, { s: [`<div class="target" lvt-fx:scroll="into-view">`, `</div>`], 0: "x" });
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect((wrapper.querySelector(".target") as HTMLElement).dataset.lvtIvDone).toBe("1");
+
+    // Same node, different mode → the into-view latch must NOT survive.
+    client.updateDOM(wrapper, { s: [`<div class="target" lvt-fx:scroll="bottom-sticky">`, `</div>`], 0: "x" });
+    expect((wrapper.querySelector(".target") as HTMLElement).dataset.lvtIvDone).toBeUndefined();
+
+    // Back to into-view → it must scroll again.
+    client.updateDOM(wrapper, { s: [`<div class="target" lvt-fx:scroll="into-view">`, `</div>`], 0: "x" });
+    expect(scrollSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves data-lvt-autofocused while lvt-autofocus stays present", () => {
     client.updateDOM(wrapper, {
       s: [`<textarea class="target" lvt-autofocus></textarea><span class="sib">`, `</span>`],
