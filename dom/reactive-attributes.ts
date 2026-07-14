@@ -24,7 +24,14 @@
  *   - toggleClass: Toggles CSS class(es)
  *   - setAttr: Sets an attribute (name:value format)
  *   - toggleAttr: Toggles a boolean attribute
+ *
+ * Every method except `reset` mutates state the server doesn't know about, so each records what it
+ * did in dom/client-owned-state.ts. Without that record the next morph strips it (the server's
+ * `class`/attrs win), and a dropdown held open with `lvt-el:toggleClass` closes under the user on
+ * any unrelated re-render.
  */
+
+import { recordAttr, recordClass } from "./client-owned-state";
 
 export type ReactiveAction =
   | "reset"
@@ -148,6 +155,7 @@ export function executeAction(
       if (param) {
         const classes = param.split(/\s+/).filter(Boolean);
         element.classList.add(...classes);
+        classes.forEach((c) => recordClass(element, c, true));
       }
       break;
 
@@ -155,13 +163,14 @@ export function executeAction(
       if (param) {
         const classes = param.split(/\s+/).filter(Boolean);
         element.classList.remove(...classes);
+        classes.forEach((c) => recordClass(element, c, false));
       }
       break;
 
     case "toggleClass":
       if (param) {
         const classes = param.split(/\s+/).filter(Boolean);
-        classes.forEach((c) => element.classList.toggle(c));
+        classes.forEach((c) => recordClass(element, c, element.classList.toggle(c)));
       }
       break;
 
@@ -172,13 +181,16 @@ export function executeAction(
           const name = param.substring(0, colonIndex);
           const value = param.substring(colonIndex + 1);
           element.setAttribute(name, value);
+          recordAttr(element, name, value);
         }
       }
       break;
 
     case "toggleAttr":
       if (param) {
-        element.toggleAttribute(param);
+        // toggleAttribute returns true if the attribute is now present. Present boolean
+        // attributes have the empty string as their DOM value.
+        recordAttr(element, param, element.toggleAttribute(param) ? "" : null);
       }
       break;
   }
