@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.18.2] - 2026-07-15
+
+### Changes
+
+- fix(event-delegation): bare-key shortcuts no longer fire under Ctrl/Meta/Alt (117b4fc)
+
+
+
 ## [v0.18.1] - 2026-07-14
 
 ### Changes
