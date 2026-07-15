@@ -26,8 +26,10 @@ const LVT_DRAG_MIME = "application/x-lvt-key";
  * Match a KeyboardEvent against an `lvt-key` filter.
  *
  * The filter is either a bare `KeyboardEvent.key` value ("Enter", "Escape",
- * "j", "+") — matched verbatim, regardless of modifiers, for backward
- * compatibility — or a modifier combo joined by "+", whose FINAL segment is
+ * "j", "+") — matched only when no command modifier (Ctrl/Meta/Alt) is held, so
+ * a bare-letter shortcut never hijacks its browser/OS chord (Ctrl+C copy,
+ * ⌘+F find, …); Shift is allowed since it produces the key itself (Shift+/ → "?")
+ * — or a modifier combo joined by "+", whose FINAL segment is
  * the key and whose leading segments are required modifiers:
  *
  *   Mod              metaKey || ctrlKey  (the platform command key: ⌘ macOS, Ctrl elsewhere)
@@ -47,7 +49,13 @@ export function keyFilterMatches(
   filter: string
 ): { matched: boolean; combo: boolean } {
   if (!filter.includes("+") || filter === "+") {
-    return { matched: e.key === filter, combo: false };
+    // Bare key: match the key itself but never when a command modifier is held,
+    // so native chords (Ctrl+C copy, Ctrl+F find, …) pass through instead of
+    // firing the shortcut. Shift stays allowed — it's part of typing the key.
+    return {
+      matched: e.key === filter && !e.ctrlKey && !e.metaKey && !e.altKey,
+      combo: false,
+    };
   }
   const parts = filter.split("+");
   const key = parts[parts.length - 1];

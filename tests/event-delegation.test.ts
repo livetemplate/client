@@ -1990,19 +1990,29 @@ describe("keyFilterMatches (lvt-key)", () => {
   const ev = (key: string, mods: Partial<KeyboardEventInit> = {}) =>
     new KeyboardEvent("keydown", { key, ...mods });
 
-  it("matches a bare key verbatim regardless of modifiers (back-compat)", () => {
+  it("matches a bare key only when no command modifier is held", () => {
     expect(keyFilterMatches(ev("Enter"), "Enter")).toEqual({
-      matched: true,
-      combo: false,
-    });
-    // A bare "Enter" filter still matches a modified Enter — unchanged from
-    // the old exact-equality behavior, so existing bindings are untouched.
-    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Enter")).toEqual({
       matched: true,
       combo: false,
     });
     expect(keyFilterMatches(ev("Escape"), "Enter").matched).toBe(false);
     expect(keyFilterMatches(ev("j"), "j").matched).toBe(true);
+  });
+
+  it("does NOT fire a bare-key shortcut on its Ctrl/Meta/Alt chord", () => {
+    // A native Ctrl+C copy (or ⌘+C) must not trigger the bare "c" shortcut —
+    // the reviewer is copying selected page text, not commenting on the file.
+    expect(keyFilterMatches(ev("c", { ctrlKey: true }), "c").matched).toBe(false);
+    expect(keyFilterMatches(ev("c", { metaKey: true }), "c").matched).toBe(false);
+    expect(keyFilterMatches(ev("f", { ctrlKey: true }), "f").matched).toBe(false);
+    expect(keyFilterMatches(ev("a", { metaKey: true }), "a").matched).toBe(false);
+    expect(keyFilterMatches(ev("Enter", { metaKey: true }), "Enter").matched).toBe(false);
+    expect(keyFilterMatches(ev("j", { altKey: true }), "j").matched).toBe(false);
+  });
+
+  it("allows Shift on a bare key (Shift+/ types '?')", () => {
+    // The "?" help shortcut is produced by Shift, so Shift must not block it.
+    expect(keyFilterMatches(ev("?", { shiftKey: true }), "?").matched).toBe(true);
   });
 
   it("matches the literal '+' key as a bare filter", () => {
