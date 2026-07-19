@@ -426,7 +426,7 @@ export class UploadHandler {
 
   /**
    * Upload a file as a single multipart POST to the live URL, carrying the
-   * upload_<name>_complete action and the enclosing form fields. The server
+   * upload_<name>_complete action and any lvt-upload-with fields. The server
    * routes the part by the field's configured mode: a Proxied field streams the
    * bytes to OnUpload (zero local-disk staging), a Volume-with-Dir field stages
    * them to Dir. Independent of the WebSocket — Proxied always uses this, and
@@ -453,9 +453,12 @@ export class UploadHandler {
       // Write value fields BEFORE the file part so the server resolves the
       // action regardless of multipart part ordering.
       formData.set("lvt-action", `upload_${entry.uploadName}_complete`);
-      // Then the triggering input's enclosing form fields (e.g. a record id), so
+      // Then the fields marked to travel with the upload (e.g. a record id), so
       // the server can associate the streamed bytes with a record in OnUpload.
       this.appendFormFields(formData, entry);
+      // set(), not append(): if a marked value field happens to share the upload
+      // field's name, the file replaces it. The file part is the whole point of
+      // the request, so it wins the collision.
       formData.set(entry.uploadName, entry.file, entry.file.name);
 
       await this.postMultipartUpload(formData, entry.abortController.signal);
@@ -476,37 +479,49 @@ export class UploadHandler {
   }
 
   /**
-   * appendFormFields serializes the value fields of the form enclosing the
-   * upload's triggering input into formData, ahead of the file part — so a
-   * Proxied OnUpload handler can read them (e.g. a record id) mid-stream. Uses
-   * the browser's native form serialization (successful controls only), skipping
-   * File values (file inputs are sent as the streaming part) and the reserved
-   * lvt-action field. A no-op when the input is outside a form.
+   * appendFormFields serializes the opted-in value fields of the form enclosing
+   * the upload's triggering input into formData, ahead of the file part — so a
+   * Proxied OnUpload handler can read them (e.g. a record id) mid-stream. A
+   * no-op when the input is outside a form or nothing is marked.
    *
-   * A Proxied upload auto-fires on file selection (not an explicit submit), so it
-   * POSTs the whole enclosing form. Password inputs are excluded by name so
-   * credentials in a co-located form never ride along with an upload the user
-   * didn't deliberately submit; keep other sensitive controls out of a form that
-   * contains an auto-upload file input. (A broader opt-in model — only fields
-   * marked to travel — is tracked upstream as a safer-by-default follow-up.)
+   * Opt-in, not opt-out: only fields carrying `lvt-upload-with` travel. A
+   * Proxied upload auto-fires on file selection rather than on an explicit
+   * submit, so the user never gets a submit-time moment to notice what leaves
+   * the page. A denylist fails open — an unanticipated sensitive control (a CSRF
+   * token, a hidden secret, an `autocomplete="current-password"` text input)
+   * rides along silently. An allowlist fails closed: forget to mark the record
+   * id and OnUpload sees a missing field, which is a visible bug rather than a
+   * silent leak.
+   *
+   * The mark is form-scoped, not upload-scoped: a marked field travels with
+   * every upload fired from its form. Marking is by *name*, so marking any one
+   * member of a radio/checkbox group opts in the whole group — the browser's
+   * own successful-control rules then decide which values are actually sent.
    *
    * Values are read here, at upload time (after the upload_start round-trip), not
    * at file-selection time, so edits made between selecting the file and the
    * upload completing are reflected — the freshest form state wins.
+   *
+   * When one selection carries several files, each is POSTed as its own request,
+   * so the marked fields are re-serialized into every one — each request reaches
+   * OnUpload independently and must be self-describing.
    */
   private appendFormFields(formData: FormData, entry: UploadEntry): void {
     const form = entry.sourceInput?.form;
     if (!form) return;
-    // Collect password field names to exclude. Casting to HTMLInputElement is safe
-    // for the type check: only <input> has type="password"; <select>/<textarea>
-    // simply never match and are serialized normally by FormData below.
-    const passwordFields = new Set<string>();
+    // Collect the opted-in names first, then let FormData do the serializing, so
+    // successful-control semantics (unchecked boxes, disabled controls, multi
+    // selects) stay the browser's job rather than ours.
+    const optedIn = new Set<string>();
     for (const el of Array.from(form.elements)) {
-      const input = el as HTMLInputElement;
-      if (input.type === "password" && input.name) passwordFields.add(input.name);
+      const name = (el as HTMLInputElement).name;
+      if (name && el.hasAttribute("lvt-upload-with")) optedIn.add(name);
     }
+    if (optedIn.size === 0) return;
     for (const [name, value] of new FormData(form).entries()) {
-      if (name === "lvt-action" || value instanceof File || passwordFields.has(name)) {
+      // lvt-action is reserved for the action set by the caller, and a marked
+      // file input would double-send its bytes as a value field.
+      if (!optedIn.has(name) || name === "lvt-action" || value instanceof File) {
         continue;
       }
       formData.append(name, value);
