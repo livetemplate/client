@@ -366,6 +366,56 @@ describe("UploadHandler", () => {
       expect(fd.get("tier")).toBeNull();
     });
 
+    it("re-sends the marked fields with every file of a multi-file selection", async () => {
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const proxiedHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const form = document.createElement("form");
+      form.innerHTML =
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+        '<input type="file" name="doc" lvt-upload="doc" multiple>';
+      const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
+
+      await proxiedHandler.startUpload(
+        "doc",
+        [
+          createMockFile("one.png", "first", "image/png"),
+          createMockFile("two.png", "second", "image/png"),
+        ],
+        input
+      );
+      await proxiedHandler.handleUploadStartResponse({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "one.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+          {
+            entry_id: "entry-2",
+            client_name: "two.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      // Each file is POSTed separately, and the marked fields ride along with
+      // every request — each one reaches OnUpload on its own and has to carry
+      // enough context to route its bytes.
+      expect(postMultipart).toHaveBeenCalledTimes(2);
+      for (const [fd] of postMultipart.mock.calls) {
+        expect((fd as FormData).get("id")).toBe("item-42");
+      }
+    });
+
     it("previews locally without uploading when mode is preview", async () => {
       const createObjectURL = jest
         .fn()
