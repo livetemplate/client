@@ -416,6 +416,79 @@ describe("UploadHandler", () => {
       }
     });
 
+    // Fires a chunked (WebSocket) auto-upload from the input named "doc" inside
+    // the given form markup and returns whatever console.warn was called with.
+    const chunkedUploadWarnings = async (formHTML: string): Promise<string[]> => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const chunkedHandler = new UploadHandler(mockSendMessage);
+
+      const form = document.createElement("form");
+      form.innerHTML = formHTML;
+      const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
+
+      await chunkedHandler.startUpload(
+        "doc",
+        [createMockFile("scan.png", "imgdata", "image/png")],
+        input
+      );
+      await chunkedHandler.handleUploadStartResponse({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+      return messages;
+    };
+
+    it("warns that marked fields cannot travel on a chunked upload (#508)", async () => {
+      const warnings = await chunkedUploadWarnings(
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // The chunked transport carries no form fields, so the mark is silently
+      // inert — say so rather than leaving an empty value in the handler with
+      // nothing in the markup to explain it.
+      const relevant = warnings.filter((m) => m.includes("lvt-upload-with"));
+      expect(relevant).toHaveLength(1);
+      expect(relevant[0]).toContain("id");
+      expect(relevant[0]).toContain("chunked");
+    });
+
+    it("stays quiet on a chunked upload when no field is marked", async () => {
+      const warnings = await chunkedUploadWarnings(
+        '<input type="hidden" name="id" value="item-42">' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // Nothing marked means nothing was promised, so there is nothing to warn
+      // about — a warning on every chunked upload would train people to ignore it.
+      expect(warnings.filter((m) => m.includes("lvt-upload-with"))).toHaveLength(0);
+    });
+
+    it("stays quiet on a proxied upload, where marked fields do travel", async () => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      await proxiedUploadFormData(
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // Proxied is always multipart, so the fields arrive and the warning would
+      // be plain wrong.
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+      expect(messages.filter((m) => m.includes("lvt-upload-with"))).toHaveLength(0);
+    });
+
     it("previews locally without uploading when mode is preview", async () => {
       const createObjectURL = jest
         .fn()

@@ -619,11 +619,37 @@ export class UploadHandler {
   }
 
   /**
+   * Warn when a form marks fields with lvt-upload-with but the upload is going
+   * out over the chunked WebSocket transport, which carries no form fields — the
+   * server builds that action's context from an empty map. Without this the
+   * fields simply never arrive and the handler sees empty values, with nothing in
+   * the markup to suggest why. Tracked as livetemplate/livetemplate#508.
+   */
+  private warnIfMarkedFieldsCannotTravel(entry: UploadEntry): void {
+    const form = entry.sourceInput?.form;
+    if (!form) return;
+    const marked = Array.from(form.elements)
+      .filter((el) => el.hasAttribute("lvt-upload-with"))
+      .map((el) => (el as HTMLInputElement).name)
+      .filter(Boolean);
+    if (marked.length === 0) return;
+    console.warn(
+      `Upload "${entry.uploadName}" is using the chunked WebSocket transport, ` +
+        `which does not carry form fields — ${marked.join(", ")} marked ` +
+        `lvt-upload-with will not reach the upload_${entry.uploadName}_complete ` +
+        `handler. Fields travel on the multipart path only (Proxied uploads, and ` +
+        `Volume/Direct when the socket is down). See livetemplate/livetemplate#508.`
+    );
+  }
+
+  /**
    * Upload file in chunks via WebSocket
    */
   private async uploadChunked(entry: UploadEntry): Promise<void> {
     const { file, id } = entry;
     let offset = 0;
+
+    this.warnIfMarkedFieldsCannotTravel(entry);
 
     // Create abort controller for cancellation
     entry.abortController = new AbortController();
