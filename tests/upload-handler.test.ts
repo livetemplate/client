@@ -261,20 +261,16 @@ describe("UploadHandler", () => {
       );
     });
 
-    it("serializes the triggering input's form fields into a proxied upload, before the file", async () => {
+    // Fires a proxied auto-upload from the input named "doc" inside the given
+    // form markup and returns the FormData that was POSTed.
+    const proxiedUploadFormData = async (formHTML: string): Promise<FormData> => {
       const postMultipart = jest.fn().mockResolvedValue(undefined);
       const proxiedHandler = new UploadHandler(mockSendMessage, {
         postMultipartUpload: postMultipart,
       });
 
-      // The file input lives in a form carrying a record id (a value field) and
-      // a second, unrelated file input that must NOT become a value field.
       const form = document.createElement("form");
-      form.innerHTML =
-        '<input type="hidden" name="id" value="item-42">' +
-        '<input type="password" name="secret" value="hunter2">' +
-        '<input type="file" name="other" lvt-upload="other">' +
-        '<input type="file" name="doc" lvt-upload="doc">';
+      form.innerHTML = formHTML;
       const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
 
       const file = createMockFile("scan.png", "imgdata", "image/png");
@@ -293,20 +289,131 @@ describe("UploadHandler", () => {
       });
       await jest.runAllTimersAsync();
 
-      const fd = postMultipart.mock.calls[0][0] as FormData;
-      // The record id rides along as a value field...
+      return postMultipart.mock.calls[0][0] as FormData;
+    };
+
+    it("serializes only the lvt-upload-with fields into a proxied upload, before the file", async () => {
+      const fd = await proxiedUploadFormData(
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+          '<input type="hidden" name="csrf" value="tok-abc">' +
+          '<input type="text" name="note" value="jotting">' +
+          '<input type="password" name="secret" value="hunter2">' +
+          '<input type="file" name="other" lvt-upload="other">' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // The marked record id rides along as a value field...
       expect(fd.get("id")).toBe("item-42");
       // ...ordered before the streamed file part, so OnUpload sees it mid-stream.
       const keys = [...fd.keys()];
       expect(keys.indexOf("id")).toBeLessThan(keys.indexOf("doc"));
+
+      // Everything unmarked stays put. This is the assertion the opt-in contract
+      // exists for: under the old denylist the csrf token and the note both
+      // travelled, and only the password was special-cased out.
+      expect(fd.get("csrf")).toBeNull();
+      expect(fd.get("note")).toBeNull();
+      expect(fd.get("secret")).toBeNull();
+
       // The streamed file is still the file part; the other file input is not
       // serialized as a value field, and the action is untouched.
       expect(fd.get("doc")).toBeInstanceOf(File);
       expect(fd.get("other")).toBeNull();
       expect(fd.get("lvt-action")).toBe("upload_doc_complete");
-      // Password inputs are never serialized into the upload POST — a co-located
-      // credential must not ride along with an auto-fired upload.
-      expect(fd.get("secret")).toBeNull();
+    });
+
+    it("sends no form fields at all when a proxied upload's form marks none", async () => {
+      const fd = await proxiedUploadFormData(
+        '<input type="hidden" name="id" value="item-42">' +
+          '<input type="text" name="note" value="jotting">' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // Unmarked is the default, so the POST carries the action and the file and
+      // nothing else — no field leaves the page without being asked to.
+      expect([...fd.keys()].sort()).toEqual(["doc", "lvt-action"]);
+    });
+
+    it("ignores lvt-upload-with on the reserved action and on file inputs", async () => {
+      const fd = await proxiedUploadFormData(
+        '<input type="hidden" name="lvt-action" value="hijacked" lvt-upload-with>' +
+          '<input type="file" name="other" lvt-upload="other" lvt-upload-with>' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // Marking cannot clobber the action the caller set...
+      expect(fd.getAll("lvt-action")).toEqual(["upload_doc_complete"]);
+      // ...nor smuggle a second file in as a value field.
+      expect(fd.get("other")).toBeNull();
+    });
+
+    it("opts in a whole radio group when any one member is marked", async () => {
+      const fd = await proxiedUploadFormData(
+        '<input type="radio" name="kind" value="scan" lvt-upload-with>' +
+          '<input type="radio" name="kind" value="photo" checked>' +
+          '<input type="checkbox" name="flag" value="on" lvt-upload-with>' +
+          '<input type="radio" name="tier" value="gold" checked>' +
+          '<input type="file" name="doc" lvt-upload="doc">'
+      );
+
+      // Marking is by name, so the checked sibling travels even though the mark
+      // sits on the unchecked one...
+      expect(fd.get("kind")).toBe("photo");
+      // ...the browser's successful-control rules still decide the value, which
+      // is why the marked-but-unchecked box sends nothing...
+      expect(fd.get("flag")).toBeNull();
+      // ...and an entirely unmarked group stays put, checked or not.
+      expect(fd.get("tier")).toBeNull();
+    });
+
+    it("re-sends the marked fields with every file of a multi-file selection", async () => {
+      const postMultipart = jest.fn().mockResolvedValue(undefined);
+      const proxiedHandler = new UploadHandler(mockSendMessage, {
+        postMultipartUpload: postMultipart,
+      });
+
+      const form = document.createElement("form");
+      form.innerHTML =
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+        '<input type="file" name="doc" lvt-upload="doc" multiple>';
+      const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
+
+      await proxiedHandler.startUpload(
+        "doc",
+        [
+          createMockFile("one.png", "first", "image/png"),
+          createMockFile("two.png", "second", "image/png"),
+        ],
+        input
+      );
+      await proxiedHandler.handleUploadStartResponse({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "one.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+          {
+            entry_id: "entry-2",
+            client_name: "two.png",
+            valid: true,
+            auto_upload: true,
+            mode: "proxied",
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      // Each file is POSTed separately, and the marked fields ride along with
+      // every request — each one reaches OnUpload on its own and has to carry
+      // enough context to route its bytes.
+      expect(postMultipart).toHaveBeenCalledTimes(2);
+      for (const [fd] of postMultipart.mock.calls) {
+        expect((fd as FormData).get("id")).toBe("item-42");
+      }
     });
 
     it("previews locally without uploading when mode is preview", async () => {
