@@ -7,24 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.19.1] - 2026-07-19
 
-### Changes
-
-- feat(upload)!: opt-in form fields via lvt-upload-with (#150) (3b14b79)
-
-
-
-## [Unreleased]
-
 ### Changed
 
 - **BREAKING** feat(upload): form fields travel with a Proxied upload only when
   marked `lvt-upload-with`, replacing the previous serialize-everything-except-
-  `type="password"` denylist (livetemplate#452). A Proxied upload auto-fires on
-  file selection, so the old default silently POSTed every co-located field —
+  `type="password"` denylist (#150, livetemplate#452). A Proxied upload auto-fires
+  on file selection, so the old default silently POSTed every co-located field —
   CSRF tokens, hidden secrets — to the upload endpoint with no submit-time moment
   for the user to notice. **Migration:** add `lvt-upload-with` to each field an
   `OnUpload` handler reads (typically a record id); an unmarked field now
   surfaces as a missing value in the handler rather than as a silent leak.
+
+  This release jumps 0.18.2 → 0.19.1 to re-sync the client's major.minor with the
+  core library (livetemplate v0.19.1), which `scripts/release.sh` enforces.
 
 ## [v0.18.2] - 2026-07-15
 
