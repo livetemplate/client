@@ -7,11 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.20.0] - 2026-07-20
 
-### Changes
+### Fixed
 
-- fix(upload): warn when marked fields cannot travel on a chunked upload (#152) (cdf1c3f)
-- fix(release): run tests before mutating, restore files on abort (#151) (769f77e)
-- docs(changelog): curate the v0.19.1 entry after release.sh (588863e)
+- **A field marked `lvt-upload-with` that cannot reach the handler now says so.**
+  Fields only ever travel on the multipart upload path. Proxied always uses it,
+  so `OnUpload` always receives them — but Volume goes over the WebSocket in
+  chunks while the socket is up (falling back to multipart when it is down), and
+  Direct PUTs straight to storage and completes with a metadata-only message.
+  Neither carries form fields, so the server builds the
+  `upload_<name>_complete` action's context from an empty map and the handler
+  sees nothing, with nothing in the markup to explain it. The client now warns
+  on both transports, naming the fields and the remedy — which differs: Volume
+  delivers them on its multipart fallback, Direct never delivers them at all.
+  (#152, livetemplate#508)
+
+### Internal
+
+- `scripts/release.sh` runs tests and the build before touching VERSION,
+  package.json or CHANGELOG.md, and restores those files when a run aborts
+  before committing. Previously a failing test left them rewritten, and since
+  the script refuses to start on a dirty tree, the next attempt failed for a
+  reason unrelated to the first. (#151)
+
+  This release jumps 0.19.1 → 0.20.0 to track the core library's v0.20.0, which
+  `scripts/release.sh` enforces on major.minor.
 
 
 
