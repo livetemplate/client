@@ -128,11 +128,56 @@ bump_version() {
     echo "${major}.${minor}.${patch}"
 }
 
+# Restore the release-managed files if the run aborts between writing them and
+# committing. Without this, a failure in verify_build, verify_package_contents or
+# `gh release create` leaves VERSION, package.json, package-lock.json and
+# CHANGELOG.md rewritten in the worktree — and main() refuses to start on a dirty
+# tree, so the next attempt fails for a reason unrelated to why this one did.
+release_files_written=false
+release_committed=false
+
+restore_release_files() {
+    [ "$release_files_written" = true ] || return 0
+    [ "$release_committed" = false ] || return 0
+
+    log_warn "Release aborted before committing — restoring version and changelog files"
+
+    # Restore from HEAD, not from the index: commit_and_tag stages these files
+    # before committing, so if the commit itself fails they are already staged
+    # and a plain `git checkout --` would restore them from the index — copying
+    # the modified versions back over themselves.
+    #
+    # One path per invocation. `git checkout HEAD -- a b` resolves the pathspec
+    # first and bails before touching the worktree if any entry is missing from
+    # HEAD, so a single call would restore *none* of them when one is untracked.
+    # git's stderr is left visible; a generic "couldn't restore" would send the
+    # next person down the wrong trail.
+    local f
+    for f in VERSION package.json package-lock.json CHANGELOG.md; do
+        if git cat-file -e "HEAD:$f" 2>/dev/null; then
+            git checkout HEAD -- "$f" || \
+                log_warn "Could not restore $f; revert it by hand before retrying"
+        elif [ -f "$f" ]; then
+            # Absent from HEAD but on disk means this run created it: main()
+            # refuses to start on a dirty tree and `git status --porcelain`
+            # lists untracked files, so it cannot have pre-existed. Removing it
+            # restores the exact pre-run state. Both steps are needed —
+            # commit_and_tag may already have staged it, and a bare `rm` would
+            # leave an "A " entry that still counts as dirty.
+            git rm -f --quiet --ignore-unmatch -- "$f" 2>/dev/null || true
+            rm -f "$f"
+            log_warn "Removed $f, which this run created"
+        fi
+    done
+}
+trap restore_release_files EXIT
+
 # Update all version files
 update_versions() {
     local new_version=$1
 
     log_step "Updating VERSION file to $new_version"
+    release_files_written=true
     echo "$new_version" > VERSION
 
     log_step "Updating package.json to $new_version"
@@ -202,6 +247,11 @@ Release @livetemplate/client v$new_version
 This release follows the core library version: $(get_major_minor "$new_version").x
 
 🤖 Generated with automated release script"
+
+    # Set immediately after the commit: from here the changes live in history,
+    # so restoring the worktree from HEAD would be a no-op at best and would
+    # discard the release commit's content at worst.
+    release_committed=true
 
     log_step "Creating git tag v$new_version"
     git tag -a "v$new_version" -m "Release v$new_version"
@@ -599,9 +649,14 @@ main() {
 
     # Execute release steps. Note: npm publish runs in CI (publish.yml),
     # triggered by the GitHub release created in publish_github below.
+    # Tests and the build run first, on the pre-bump tree, so a failing test
+    # aborts before VERSION/package.json/CHANGELOG.md are touched at all. The
+    # dist bundle embeds no version string, so building ahead of the bump is
+    # equivalent. verify_build still runs after, since it asserts package.json
+    # carries the new version.
+    build_and_test
     update_versions "$new_version"
     generate_changelog "$new_version"
-    build_and_test
     verify_build "$new_version"
     verify_package_contents
     commit_and_tag "$new_version"
