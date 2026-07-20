@@ -5,6 +5,16 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.20.0] - 2026-07-20
+
+### Changes
+
+- fix(upload): warn when marked fields cannot travel on a chunked upload (#152) (cdf1c3f)
+- fix(release): run tests before mutating, restore files on abort (#151) (769f77e)
+- docs(changelog): curate the v0.19.1 entry after release.sh (588863e)
+
+
+
 ## [v0.19.1] - 2026-07-19
 
 ### Changed
