@@ -489,6 +489,52 @@ describe("UploadHandler", () => {
       expect(messages.filter((m) => m.includes("lvt-upload-with"))).toHaveLength(0);
     });
 
+    it("warns on a Direct upload, which never carries fields on any path (#508)", async () => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const mockUploader = { upload: jest.fn().mockResolvedValue(undefined) };
+      const directHandler = new UploadHandler(mockSendMessage);
+      directHandler.registerUploader("mock", mockUploader);
+
+      const form = document.createElement("form");
+      form.innerHTML =
+        '<input type="hidden" name="id" value="item-42" lvt-upload-with>' +
+        '<input type="file" name="doc" lvt-upload="doc">';
+      const input = form.querySelector('input[name="doc"]') as HTMLInputElement;
+
+      await directHandler.startUpload(
+        "doc",
+        [createMockFile("scan.png", "imgdata", "image/png")],
+        input
+      );
+      await directHandler.handleUploadStartResponse({
+        upload_name: "doc",
+        entries: [
+          {
+            entry_id: "entry-1",
+            client_name: "scan.png",
+            valid: true,
+            auto_upload: true,
+            mode: "direct",
+            external: { uploader: "mock", url: "https://cdn.example/scan.png" },
+          },
+        ],
+      });
+      await jest.runAllTimersAsync();
+
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+
+      // Direct PUTs straight to storage and completes with a metadata-only
+      // message, so marked fields reach the handler on NO path — not even with
+      // the socket down, which is the multipart fallback Volume gets and Direct
+      // does not. The remedy has to differ accordingly.
+      const relevant = messages.filter((m) => m.includes("lvt-upload-with"));
+      expect(relevant).toHaveLength(1);
+      expect(relevant[0]).toContain("direct-to-storage");
+      expect(relevant[0]).toContain("controller state");
+      expect(relevant[0]).not.toContain("when the socket is down");
+    });
+
     it("previews locally without uploading when mode is preview", async () => {
       const createObjectURL = jest
         .fn()
