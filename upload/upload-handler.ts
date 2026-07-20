@@ -358,6 +358,8 @@ export class UploadHandler {
     entry: UploadEntry,
     meta: ExternalUploadMeta
   ): Promise<void> {
+    this.warnIfMarkedFieldsCannotTravel(entry, "direct-to-storage");
+
     try {
       const uploader = this.uploaders.get(meta.uploader);
       if (!uploader) {
@@ -619,11 +621,51 @@ export class UploadHandler {
   }
 
   /**
+   * Warn when a form marks fields with lvt-upload-with but the upload is leaving
+   * by a transport that carries no form fields. Only the multipart POST carries
+   * them: the chunked WebSocket path sends bytes and entry ids, and the Direct
+   * path PUTs straight to storage and completes with a metadata-only message —
+   * in both cases the server builds the action's context from an empty map.
+   * Without this the fields simply never arrive and the handler sees empty
+   * values, with nothing in the markup to suggest why.
+   *
+   * transport names the path taken, since the remedy differs: a Volume upload
+   * does carry fields when it falls back to multipart, while Direct never does
+   * on any path. Tracked as livetemplate/livetemplate#508.
+   */
+  private warnIfMarkedFieldsCannotTravel(
+    entry: UploadEntry,
+    transport: "chunked WebSocket" | "direct-to-storage"
+  ): void {
+    const form = entry.sourceInput?.form;
+    if (!form) return;
+    const marked = Array.from(form.elements)
+      .filter((el) => el.hasAttribute("lvt-upload-with"))
+      .map((el) => (el as HTMLInputElement).name)
+      .filter(Boolean);
+    if (marked.length === 0) return;
+    const remedy =
+      transport === "chunked WebSocket"
+        ? `Fields travel on the multipart path only — Proxied uploads, and this ` +
+          `field when the socket is down.`
+        : `Fields travel on the multipart path only, which Direct never uses; ` +
+          `read the context from controller state instead.`;
+    console.warn(
+      `Upload "${entry.uploadName}" is using the ${transport} transport, which ` +
+        `does not carry form fields — ${marked.join(", ")} marked lvt-upload-with ` +
+        `will not reach the upload_${entry.uploadName}_complete handler. ` +
+        `${remedy} See livetemplate/livetemplate#508.`
+    );
+  }
+
+  /**
    * Upload file in chunks via WebSocket
    */
   private async uploadChunked(entry: UploadEntry): Promise<void> {
     const { file, id } = entry;
     let offset = 0;
+
+    this.warnIfMarkedFieldsCannotTravel(entry, "chunked WebSocket");
 
     // Create abort controller for cancellation
     entry.abortController = new AbortController();
