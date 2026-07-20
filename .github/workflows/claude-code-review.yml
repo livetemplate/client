@@ -49,19 +49,38 @@ jobs:
       # The run's turn-by-turn log, kept whatever the outcome. When the review
       # fails, the job log reports only the aggregate — `is_error: true` with a
       # `permission_denials_count` — and never names the tool that was denied,
-      # which is the one fact needed to fix it. That detail lives in this file,
-      # written to the runner's temp dir and otherwise discarded with the runner.
-      # Runs are cheap to re-trigger but not to reproduce: which tool the model
-      # reaches for varies per PR, so a failure not captured when it happens may
-      # not recur on demand.
+      # which is the one fact needed to fix it.
+      #
+      # The file is located rather than assumed. The action's `execution_file`
+      # output is empty even on success, and the path it prints during the run
+      # ("Log saved to $RUNNER_TEMP/claude-execution-output.json") holds nothing
+      # by the time a later step looks. So search, and when the search comes up
+      # empty say where it looked — a step that silently uploads nothing is worse
+      # than no step, since it reads as "captured" on the next failure.
+      - name: Collect review execution log
+        if: always()
+        run: |
+          mkdir -p /tmp/claude-review-log
+          found=$(find "${RUNNER_TEMP}" "${GITHUB_WORKSPACE}/.." -maxdepth 4 \
+            -name 'claude-execution-output*.json' -o -name 'claude-*output*.json' 2>/dev/null | head -20)
+          if [ -n "$found" ]; then
+            echo "$found" | while read -r f; do
+              cp "$f" "/tmp/claude-review-log/$(echo "$f" | tr '/' '_')" 2>/dev/null || true
+            done
+            echo "Collected:"; ls -la /tmp/claude-review-log
+          else
+            echo "No execution log found. Searched RUNNER_TEMP=${RUNNER_TEMP} and the workspace parent."
+            echo "--- RUNNER_TEMP contents ---"
+            ls -la "${RUNNER_TEMP}" 2>/dev/null | head -40 || echo "(unreadable)"
+            echo "--- *.json anywhere under RUNNER_TEMP ---"
+            find "${RUNNER_TEMP}" -name '*.json' -maxdepth 3 2>/dev/null | head -20 || true
+          fi
+
       - name: Upload review execution log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-review-execution-log
-          # Falls back to the action's documented temp path: a step that FAILED
-          # never sets its outputs, so execution_file is empty in exactly the
-          # case this upload exists for.
-          path: ${{ steps.claude-review.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+          path: /tmp/claude-review-log/
           if-no-files-found: warn
           retention-days: 14
