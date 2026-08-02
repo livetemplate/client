@@ -172,7 +172,7 @@ restore_release_files() {
     # git's stderr is left visible; a generic "couldn't restore" would send the
     # next person down the wrong trail.
     local f
-    for f in VERSION package.json package-lock.json CHANGELOG.md; do
+    for f in VERSION package.json package-lock.json CHANGELOG.md README.md; do
         if git cat-file -e "HEAD:$f" 2>/dev/null; then
             git checkout HEAD -- "$f" || \
                 log_warn "Could not restore $f; revert it by hand before retrying"
@@ -201,6 +201,19 @@ update_versions() {
 
     log_step "Updating package.json to $new_version"
     npm version "$new_version" --no-git-tag-version --allow-same-version > /dev/null 2>&1
+
+    # The README's CDN snippets carry a literal version, and nothing was
+    # updating them: they advertised 0.1.0 for nineteen minor releases, and the
+    # docs site mirrors this file verbatim to /client/, so every reader there
+    # was told to load a bundle from 2024. A literal that no release step owns
+    # will always drift, so the release owns it now.
+    if [ -f README.md ]; then
+        log_step "Updating README CDN pins to $new_version"
+        sed -i.bak -E \
+            "s#(@livetemplate/client@)[0-9]+\.[0-9]+\.[0-9]+#\1${new_version}#g" \
+            README.md
+        rm -f README.md.bak
+    fi
 
     log_info "All version files updated to $new_version"
 }
