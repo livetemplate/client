@@ -5,6 +5,18 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.25.0] - 2026-08-15
+
+### Changes
+
+- docs(changelog): merge three orphaned [Unreleased] sections into their releases (#158) (9ac9b56)
+- docs(readme): say what the client does, not what it enables (#157) (2c3978b)
+- docs: pin the README CDN snippets, and make the release own them (#156) (ccae125)
+- fix(release): promote the curated [Unreleased] instead of regenerating (#154) (a1d43e5)
+- docs(changelog): curate the v0.20.0 entry after release.sh (6281b3f)
+
+
+
 ## [v0.20.0] - 2026-07-20
 
 ### Fixed
