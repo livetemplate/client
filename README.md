@@ -6,7 +6,7 @@ TypeScript/JavaScript client library for LiveTemplate - reactive HTML over the w
 
 ## Overview
 
-The LiveTemplate client enables reactive web applications by efficiently applying tree-based HTML updates from the server. It uses DOM morphing, intelligent static content caching, and WebSocket transport for real-time interactivity.
+The server sends tree-based HTML updates; this client applies them to the DOM. It morphs the existing nodes rather than replacing them, keeps the static parts of the page cached, and carries actions and updates over a WebSocket.
 
 ## Features
 
@@ -138,7 +138,7 @@ The client supports six native HTML5 drag events as `lvt-on:*` bindings: `dragst
 - **Throttle dragover**: `dragover` fires at ~60 Hz. Add `lvt-mod:throttle="100"` (or higher) to any `dragover` handler bound to a real action, or use the marker pattern.
 - **v1 limitation**: `effectAllowed` and `dropEffect` are hardcoded to `"move"`. Copy/link drag semantics are not yet configurable.
 
-## How It Works
+## How it works
 
 1. **Initial Render**: Client fetches full HTML from server, caches static structure
 2. **Updates**: Server sends only changed dynamic values as tree updates
