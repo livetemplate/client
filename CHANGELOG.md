@@ -512,7 +512,6 @@ For the full design rationale, see the [attribute-reduction proposal](https://gi
 
 
 
-## [Unreleased]
 
 ### Added
 
@@ -586,7 +585,6 @@ The `__navigate__` in-band action is a no-op on server versions before livetempl
 
 
 
-## [Unreleased]
 
 ### Added
 
@@ -602,7 +600,6 @@ The `__navigate__` in-band action is a no-op on server versions before livetempl
 
 
 
-## [Unreleased]
 
 ### Added
 
