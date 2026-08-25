@@ -1,0 +1,378 @@
+/**
+ * Attribute registry — the public extension point for lvt-* attributes.
+ *
+ * These tests cover the contract an external author programs against. The
+ * built-ins' own behaviour is covered by the pre-existing suites (they were not
+ * rewritten by the registry migration, only re-dispatched), so nothing here
+ * duplicates them.
+ */
+
+import {
+  attachRegistryRoot,
+  detachRegistryRoot,
+  disposeHandlers,
+  getRegisteredAttributes,
+  isDeclarative,
+  registerAttribute,
+  resolveCategory,
+  runHandlers,
+  teardownHandler,
+  __resetRegistryForTesting,
+  type AttributeHandler,
+  type ElementContext,
+  type RegistryRoot,
+  type SendFn,
+} from "../attribute-registry";
+
+const noopSend: SendFn = () => {};
+
+function makeRoot(html: string): Element {
+  document.body.innerHTML = `<div data-lvt-id="lvt-test">${html}</div>`;
+  return document.body.firstElementChild as Element;
+}
+
+/**
+ * One render pass, through the SAME entry point updateDOM uses. Calling
+ * runHandlers rather than re-implementing the gate-and-dispatch loop is what
+ * makes these tests pin production behaviour instead of a copy of it.
+ */
+function render(root: Element, domChanged = true, send: SendFn = noopSend): void {
+  runHandlers(getRegisteredAttributes(), { scanRoot: root, wrapperRoot: root }, send, domChanged);
+}
+
+/** A live client, as the registry sees one. Detached automatically in afterEach. */
+function liveRoot(root: Element): RegistryRoot {
+  const registryRoot: RegistryRoot = { root: () => root, send: noopSend };
+  attachedRoots.push(registryRoot);
+  return registryRoot;
+}
+
+let attachedRoots: RegistryRoot[] = [];
+let warn: jest.SpyInstance;
+let error: jest.SpyInstance;
+
+beforeEach(() => {
+  __resetRegistryForTesting();
+  warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  error = jest.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  // Detach here rather than at the end of each test: an assertion that fails
+  // mid-test would otherwise leak a live root into the next one.
+  for (const root of attachedRoots) detachRegistryRoot(root);
+  attachedRoots = [];
+  warn.mockRestore();
+  error.mockRestore();
+  document.body.innerHTML = "";
+});
+
+describe("declarative layer", () => {
+  it("fires onElementAdded exactly once across repeated renders", () => {
+    const added = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added });
+
+    const root = makeRoot(`<button lvt-x:copy="https://example.test">Copy</button>`);
+    render(root);
+    render(root);
+    render(root);
+
+    expect(added).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches an attribute containing ':' without the author escaping anything", () => {
+    const added = jest.fn();
+    // The author writes a plain name. If the framework did not escape it, this
+    // selector would throw SyntaxError inside querySelectorAll.
+    registerAttribute({ attribute: "lvt-x:deep:name", onElementAdded: added });
+
+    const root = makeRoot(`<div lvt-x:deep:name="v"></div>`);
+    render(root);
+
+    expect(added).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onElementRemoved when a server diff drops the attribute", () => {
+    const removed = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {}, onElementRemoved: removed });
+
+    const root = makeRoot(`<button lvt-x:copy="a">Copy</button>`);
+    render(root);
+    expect(removed).not.toHaveBeenCalled();
+
+    root.firstElementChild!.removeAttribute("lvt-x:copy");
+    render(root);
+
+    expect(removed).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onElementRemoved when the element detaches", () => {
+    const removed = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {}, onElementRemoved: removed });
+
+    const root = makeRoot(`<button lvt-x:copy="a">Copy</button>`);
+    render(root);
+
+    root.innerHTML = "";
+    render(root);
+
+    expect(removed).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-adds an element that lost and regained the attribute", () => {
+    const added = jest.fn();
+    const removed = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added, onElementRemoved: removed });
+
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    const el = root.firstElementChild!;
+    render(root);
+    el.removeAttribute("lvt-x:copy");
+    render(root);
+    el.setAttribute("lvt-x:copy", "b");
+    render(root);
+
+    expect(added).toHaveBeenCalledTimes(2);
+    expect(removed).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns on an empty value and does not invoke the callback", () => {
+    const added = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added });
+
+    render(makeRoot(`<button lvt-x:copy=""></button>`));
+
+    expect(added).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(" ")).toContain("lvt-x:copy");
+  });
+
+  it("re-reads ctx.value after a re-render rather than capturing it", () => {
+    let ctx: ElementContext | undefined;
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: (_el, c) => { ctx = c; } });
+
+    const root = makeRoot(`<button lvt-x:copy="first"></button>`);
+    render(root);
+    expect(ctx!.value).toBe("first");
+
+    // A server re-render changes the value; the listener captured ctx long ago.
+    root.firstElementChild!.setAttribute("lvt-x:copy", "second");
+    expect(ctx!.value).toBe("second");
+  });
+
+  it("resolves ctx.send to the transport live at call time, not at wiring time", () => {
+    let ctx: ElementContext | undefined;
+    registerAttribute({
+      attribute: "lvt-x:rating",
+      needsServerChannel: true,
+      onElementAdded: (_el, c) => { ctx = c; },
+    });
+
+    const root = makeRoot(`<div lvt-x:rating="SetRating"></div>`);
+    const first: SendFn = jest.fn();
+    render(root, true, first);
+
+    // Reconnect rebuilds the transport; the captured ctx must follow it.
+    const second: SendFn = jest.fn();
+    render(root, true, second);
+
+    ctx!.send!({ action: "SetRating", data: { stars: 4 } });
+    expect(second).toHaveBeenCalledWith({ action: "SetRating", data: { stars: 4 } });
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it("withholds send from a handler that did not ask for it", () => {
+    let ctx: ElementContext | undefined;
+    registerAttribute({ attribute: "lvt-x:visual", onElementAdded: (_el, c) => { ctx = c; } });
+
+    render(makeRoot(`<div lvt-x:visual="v"></div>`), true, jest.fn());
+
+    expect(ctx!.send).toBeUndefined();
+  });
+
+  it("keeps rendering after a handler callback throws", () => {
+    const later = jest.fn();
+    registerAttribute({
+      attribute: "lvt-x:bad",
+      onElementAdded: () => { throw new Error("boom"); },
+    });
+    registerAttribute({ attribute: "lvt-x:good", onElementAdded: later });
+
+    render(makeRoot(`<div lvt-x:bad="a"></div><div lvt-x:good="b"></div>`));
+
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalled();
+  });
+
+  it("reuses one context per element across renders", () => {
+    const seen: unknown[] = [];
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElement: (_el, ctx) => { seen.push(ctx); },
+    });
+
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    render(root);
+    render(root);
+    render(root);
+
+    // Three dispatches, one context: the members are accessors, so a handler
+    // that captured the first one keeps reading current values through it.
+    expect(seen).toHaveLength(3);
+    expect(new Set(seen).size).toBe(1);
+  });
+
+  it("sweeps tracked elements on teardown", () => {
+    const removed = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {}, onElementRemoved: removed });
+
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    render(root);
+    teardownHandler(getRegisteredAttributes()[0], root);
+
+    expect(removed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dispose", () => {
+  it("runs root-less cleanup for handlers that declare it", () => {
+    const disposed = jest.fn();
+    registerAttribute({ name: "global-state", selectors: ["*"], setup: () => {}, dispose: disposed });
+    registerAttribute({ name: "no-global-state", selectors: ["*"], setup: () => {} });
+
+    disposeHandlers(getRegisteredAttributes());
+
+    expect(disposed).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps disposing after one handler throws", () => {
+    const later = jest.fn();
+    registerAttribute({
+      name: "bad", selectors: ["*"], setup: () => {},
+      dispose: () => { throw new Error("boom"); },
+    });
+    registerAttribute({ name: "good", selectors: ["*"], setup: () => {}, dispose: later });
+
+    disposeHandlers(getRegisteredAttributes());
+
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalled();
+  });
+});
+
+describe("category", () => {
+  it("derives fire-on-change when onElement is declared", () => {
+    expect(resolveCategory({ attribute: "lvt-x:a", onElement: () => {} })).toBe("fire-on-change");
+  });
+
+  it("derives wire-idempotent for wiring-only handlers", () => {
+    expect(resolveCategory({ attribute: "lvt-x:a", onElementAdded: () => {} })).toBe("wire-idempotent");
+  });
+
+  it("lets an explicit category win over the derivation", () => {
+    expect(
+      resolveCategory({ attribute: "lvt-x:a", onElementAdded: () => {}, category: "always" })
+    ).toBe("always");
+  });
+
+  it("skips wire-idempotent handlers when the render added nothing", () => {
+    const added = jest.fn();
+    const perRender = jest.fn();
+    registerAttribute({ attribute: "lvt-x:wire", onElementAdded: added });
+    registerAttribute({ attribute: "lvt-x:live", onElement: perRender });
+
+    const root = makeRoot(`<div lvt-x:wire="a"></div><div lvt-x:live="b"></div>`);
+    render(root, false);
+
+    expect(added).not.toHaveBeenCalled();
+    expect(perRender).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("registration", () => {
+  it("warns when two handlers claim the same name, and keeps both", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+
+    expect(getRegisteredAttributes()).toHaveLength(2);
+    expect(warn.mock.calls.flat().join(" ")).toContain("already claims this name");
+  });
+
+  it("folds case when comparing names, because the DOM does", () => {
+    registerAttribute({ attribute: "lvt-x:doThing", onElementAdded: () => {} });
+    registerAttribute({ attribute: "lvt-x:dothing", onElementAdded: () => {} });
+
+    expect(warn.mock.calls.flat().join(" ")).toContain("already claims this name");
+  });
+
+  it("does NOT warn for two low-level handlers that both walk '*'", () => {
+    // The two built-in descendant walkers are a legitimate overlap: `selectors`
+    // is descriptive and the warning must not key on it, or the registry warns
+    // about its own core handlers on every page load.
+    registerAttribute({ name: "walker-a", selectors: ["*"], category: "wire-idempotent", setup: () => {} });
+    registerAttribute({ name: "walker-b", selectors: ["*"], category: "wire-idempotent", setup: () => {} });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("rejects a handler declaring both attribute and selectors", () => {
+    registerAttribute({ attribute: "lvt-x:a", selectors: ["[lvt-x\\:a]"], setup: () => {} } as any);
+
+    expect(getRegisteredAttributes()).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(" ")).toContain("never both");
+  });
+
+  it("rejects a low-level handler with no setup()", () => {
+    registerAttribute({ name: "x", selectors: ["[x]"] } as any);
+    expect(getRegisteredAttributes()).toHaveLength(0);
+  });
+
+  it("rejects a handler that is neither declarative nor low-level", () => {
+    registerAttribute({ name: "x" } as any);
+    expect(getRegisteredAttributes()).toHaveLength(0);
+  });
+
+  it("catches up immediately when registered after a client is live", () => {
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    const registryRoot = liveRoot(root);
+    attachRegistryRoot(registryRoot);
+
+    const added = jest.fn();
+    // No render() call: registration alone must reach the live DOM, because a
+    // second bundle can only load after core has already connected.
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added });
+
+    expect(added).toHaveBeenCalledTimes(1);
+  });
+
+  it("catches a low-level handler up too", () => {
+    const root = makeRoot(`<div></div>`);
+    const registryRoot = liveRoot(root);
+    attachRegistryRoot(registryRoot);
+
+    const setup = jest.fn();
+    registerAttribute({ name: "late", selectors: ["*"], category: "fire-on-change", setup });
+
+    expect(setup).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not catch up after the client detaches", () => {
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    const registryRoot = liveRoot(root);
+    attachRegistryRoot(registryRoot);
+    // The detach is the subject here, not cleanup — afterEach's detach would
+    // happen far too late to prove anything.
+    detachRegistryRoot(registryRoot);
+
+    const added = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added });
+
+    expect(added).not.toHaveBeenCalled();
+  });
+
+  it("classifies the two layers", () => {
+    const decl: AttributeHandler = { attribute: "lvt-x:a" };
+    const low: AttributeHandler = { name: "b", selectors: ["[b]"], category: "always", setup: () => {} };
+    expect(isDeclarative(decl)).toBe(true);
+    expect(isDeclarative(low)).toBe(false);
+  });
+});
