@@ -131,19 +131,20 @@ export class LiveTemplateClient {
   private instanceHandlers: AttributeHandler[];
 
   /**
-   * This client's face to the registry, so a handler registered AFTER connect
-   * can immediately catch up against the live DOM instead of waiting for the
-   * next render. Accessors, not fields: the wrapper is reassigned on
-   * cross-handler navigation, and `send` must resolve the transport that is
-   * live at call time rather than the one that existed at attach time.
-   */
-  /**
    * One `send` for the client's whole life, so the per-render dispatch does not
-   * allocate a closure (and the registry's per-handler transport cache does not
-   * see a "new" transport) on every render.
+   * allocate a closure on every render. It delegates to `this.send`, which
+   * resolves the transport at call time — so a context holding this stays
+   * correct across a reconnect without the registry re-keying anything.
    */
   private readonly boundSend: SendFn = (message) => this.send(message);
 
+  /**
+   * This client's face to the registry, so a handler registered AFTER connect
+   * can immediately catch up against the live DOM instead of waiting for the
+   * next render. An accessor, not a field: the wrapper is reassigned on
+   * cross-handler navigation, so reading it at call time is what keeps a
+   * late-registered handler pointed at the current one.
+   */
   private registryRoot: RegistryRoot = {
     root: () => this.wrapperElement,
     send: (message) => this.send(message),
