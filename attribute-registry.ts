@@ -127,7 +127,14 @@ export interface SetupContext {
 }
 
 export interface DeclarativeHandler extends BaseHandler {
-  /** A plain attribute name, e.g. "lvt-x:copy". Never a CSS selector. */
+  /**
+   * A plain attribute name, e.g. "lvt-x:copy". Never a CSS selector.
+   *
+   * An element is claimed while it carries this attribute WITH a non-empty
+   * value. Emptying the value is treated exactly like removing the attribute:
+   * the value is the handler's configuration, so an empty one means unarmed,
+   * and `onElementRemoved` fires.
+   */
   attribute: string;
   selectors?: undefined;
 
@@ -135,7 +142,15 @@ export interface DeclarativeHandler extends BaseHandler {
   onElementAdded?(el: Element, ctx: ElementContext): void;
   /** Every run, for every currently matching element. */
   onElement?(el: Element, ctx: ElementContext): void;
-  /** The element detached, or lost the attribute via a server diff. */
+  /**
+   * The element detached, or its attribute was removed or emptied by a server
+   * diff. Fires on every render — it is never deferred by `category`.
+   *
+   * Requires `onElementAdded` or `onElement`: elements are only tracked when
+   * one of those claims them, so this callback on its own could never fire.
+   * Registration rejects that shape rather than accepting a handler that does
+   * nothing forever.
+   */
   onElementRemoved?(el: Element): void;
 }
 
@@ -216,6 +231,18 @@ const currentRoots = new WeakMap<AttributeHandler, { scanRoot: Element; wrapperR
  * declarative handler, its escaped attribute selector.
  */
 const resolved = new WeakMap<AttributeHandler, { category: HandlerCategory; selector: string }>();
+
+/**
+ * Elements already warned about for an empty attribute value.
+ *
+ * The empty-value check runs on every render (an element with no value is
+ * deliberately never tracked, so it can heal the moment a real value arrives),
+ * which without this would emit one warning per render for as long as the
+ * element persists — once per keystroke on a template that re-renders on
+ * input. Cleared when the element heals, so a value that empties again is
+ * reported again.
+ */
+const warnedEmpty = new WeakSet<Element>();
 
 function trackedMap(handler: AttributeHandler): Map<Element, ElementContext> {
   let map = tracked.get(handler);
@@ -325,6 +352,27 @@ export function registerAttribute(handler: AttributeHandler): void {
         `name. Both will run; the earlier registration is not replaced. Third-party ` +
         `attributes should avoid the lvt-fx:/lvt-el:/lvt-form: namespaces.`
     );
+  }
+
+  if (declarative) {
+    const d = handler as DeclarativeHandler;
+    // A declarative handler is tracked by the scan, and the scan only runs for
+    // handlers with something to call on a match. So onElementRemoved on its
+    // own can never fire: nothing is ever tracked, so nothing is ever swept.
+    // All three callbacks are optional, so this shape type-checks — which makes
+    // rejecting it loudly the only thing standing between the author and a
+    // handler that does nothing forever.
+    if (!d.onElementAdded && !d.onElement) {
+      logger.warn(
+        `registerAttribute("${handlerName(handler)}"): a declarative handler needs ` +
+          `onElementAdded or onElement — ` +
+          (d.onElementRemoved
+            ? `onElementRemoved alone can never fire, because elements are only tracked when one of the other two claims them.`
+            : `it declares no callbacks at all.`) +
+          ` Ignored.`
+      );
+      return;
+    }
   }
 
   let selector = "";
@@ -540,12 +588,16 @@ function dispatchDeclarative(
     if (!ctx) {
       // Every handler needed this check, so it stopped being the author's job.
       if (!el.getAttribute(attribute)) {
-        logger.warn(
-          `${attribute} on <${el.tagName.toLowerCase()}> has an empty value; skipping. ` +
-            `An attribute handler's value is its configuration — an empty one is a template bug.`
-        );
+        if (!warnedEmpty.has(el)) {
+          warnedEmpty.add(el);
+          logger.warn(
+            `${attribute} on <${el.tagName.toLowerCase()}> has an empty value; skipping. ` +
+              `An attribute handler's value is its configuration — an empty one is a template bug.`
+          );
+        }
         continue;
       }
+      warnedEmpty.delete(el);
       ctx = makeElementContext(handler, el);
       seen.set(el, ctx);
       if (wantsAdded) {
@@ -607,7 +659,15 @@ function makeElementContext(handler: DeclarativeHandler, el: Element): ElementCo
 function sweep(handler: DeclarativeHandler, seen: Map<Element, ElementContext>): void {
   if (seen.size === 0) return;
   for (const el of Array.from(seen.keys())) {
-    if (el.isConnected && el.hasAttribute(handler.attribute)) continue;
+    // An element counts as armed iff it is in the document AND its attribute
+    // still carries a value. Emptying the value is treated exactly like
+    // removing the attribute, which is the same rule the scan applies when it
+    // decides whether to track an element in the first place: a handler's value
+    // is its configuration, so no configuration means not armed. Without this
+    // the two halves disagree — the scan refuses to arm an empty element while
+    // the sweep insists an emptied one is still live — and a handler wired for
+    // `{{.ShareURL}}` keeps its listeners after the URL goes away.
+    if (el.isConnected && el.getAttribute(handler.attribute)) continue;
     seen.delete(el);
     notifyRemoved(handler, el);
   }

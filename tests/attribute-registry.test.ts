@@ -445,3 +445,64 @@ describe("regressions", () => {
     expect(added).not.toHaveBeenCalled();
   });
 });
+
+describe("shapes that cannot work", () => {
+  // Reported on PR #159, round 2. Elements are only tracked by the scan, and
+  // the scan is skipped when there is nothing to call — so a handler declaring
+  // ONLY onElementRemoved tracks nothing, sweeps nothing, and silently never
+  // fires. It type-checks, because all three callbacks are optional.
+  it("rejects a declarative handler that can never fire", () => {
+    const removed = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementRemoved: removed });
+
+    expect(getRegisteredAttributes()).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(" ")).toContain("onElementRemoved");
+  });
+
+  it("rejects a declarative handler with no callbacks at all", () => {
+    registerAttribute({ attribute: "lvt-x:copy" });
+    expect(getRegisteredAttributes()).toHaveLength(0);
+  });
+
+  it("accepts onElementRemoved alongside a callback that can track", () => {
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded: () => {},
+      onElementRemoved: () => {},
+    });
+    expect(getRegisteredAttributes()).toHaveLength(1);
+  });
+
+  it("warns once per element for a persistently empty value, not once per render", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+
+    const root = makeRoot(`<button lvt-x:copy=""></button>`);
+    render(root);
+    render(root);
+    render(root);
+
+    // A template that re-renders on every keystroke would otherwise emit one
+    // warning per keystroke for the same element.
+    const emptyWarnings = warn.mock.calls
+      .flat()
+      .filter((c) => typeof c === "string" && c.includes("has an empty value"));
+    expect(emptyWarnings).toHaveLength(1);
+  });
+
+  it("still reports an element that heals and then empties again", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+
+    const root = makeRoot(`<button lvt-x:copy=""></button>`);
+    const el = root.firstElementChild!;
+    render(root);
+    el.setAttribute("lvt-x:copy", "real");
+    render(root);
+    el.setAttribute("lvt-x:copy", "");
+    render(root);
+
+    const emptyWarnings = warn.mock.calls
+      .flat()
+      .filter((c) => typeof c === "string" && c.includes("has an empty value"));
+    expect(emptyWarnings).toHaveLength(2);
+  });
+});
