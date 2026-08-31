@@ -506,3 +506,80 @@ describe("shapes that cannot work", () => {
     expect(emptyWarnings).toHaveLength(2);
   });
 });
+
+describe("two clients on one page", () => {
+  // Reported on PR #159, round 3. The registry is module-level BY DESIGN and
+  // liveRoots is a Set, so two LiveTemplateClient instances can be live at
+  // once. Keying the transport by handler alone let whichever client rendered
+  // most recently win the slot for every element of every other client.
+  function twoRoots(): { a: Element; b: Element } {
+    document.body.innerHTML =
+      `<div id="a" data-lvt-id="a"><div lvt-x:rating="RateA"></div></div>` +
+      `<div id="b" data-lvt-id="b"><div lvt-x:rating="RateB"></div></div>`;
+    return {
+      a: document.getElementById("a") as Element,
+      b: document.getElementById("b") as Element,
+    };
+  }
+
+  it("keeps each element dispatching through its own client's transport", () => {
+    const contexts = new Map<string, ElementContext>();
+    registerAttribute({
+      attribute: "lvt-x:rating",
+      needsServerChannel: true,
+      onElementAdded: (_el, ctx) => { contexts.set(ctx.value, ctx); },
+    });
+
+    const { a, b } = twoRoots();
+    const sendA: SendFn = jest.fn();
+    const sendB: SendFn = jest.fn();
+
+    render(a, true, sendA);
+    render(b, true, sendB);
+    // Client B rendered most recently. A's element must still reach A.
+    render(b, true, sendB);
+
+    contexts.get("RateA")!.send!({ action: "RateA", data: {} });
+    expect(sendA).toHaveBeenCalledWith({ action: "RateA", data: {} });
+    expect(sendB).not.toHaveBeenCalled();
+  });
+
+  it("keeps each element reporting its own client's wrapper", () => {
+    const contexts = new Map<string, ElementContext>();
+    registerAttribute({
+      attribute: "lvt-x:rating",
+      onElementAdded: (_el, ctx) => { contexts.set(ctx.value, ctx); },
+    });
+
+    const { a, b } = twoRoots();
+    render(a);
+    render(b);
+
+    expect(contexts.get("RateA")!.wrapperRoot).toBe(a);
+    expect(contexts.get("RateB")!.wrapperRoot).toBe(b);
+  });
+
+  it("follows its own client's transport across a reconnect", () => {
+    // Capture by value, not "the last one added" — onElementAdded fires for
+    // both clients' elements, so a bare `ctx = c` would hold B's.
+    const contexts = new Map<string, ElementContext>();
+    registerAttribute({
+      attribute: "lvt-x:rating",
+      needsServerChannel: true,
+      onElementAdded: (_el, c) => { contexts.set(c.value, c); },
+    });
+
+    const { a, b } = twoRoots();
+    render(a, true, jest.fn());
+    render(b, true, jest.fn());
+
+    // A reconnects: same client, new transport. The context must follow it,
+    // and must not be diverted by B's interleaved renders.
+    const reconnectedA: SendFn = jest.fn();
+    render(a, true, reconnectedA);
+    render(b, true, jest.fn());
+
+    contexts.get("RateA")!.send!({ action: "RateA", data: {} });
+    expect(reconnectedA).toHaveBeenCalledTimes(1);
+  });
+});

@@ -200,30 +200,31 @@ const liveRoots = new Set<RegistryRoot>();
  * nothing: the context's members are accessors precisely so a single instance
  * stays correct as the value, transport and wrapper change beneath it.
  */
-const tracked = new WeakMap<AttributeHandler, Map<Element, ElementContext>>();
+const tracked = new WeakMap<AttributeHandler, Map<Element, ElementEntry>>();
 
 /**
- * The transport each handler's contexts should currently dispatch through.
+ * What one tracked element's context reads through.
  *
- * Kept OUTSIDE the context object on purpose. A handler wires a listener in
- * `onElementAdded` and that listener captures the `ctx` it was handed — once,
- * on the render the element first appeared. A reconnect rebuilds the transport,
- * so a context that closed over the send it was constructed with would keep
- * dispatching into the dead one for the rest of the page's life. Storing the
- * send here and reading it through the accessor means every captured context
- * follows the reconnect, which is the guarantee `ElementContext` documents.
- */
-const currentSend = new WeakMap<AttributeHandler, SendFn>();
-
-/**
- * The roots of the dispatch currently in flight, per handler.
+ * Per ELEMENT, not per handler, and that distinction is load-bearing. The
+ * registry is module-level by design, so two LiveTemplateClient instances can
+ * be live on one page with elements matching the same attribute. Keying the
+ * transport by handler alone meant whichever client rendered most recently
+ * owned the slot for every other client's elements too, and a listener wired on
+ * client A's element would dispatch through client B's socket.
  *
- * Exists for the same reason as `currentSend`: a cached `ElementContext` must
- * report the wrapper of the render being processed, not the one that happened
- * to be live when the element was first seen. Cross-handler navigation
- * replaces the wrapper.
+ * An element only ever matches during a dispatch whose scanRoot contains it —
+ * its own client's — so a per-element record is written by exactly one client,
+ * and cross-contamination stops being possible rather than being avoided.
+ *
+ * The fields are refreshed on every dispatch rather than captured once, which
+ * is what keeps a context correct across a reconnect: the client hands in a new
+ * transport and the element's own next render adopts it.
  */
-const currentRoots = new WeakMap<AttributeHandler, { scanRoot: Element; wrapperRoot: Element }>();
+interface ElementEntry {
+  ctx: ElementContext;
+  send: SendFn | undefined;
+  wrapperRoot: Element;
+}
 
 /**
  * Values fixed at registration, computed once instead of per render: the
@@ -244,10 +245,10 @@ const resolved = new WeakMap<AttributeHandler, { category: HandlerCategory; sele
  */
 const warnedEmpty = new WeakSet<Element>();
 
-function trackedMap(handler: AttributeHandler): Map<Element, ElementContext> {
+function trackedMap(handler: AttributeHandler): Map<Element, ElementEntry> {
   let map = tracked.get(handler);
   if (!map) {
-    map = new Map<Element, ElementContext>();
+    map = new Map<Element, ElementEntry>();
     tracked.set(handler, map);
   }
   return map;
@@ -448,7 +449,6 @@ export function runHandler(
   domChanged = true
 ): void {
   const channel = handler.needsServerChannel ? send : undefined;
-  if (channel && currentSend.get(handler) !== channel) currentSend.set(handler, channel);
 
   if (!isDeclarative(handler)) {
     if (!shouldRun(handler, domChanged)) return;
@@ -484,11 +484,10 @@ export function runHandler(
   // attributes, so it detects an attribute being added and never one being
   // removed.
   const seen = trackedMap(handler);
-  currentRoots.set(handler, roots);
   sweep(handler, seen);
 
   if (!shouldRun(handler, domChanged)) return;
-  dispatchDeclarative(handler, roots, seen);
+  dispatchDeclarative(handler, roots, seen, channel);
 }
 
 /**
@@ -569,7 +568,8 @@ function notifyRemoved(handler: DeclarativeHandler, el: Element): void {
 function dispatchDeclarative(
   handler: DeclarativeHandler,
   roots: { scanRoot: Element; wrapperRoot: Element },
-  seen: Map<Element, ElementContext>
+  seen: Map<Element, ElementEntry>,
+  channel: SendFn | undefined
 ): void {
   const attribute = handler.attribute;
 
@@ -583,9 +583,14 @@ function dispatchDeclarative(
   // directly even though the callbacks below can mutate the DOM.
   const matches = roots.scanRoot.querySelectorAll<Element>(resolved.get(handler)!.selector);
   for (const el of matches) {
-    let ctx = seen.get(el);
+    let entry = seen.get(el);
 
-    if (!ctx) {
+    if (entry) {
+      // Refresh before any callback runs: a reconnect hands in a new transport,
+      // and a cross-handler navigation replaces the wrapper.
+      entry.send = channel;
+      entry.wrapperRoot = roots.wrapperRoot;
+    } else {
       // Every handler needed this check, so it stopped being the author's job.
       if (!el.getAttribute(attribute)) {
         if (!warnedEmpty.has(el)) {
@@ -598,11 +603,12 @@ function dispatchDeclarative(
         continue;
       }
       warnedEmpty.delete(el);
-      ctx = makeElementContext(handler, el);
-      seen.set(el, ctx);
+      entry = { ctx: null as unknown as ElementContext, send: channel, wrapperRoot: roots.wrapperRoot };
+      entry.ctx = makeElementContext(handler, el, entry);
+      seen.set(el, entry);
       if (wantsAdded) {
         try {
-          handler.onElementAdded!(el, ctx);
+          handler.onElementAdded!(el, entry.ctx);
         } catch (error) {
           reportHookError(handler, "onElementAdded", error);
         }
@@ -611,7 +617,7 @@ function dispatchDeclarative(
 
     if (wantsEvery) {
       try {
-        handler.onElement!(el, ctx);
+        handler.onElement!(el, entry.ctx);
       } catch (error) {
         reportHookError(handler, "onElement", error);
       }
@@ -626,17 +632,20 @@ function dispatchDeclarative(
  * reconnect, and `wrapperRoot` follows a cross-handler navigation. A handler
  * captures this object in a listener and keeps reading through it.
  */
-function makeElementContext(handler: DeclarativeHandler, el: Element): ElementContext {
+function makeElementContext(
+  handler: DeclarativeHandler,
+  el: Element,
+  entry: ElementEntry
+): ElementContext {
   return {
     get value(): string {
       return el.getAttribute(handler.attribute) || "";
     },
     get send(): SendFn | undefined {
-      return handler.needsServerChannel ? currentSend.get(handler) : undefined;
+      return entry.send;
     },
     get wrapperRoot(): Element {
-      // Only reachable from inside or after a dispatch, which always sets this.
-      return currentRoots.get(handler)!.wrapperRoot;
+      return entry.wrapperRoot;
     },
   };
 }
@@ -656,7 +665,7 @@ function makeElementContext(handler: DeclarativeHandler, el: Element): ElementCo
  * itself touch the DOM, and iterating a Map while a callback mutates it is not
  * a contract worth exporting.
  */
-function sweep(handler: DeclarativeHandler, seen: Map<Element, ElementContext>): void {
+function sweep(handler: DeclarativeHandler, seen: Map<Element, ElementEntry>): void {
   if (seen.size === 0) return;
   for (const el of Array.from(seen.keys())) {
     // An element counts as armed iff it is in the document AND its attribute
