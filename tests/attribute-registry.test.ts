@@ -376,3 +376,72 @@ describe("registration", () => {
     expect(isDeclarative(low)).toBe(false);
   });
 });
+
+describe("regressions", () => {
+  // Reported on PR #159. The natural declarative shape — wire on add, clean up
+  // on remove — derives `wire-idempotent`, so gating the SWEEP on the category
+  // meant an element that lost its attribute kept its listeners until some
+  // later render happened to add a node. Worse than it first looked: the
+  // morphdom hook that sets `directiveTouchedThisRender` only inspects the NEW
+  // element's attributes (livetemplate-client.ts), so it detects an attribute
+  // being ADDED and never one being REMOVED — the exact render this handler
+  // shape cares about is the one that cannot set the flag.
+  it("fires onElementRemoved on a render that added nothing", () => {
+    const removed = jest.fn();
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded: () => {},
+      onElementRemoved: removed,
+    });
+
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    render(root, true);
+    root.firstElementChild!.removeAttribute("lvt-x:copy");
+
+    // domChanged === false: nothing was added, and removal cannot set the flag.
+    render(root, false);
+
+    expect(removed).toHaveBeenCalledTimes(1);
+  });
+
+  it("still skips the expensive scan on a render that added nothing", () => {
+    const added = jest.fn();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: added });
+
+    const root = makeRoot(`<button lvt-x:copy="a"></button>`);
+    render(root, false);
+
+    // The sweep is cheap and correctness-critical; the scan is the ~150-200ms
+    // walk the category exists to skip. Separating them must not un-skip it.
+    expect(added).not.toHaveBeenCalled();
+  });
+
+  it("keeps rendering when a low-level setup() throws", () => {
+    const later = jest.fn();
+    registerAttribute({
+      name: "bad-setup",
+      selectors: ["*"],
+      setup: () => { throw new Error("boom"); },
+    });
+    registerAttribute({ name: "after", selectors: ["*"], setup: later });
+
+    const root = makeRoot(`<div></div>`);
+    expect(() => render(root)).not.toThrow();
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalled();
+  });
+
+  it("rejects an attribute name that cannot form a valid selector", () => {
+    const added = jest.fn();
+    // lvtSelector escapes ':' only, so a ']' would close the attribute selector
+    // early and make querySelectorAll throw on EVERY render. Registration is
+    // where that has to be caught.
+    registerAttribute({ attribute: "lvt-x:bad]name", onElementAdded: added });
+
+    expect(getRegisteredAttributes()).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(" ")).toContain("not a usable attribute name");
+
+    expect(() => render(makeRoot(`<div></div>`))).not.toThrow();
+    expect(added).not.toHaveBeenCalled();
+  });
+});

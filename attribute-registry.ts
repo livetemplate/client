@@ -174,9 +174,9 @@ const liveRoots = new Set<RegistryRoot>();
  * The VALUE is an enumerable Map, not a WeakMap, because sweeping requires
  * ENUMERATING what matched before — a WeakMap can answer "is this element
  * tracked?" but not "which tracked elements are gone?". The cost is that a
- * detached element stays reachable until the next sweep drops it: for a
- * `fire-on-change` handler that window is one render, for a `wire-idempotent`
- * one it lasts until the next render that adds nodes.
+ * detached element stays reachable until the next sweep drops it, and since
+ * sweeps run on every render regardless of category, that window is one
+ * render for every handler.
  *
  * The value cached against each element is its `ElementContext`, built once for
  * the element's lifetime. Rebuilding it per render would allocate an object and
@@ -327,10 +327,27 @@ export function registerAttribute(handler: AttributeHandler): void {
     );
   }
 
-  resolved.set(handler, {
-    category: deriveCategory(handler),
-    selector: declarative ? lvtSelector((handler as DeclarativeHandler).attribute) : "",
-  });
+  let selector = "";
+  if (declarative) {
+    selector = lvtSelector((handler as DeclarativeHandler).attribute);
+    // Validate ONCE, here, rather than discovering it on every render.
+    // lvtSelector escapes ':' — the character that actually appears in lvt-*
+    // names — but a name containing ']' or a quote would close the attribute
+    // selector early and make querySelectorAll throw SyntaxError on every
+    // render for the life of the page. Rejecting at registration turns a
+    // recurring render-time crash into one warning the author can act on.
+    try {
+      document.createDocumentFragment().querySelector(selector);
+    } catch {
+      logger.warn(
+        `registerAttribute("${handlerName(handler)}"): not a usable attribute name — ` +
+          `it does not form a valid CSS attribute selector (${selector}). Ignored.`
+      );
+      return;
+    }
+  }
+
+  resolved.set(handler, { category: deriveCategory(handler), selector });
 
   registry.push(handler);
 
@@ -379,17 +396,51 @@ export function detachRegistryRoot(root: RegistryRoot): void {
 export function runHandler(
   handler: AttributeHandler,
   roots: { scanRoot: Element; wrapperRoot: Element },
-  send: SendFn
+  send: SendFn,
+  domChanged = true
 ): void {
   const channel = handler.needsServerChannel ? send : undefined;
   if (channel && currentSend.get(handler) !== channel) currentSend.set(handler, channel);
 
   if (!isDeclarative(handler)) {
-    handler.setup({ scanRoot: roots.scanRoot, wrapperRoot: roots.wrapperRoot, send: channel });
+    if (!shouldRun(handler, domChanged)) return;
+    // setup() is third-party code on the public path, so it gets the same
+    // isolation as every other hook: one handler throwing must not strand the
+    // handlers registered after it, nor abort the rest of the render (the
+    // event delegator, the upload wiring and the change auto-wirer all run
+    // after this loop).
+    try {
+      handler.setup({ scanRoot: roots.scanRoot, wrapperRoot: roots.wrapperRoot, send: channel });
+    } catch (error) {
+      reportHookError(handler, "setup", error);
+    }
     return;
   }
 
-  dispatchDeclarative(handler, roots);
+  // A declarative handler ALWAYS sweeps, whatever its category, and scans only
+  // when the render earned it. The two halves have opposite cost profiles and
+  // opposite failure modes:
+  //
+  //   sweep — O(tracked) with two O(1) reads per element. Skipping it leaves a
+  //           disarmed element holding its listeners, which is a correctness
+  //           bug and the single most common failure in the hardcoded handlers
+  //           this registry replaced.
+  //   scan  — a querySelectorAll walk. Skipping it costs nothing when nothing
+  //           was added, which is exactly what `wire-idempotent` is for.
+  //
+  // Gating both on the category broke the most natural handler shape there is:
+  // onElementAdded + onElementRemoved derives `wire-idempotent`, so removal
+  // notifications were deferred to the next render that happened to add a node.
+  // Worse, the flag can never see the render that matters — the morphdom hook
+  // that sets `directiveTouchedThisRender` inspects the NEW element's
+  // attributes, so it detects an attribute being added and never one being
+  // removed.
+  const seen = trackedMap(handler);
+  currentRoots.set(handler, roots);
+  sweep(handler, seen);
+
+  if (!shouldRun(handler, domChanged)) return;
+  dispatchDeclarative(handler, roots, seen);
 }
 
 /**
@@ -408,9 +459,7 @@ export function runHandlers(
   domChanged: boolean
 ): void {
   for (const handler of handlers) {
-    if (shouldRun(handler, domChanged)) {
-      runHandler(handler, roots, send);
-    }
+    runHandler(handler, roots, send, domChanged);
   }
 }
 
@@ -471,13 +520,10 @@ function notifyRemoved(handler: DeclarativeHandler, el: Element): void {
 
 function dispatchDeclarative(
   handler: DeclarativeHandler,
-  roots: { scanRoot: Element; wrapperRoot: Element }
+  roots: { scanRoot: Element; wrapperRoot: Element },
+  seen: Map<Element, ElementContext>
 ): void {
   const attribute = handler.attribute;
-  const seen = trackedMap(handler);
-  currentRoots.set(handler, roots);
-
-  sweep(handler, seen);
 
   // Hoisted: a wiring-only handler declares no onElement, and checking that
   // per element per render costs a branch and a closure for nothing.
@@ -547,11 +593,12 @@ function makeElementContext(handler: DeclarativeHandler, el: Element): ElementCo
  * Drops elements that detached from the document or lost the attribute via a
  * server diff, notifying the handler about each.
  *
- * Runs at the top of every dispatch rather than only when the render added
- * nodes: an attribute can be removed by a diff that adds nothing, and a handler
- * that keeps firing for an element the server has disarmed is the single most
- * common bug in the hardcoded handlers this registry replaced. The cost is two
- * O(1) reads per tracked element per dispatch.
+ * Runs on every render, including ones no scan is performed for: an attribute
+ * can be removed by a diff that adds nothing, and a handler that keeps firing
+ * for an element the server has disarmed is the single most common bug in the
+ * hardcoded handlers this registry replaced. See runHandler for why the sweep
+ * and the scan are gated differently. The cost is two O(1) reads per tracked
+ * element per render.
  *
  * Snapshotting the keys is deliberate: the loop calls third-party code that may
  * itself touch the DOM, and iterating a Map while a callback mutates it is not

@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The framework owns selector escaping, the DOM scan, per-element match
   tracking, empty-value rejection, and sweeping elements that lost the attribute
-  or left the DOM — so the three classic mistakes (no sweep, listeners stacking
+  or left the DOM — the sweep runs on every render, so `onElementRemoved` is
+  never deferred — so the three classic mistakes (no sweep, listeners stacking
   on every render, a captured transport that dies at reconnect) are not
   reachable from this layer. `ctx.value` and `ctx.send` are live accessors, so a
   listener wired once still reads the current attribute value and dispatches
