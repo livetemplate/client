@@ -637,3 +637,47 @@ describe("dispose scoping", () => {
     expect(hasLiveRoots()).toBe(false);
   });
 });
+
+describe("state scoping across handlers", () => {
+  // Reported on PR #159, round 7 — the same defect class as round 3's
+  // cross-client transport leak, mirrored. Round 3 was state keyed too COARSELY
+  // for its guarantee (per handler, when ownership was per element); this is
+  // state keyed too coarsely in the other axis (per element, when the guarantee
+  // is per handler-and-element). One element can carry two independent
+  // attributes, so their handlers must not share warning state about it.
+  it("does not let one handler clear another's empty-value warning state", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+    registerAttribute({ attribute: "lvt-x:rate", onElementAdded: () => {} });
+
+    // One element, two attributes: copy is empty, rate is populated. The
+    // populated handler's "this element is fine now" bookkeeping must not
+    // reset the empty handler's "already warned" bookkeeping.
+    const root = makeRoot(`<div lvt-x:copy="" lvt-x:rate="5"></div>`);
+    render(root);
+    render(root);
+    render(root);
+
+    const emptyWarnings = warn.mock.calls
+      .flat()
+      .filter((c) => typeof c === "string" && c.includes("has an empty value"));
+    expect(emptyWarnings).toHaveLength(1);
+  });
+
+  it("warns separately for two empty attributes on one element", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+    registerAttribute({ attribute: "lvt-x:rate", onElementAdded: () => {} });
+
+    const root = makeRoot(`<div lvt-x:copy="" lvt-x:rate=""></div>`);
+    render(root);
+    render(root);
+
+    const emptyWarnings = warn.mock.calls
+      .flat()
+      .filter((c) => typeof c === "string" && c.includes("has an empty value"));
+    // Two distinct problems in the template, reported once each — not one
+    // report, and not one per render.
+    expect(emptyWarnings).toHaveLength(2);
+    expect(emptyWarnings.some((w) => w.includes("lvt-x:copy"))).toBe(true);
+    expect(emptyWarnings.some((w) => w.includes("lvt-x:rate"))).toBe(true);
+  });
+});

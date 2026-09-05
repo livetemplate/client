@@ -190,6 +190,27 @@ export interface RegistryRoot {
   send: SendFn;
 }
 
+// MODULE-LEVEL STATE, AND WHAT EACH PIECE IS KEYED BY.
+//
+// Two defects in review of this file were the same mistake — state keyed by
+// something other than what owns the guarantee it backs — so the keys are
+// listed here together, where a mismatch is easier to see than it is at five
+// separate declarations:
+//
+//   registry     — page-wide. The set of handlers, shared by every client, by
+//                  design (see the file header).
+//   liveRoots    — page-wide. Which clients are attached; only used to answer
+//                  "is this the last one?" for dispose().
+//   tracked      — per handler, then per element. Holds each element's
+//                  ElementContext AND the transport it dispatches through,
+//                  which must be per element: two clients can both have
+//                  elements claimed by the same handler, and an element's
+//                  transport belongs to the client whose subtree contains it.
+//   resolved     — per handler. Values fixed at registration, so nothing about
+//                  a client or an element can vary them.
+//   warnedEmpty  — per handler, then per element. One element can carry two
+//                  handlers' attributes, so "already warned about this element"
+//                  is only meaningful alongside "by which handler".
 const registry: AttributeHandler[] = [];
 const liveRoots = new Set<RegistryRoot>();
 
@@ -244,16 +265,32 @@ interface ElementEntry {
 const resolved = new WeakMap<AttributeHandler, { category: HandlerCategory; selector: string }>();
 
 /**
- * Elements already warned about for an empty attribute value.
+ * Elements already warned about for an empty attribute value, per handler.
  *
- * The empty-value check runs on every render (an element with no value is
- * deliberately never tracked, so it can heal the moment a real value arrives),
- * which without this would emit one warning per render for as long as the
- * element persists — once per keystroke on a template that re-renders on
- * input. Cleared when the element heals, so a value that empties again is
+ * Keyed by HANDLER and then element, not by element alone. One element can
+ * carry two independently registered attributes — `<div lvt-x:copy=""
+ * lvt-x:rate="5">` — and a set shared across handlers makes them corrupt each
+ * other's bookkeeping in both directions: the populated handler's "this element
+ * is fine" clears the empty handler's "already warned", so the warning re-fires
+ * every render; and two empty attributes on one element report only the first,
+ * silently swallowing the second template bug.
+ *
+ * The empty-value check runs on every render, because an element with no value
+ * is deliberately never tracked so it can heal the moment a real value arrives.
+ * This is what stops that check becoming one warning per render — once per
+ * element per handler, cleared when it heals so a value that empties again is
  * reported again.
  */
-const warnedEmpty = new WeakSet<Element>();
+const warnedEmpty = new WeakMap<AttributeHandler, WeakSet<Element>>();
+
+function warnedEmptySet(handler: AttributeHandler): WeakSet<Element> {
+  let set = warnedEmpty.get(handler);
+  if (!set) {
+    set = new WeakSet<Element>();
+    warnedEmpty.set(handler, set);
+  }
+  return set;
+}
 
 function trackedMap(handler: AttributeHandler): Map<Element, ElementEntry> {
   let map = tracked.get(handler);
@@ -642,8 +679,9 @@ function dispatchDeclarative(
     } else {
       // Every handler needed this check, so it stopped being the author's job.
       if (!el.getAttribute(attribute)) {
-        if (!warnedEmpty.has(el)) {
-          warnedEmpty.add(el);
+        const warned = warnedEmptySet(handler);
+        if (!warned.has(el)) {
+          warned.add(el);
           logger.warn(
             `${attribute} on <${el.tagName.toLowerCase()}> has an empty value; skipping. ` +
               `An attribute handler's value is its configuration — an empty one is a template bug.`
@@ -651,7 +689,7 @@ function dispatchDeclarative(
         }
         continue;
       }
-      warnedEmpty.delete(el);
+      warnedEmpty.get(handler)?.delete(el);
       entry = { ctx: null as unknown as ElementContext, send: channel, wrapperRoot: roots.wrapperRoot };
       entry.ctx = makeElementContext(handler, el, entry);
       seen.set(el, entry);
