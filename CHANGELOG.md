@@ -58,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Exported types: `AttributeHandler`, `DeclarativeHandler`, `LowLevelHandler`,
   `ElementContext`, `SetupContext`, `SendFn`, `HandlerCategory`.
 
+  Two limits worth knowing before you build on this. Registration is
+  append-only — there is no `unregisterAttribute` yet, so a dev server that
+  hot-reloads a handler bundle accumulates one live handler per reload; the
+  production `<script defer>` pattern, where a bundle evaluates once, is
+  unaffected. And `dispose()` runs when the *last* client on the page
+  disconnects, because the registry is shared by all of them; per-client
+  cleanup belongs in `teardown(root)`, which runs for each client as it goes.
+
 ### Changed
 
 - **Every built-in attribute handler now runs through that same registry.** The

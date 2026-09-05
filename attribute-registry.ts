@@ -57,16 +57,20 @@ export type SendFn = (message: { action: string; data: Record<string, unknown> }
  *                      attribute. For handlers that walk many descendants to
  *                      attach listeners; skipping saves ~150-200ms per render
  *                      at 80k nodes.
- *   always           — every render, unconditionally, including renders a
- *                      future optimization might skip. For handlers that must
- *                      process REMOVALS, not just current matches.
  *
- * `always` and `fire-on-change` are indistinguishable today, because `updateDOM`
- * runs its post-render block unconditionally — there is no empty-diff skip to
- * be exempt from. The distinction is kept because it records intent: if such a
- * skip ever lands, `always` is the category that must not be caught by it.
+ * This gates the SCAN only. A declarative handler's sweep runs on every render
+ * whatever its category, because skipping cleanup is a correctness bug while
+ * skipping a scan is just work avoided (see runHandler).
+ *
+ * There was a third member, `always`, meaning "every render even if a future
+ * empty-diff optimization skips other handlers". It was cut before this
+ * interface shipped: nothing consumed it, `updateDOM` has no such skip to be
+ * exempt from, and so it was indistinguishable from `fire-on-change` in every
+ * observable way. Adding a union member later is a minor release; removing one
+ * is a major, so unused surface does not get to ship first and be justified
+ * afterwards.
  */
-export type HandlerCategory = "always" | "fire-on-change" | "wire-idempotent";
+export type HandlerCategory = "fire-on-change" | "wire-idempotent";
 
 interface BaseHandler {
   /** Defaults to `attribute` for declarative handlers; required for low-level. */
@@ -393,9 +397,16 @@ export function registerAttribute(handler: AttributeHandler): void {
   //
   // Keyed on the declarative attribute name and the resolved handler name —
   // never on `selectors`, which is descriptive and which two built-ins
-  // legitimately set to a bare "*" walk. Case-folded because HTML parsers
-  // ASCII-lowercase attribute names, so `lvt-x:doThing` and `lvt-x:dothing` are
-  // the same attribute in the DOM even though they are different strings here.
+  // legitimately set to a bare "*" walk.
+  //
+  // Case-folded because HTML parsers ASCII-lowercase attribute names, so
+  // `lvt-x:doThing` and `lvt-x:dothing` are the same attribute in the DOM even
+  // though they are different strings here. The scan relies on the same fact
+  // from the other side: it never normalizes case, because CSS attribute
+  // selectors match attribute NAMES ASCII-case-insensitively in HTML documents.
+  // Both halves therefore assume an HTML document — in an XML or standalone SVG
+  // context neither assumption holds, and the two would have to agree some
+  // other way.
   const key = claimKey(handler);
   if (key !== null && registry.some((existing) => claimKey(existing) === key)) {
     logger.warn(
@@ -420,6 +431,23 @@ export function registerAttribute(handler: AttributeHandler): void {
     runHandler(handler, { scanRoot: root, wrapperRoot: root }, liveRoot.send);
   }
 }
+
+/**
+ * There is deliberately no `unregisterAttribute` in Phase 1.
+ *
+ * Registration is append-only and duplicates both run (see the warning in
+ * registerAttribute), which is correct for the documented `<script defer>`
+ * production pattern where a bundle evaluates once. It is NOT sufficient for a
+ * dev server that hot-reloads a handler bundle: each reload registers again and
+ * the old handler keeps firing.
+ *
+ * Deferred rather than overlooked, because removal is not the one-liner it
+ * looks like — it has to sweep the handler's tracked elements and fire
+ * `onElementRemoved` for each, or the listeners the handler wired outlive the
+ * handler itself, which is the exact leak the declarative layer exists to
+ * prevent. That is a public-API design question, and Phase 3 is where the
+ * public API is settled.
+ */
 
 /** The live registry. Read on every render, never snapshotted at construction. */
 export function getRegisteredAttributes(): readonly AttributeHandler[] {

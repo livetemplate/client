@@ -270,9 +270,10 @@ describe("category", () => {
   });
 
   it("lets an explicit category win over the derivation", () => {
+    // Wiring-only callbacks derive wire-idempotent; the explicit value wins.
     expect(
-      resolveCategory({ attribute: "lvt-x:a", onElementAdded: () => {}, category: "always" })
-    ).toBe("always");
+      resolveCategory({ attribute: "lvt-x:a", onElementAdded: () => {}, category: "fire-on-change" })
+    ).toBe("fire-on-change");
   });
 
   it("skips wire-idempotent handlers when the render added nothing", () => {
@@ -372,7 +373,7 @@ describe("registration", () => {
 
   it("classifies the two layers", () => {
     const decl: AttributeHandler = { attribute: "lvt-x:a" };
-    const low: AttributeHandler = { name: "b", selectors: ["[b]"], category: "always", setup: () => {} };
+    const low: AttributeHandler = { name: "b", selectors: ["[b]"], category: "fire-on-change", setup: () => {} };
     expect(isDeclarative(decl)).toBe(true);
     expect(isDeclarative(low)).toBe(false);
   });
