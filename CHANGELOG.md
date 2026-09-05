@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Exported types: `AttributeHandler`, `DeclarativeHandler`, `LowLevelHandler`,
   `ElementContext`, `SetupContext`, `SendFn`, `HandlerCategory`.
 
+  `registerAttribute` is deliberately unauthenticated, and grants no capability
+  a page script did not already have: `window.liveTemplateClient.send()` has
+  always been public, so any script with page access could already dispatch
+  arbitrary actions. Server-side authorization is unchanged and remains the
+  boundary that matters.
+
   Two limits worth knowing before you build on this. Registration is
   append-only — there is no `unregisterAttribute` yet, so a dev server that
   hot-reloads a handler bundle accumulates one live handler per reload; the

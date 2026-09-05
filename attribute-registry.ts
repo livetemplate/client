@@ -355,6 +355,21 @@ export function shouldRun(h: AttributeHandler, domChanged: boolean): boolean {
 /**
  * Registers an attribute handler.
  *
+ * THREAT MODEL. This is a public, unauthenticated entry point: any script with
+ * page access can register a handler with `needsServerChannel: true` and
+ * dispatch actions the server cannot distinguish from an `lvt-on:click`. That
+ * is intended, and it grants nothing new — `autoInit` already assigns the live
+ * client to `window.liveTemplateClient`, whose `send()` is public, so a script
+ * on the page could always dispatch arbitrary actions. It could equally click a
+ * real `lvt-on:` element or POST to the live endpoint with the session cookie.
+ *
+ * The boundary that matters is the server's, and it has not moved: actions
+ * arriving this way are still just actions, subject to whatever authorization
+ * the handler applies. A same-origin script is fully trusted by the browser's
+ * own model, so a page that runs untrusted script is already compromised in
+ * ways no client-side check could fix. Never treat a registered handler as
+ * evidence of anything about the caller.
+ *
  * Static by design (see the file header). Registering after a client already
  * exists immediately runs the handler against every live wrapper, so a bundle
  * that loads after core participates from the current render rather than
