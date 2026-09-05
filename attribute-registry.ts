@@ -431,14 +431,24 @@ export function registerAttribute(handler: AttributeHandler): void {
     // selector early and make querySelectorAll throw SyntaxError on every
     // render for the life of the page. Rejecting at registration turns a
     // recurring render-time crash into one warning the author can act on.
-    try {
-      document.createDocumentFragment().querySelector(selector);
-    } catch {
-      logger.warn(
-        `registerAttribute("${handlerName(handler)}"): not a usable attribute name — ` +
-          `it does not form a valid CSS attribute selector (${selector}). Ignored.`
-      );
-      return;
+    //
+    // Skipped when there is no DOM. Registration itself is deliberately
+    // DOM-free — which is why `registerBuiltinHandlers()` can run at module
+    // load with no `typeof window` guard, unlike autoInit() — and this probe
+    // was the one exception. A module imported by SSR or tooling must not throw
+    // on a declarative registration; the check still runs for every
+    // registration that happens in a browser, which is every registration that
+    // can reach a render.
+    if (typeof document !== "undefined") {
+      try {
+        document.createDocumentFragment().querySelector(selector);
+      } catch {
+        logger.warn(
+          `registerAttribute("${handlerName(handler)}"): not a usable attribute name — ` +
+            `it does not form a valid CSS attribute selector (${selector}). Ignored.`
+        );
+        return;
+      }
     }
   }
 
