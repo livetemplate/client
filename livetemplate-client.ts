@@ -28,6 +28,7 @@ import {
   detachRegistryRoot,
   disposeHandlers,
   getRegisteredAttributes,
+  hasLiveRoots,
   registerAttribute,
   runHandlers,
   teardownHandler,
@@ -814,11 +815,6 @@ export class LiveTemplateClient {
     this.uploadHandler.revokePreviews();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
-    // Root-less handler cleanup, deliberately outside the wrapper guard below:
-    // a handler whose state is module-global still has to be cleaned up when
-    // the client disconnects without ever having had a wrapper.
-    disposeHandlers(getRegisteredAttributes());
-    disposeHandlers(this.instanceHandlers);
     this.loadingIndicator.disablePerActionIndicator();
     if (this.wrapperElement) {
       // Mirror of the post-render loop: every registered handler gets its
@@ -836,6 +832,22 @@ export class LiveTemplateClient {
       teardownFxLifecycleListeners(this.wrapperElement);
     }
     detachRegistryRoot(this.registryRoot);
+
+    // Root-less cleanup, deliberately outside the wrapper guard above: a
+    // handler whose state is module-global still has to be cleaned up when the
+    // client disconnects without ever having had a wrapper.
+    //
+    // instanceHandlers belong to THIS client, so they dispose unconditionally.
+    // The module registry is shared by every client on the page, so its
+    // handlers' global state may only be torn down once the last client has
+    // detached — which is why this runs after detachRegistryRoot rather than
+    // before it. In the single-client case autoInit produces, the two are the
+    // same moment.
+    disposeHandlers(this.instanceHandlers);
+    if (!hasLiveRoots()) {
+      disposeHandlers(getRegisteredAttributes());
+    }
+
     this.resetSessionState();
   }
 

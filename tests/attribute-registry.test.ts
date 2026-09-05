@@ -12,6 +12,7 @@ import {
   detachRegistryRoot,
   disposeHandlers,
   getRegisteredAttributes,
+  hasLiveRoots,
   isDeclarative,
   registerAttribute,
   resolveCategory,
@@ -581,5 +582,57 @@ describe("two clients on one page", () => {
 
     contexts.get("RateA")!.send!({ action: "RateA", data: {} });
     expect(reconnectedA).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("registration diagnostics", () => {
+  // Reported on PR #159, round 5. The clash check ran before the shape and
+  // selector checks, so a handler that reused a name AND was invalid got told
+  // "Both will run" immediately before being rejected.
+  it("does not claim 'both will run' about a handler it is about to reject", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+    warn.mockClear();
+
+    // Same name, but a shape that can never fire.
+    registerAttribute({ attribute: "lvt-x:copy", onElementRemoved: () => {} });
+
+    const text = warn.mock.calls.flat().join(" ");
+    expect(text).toContain("onElementRemoved");
+    expect(text).not.toContain("Both will run");
+    expect(getRegisteredAttributes()).toHaveLength(1);
+  });
+
+  it("still warns about a genuine clash between two valid handlers", () => {
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+    warn.mockClear();
+    registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
+
+    expect(warn.mock.calls.flat().join(" ")).toContain("already claims this name");
+    expect(getRegisteredAttributes()).toHaveLength(2);
+  });
+});
+
+describe("dispose scoping", () => {
+  // Reported on PR #159, round 5. dispose() is for MODULE-GLOBAL state, which
+  // outlives any one client, so it must not run while another client is still
+  // using it.
+  it("defers dispose while another client is still live", () => {
+    const disposed = jest.fn();
+    registerAttribute({ name: "global", selectors: ["*"], setup: () => {}, dispose: disposed });
+
+    const a = liveRoot(makeRoot(`<div></div>`));
+    const b = liveRoot(makeRoot(`<div></div>`));
+    attachRegistryRoot(a);
+    attachRegistryRoot(b);
+
+    detachRegistryRoot(a);
+    expect(hasLiveRoots()).toBe(true);
+
+    detachRegistryRoot(b);
+    expect(hasLiveRoots()).toBe(false);
+  });
+
+  it("reports no live roots on a page that never attached one", () => {
+    expect(hasLiveRoots()).toBe(false);
   });
 });

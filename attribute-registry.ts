@@ -83,8 +83,14 @@ interface BaseHandler {
   needsServerChannel?: boolean;
 
   /**
-   * Root-less cleanup, run on every disconnect whether or not a wrapper
-   * element exists.
+   * Root-less cleanup, run when the LAST client disconnects, whether or not a
+   * wrapper element exists.
+   *
+   * Scoped to the last client on purpose. The registry is module-level and
+   * shared by every client on the page, so a handler's module-global state is
+   * too — disposing it when one of two clients disconnects would pull it out
+   * from under the other. Per-client state does not belong here; it belongs in
+   * `teardown(root)`, which runs for each client as it goes.
    *
    * `teardown(root)` can only express cleanup scoped to a subtree, but plenty
    * of handlers own module-global state — a timer map, a document-level
@@ -339,22 +345,6 @@ export function registerAttribute(handler: AttributeHandler): void {
     return;
   }
 
-  // Duplicate claim warning. Keyed on the DECLARATIVE attribute name and on the
-  // resolved handler name — never on `selectors`, which is descriptive and
-  // which two built-ins legitimately set to a bare "*" walk. Case-folded
-  // because HTML parsers ASCII-lowercase attribute names, so `lvt-x:doThing`
-  // and `lvt-x:dothing` are the same attribute in the DOM even though they are
-  // different strings here.
-  const key = claimKey(handler);
-  const clash = key !== null && registry.some((existing) => claimKey(existing) === key);
-  if (clash) {
-    logger.warn(
-      `registerAttribute("${handlerName(handler)}"): another handler already claims this ` +
-        `name. Both will run; the earlier registration is not replaced. Third-party ` +
-        `attributes should avoid the lvt-fx:/lvt-el:/lvt-form: namespaces.`
-    );
-  }
-
   if (declarative) {
     const d = handler as DeclarativeHandler;
     // A declarative handler is tracked by the scan, and the scan only runs for
@@ -396,6 +386,25 @@ export function registerAttribute(handler: AttributeHandler): void {
     }
   }
 
+  // Duplicate claim warning. Deliberately LAST, after every rejection above:
+  // it says "both will run", which is only true of a handler that is actually
+  // about to be accepted. Warning earlier meant a handler that reused a name
+  // AND was invalid got told both would run immediately before being rejected.
+  //
+  // Keyed on the declarative attribute name and the resolved handler name —
+  // never on `selectors`, which is descriptive and which two built-ins
+  // legitimately set to a bare "*" walk. Case-folded because HTML parsers
+  // ASCII-lowercase attribute names, so `lvt-x:doThing` and `lvt-x:dothing` are
+  // the same attribute in the DOM even though they are different strings here.
+  const key = claimKey(handler);
+  if (key !== null && registry.some((existing) => claimKey(existing) === key)) {
+    logger.warn(
+      `registerAttribute("${handlerName(handler)}"): another handler already claims this ` +
+        `name. Both will run; the earlier registration is not replaced. Third-party ` +
+        `attributes should avoid the lvt-fx:/lvt-el:/lvt-form: namespaces.`
+    );
+  }
+
   resolved.set(handler, { category: deriveCategory(handler), selector });
 
   registry.push(handler);
@@ -435,6 +444,18 @@ export function attachRegistryRoot(root: RegistryRoot): void {
 
 export function detachRegistryRoot(root: RegistryRoot): void {
   liveRoots.delete(root);
+}
+
+/**
+ * Whether any client is still attached.
+ *
+ * Exists so a disconnecting client can tell whether it is the LAST one, which
+ * is the condition for running `dispose()`. Module-global handler state outlives
+ * any single client, so tearing it down while another client is still rendering
+ * through the same handler would break that client.
+ */
+export function hasLiveRoots(): boolean {
+  return liveRoots.size > 0;
 }
 
 /**
