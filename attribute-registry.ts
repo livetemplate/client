@@ -486,9 +486,47 @@ export function registerAttribute(handler: AttributeHandler): void {
  * public API is settled.
  */
 
-/** The live registry. Read on every render, never snapshotted at construction. */
+/**
+ * A snapshot of the registered handlers, for inspection.
+ *
+ * A COPY, not the live array. `readonly` is erased at compile time, so handing
+ * out the real one lets any caller push into the registry or reorder it. The
+ * render, teardown and dispose paths deliberately do not use this — they call
+ * the runRegisteredHandlers / teardownRegisteredHandlers /
+ * disposeRegisteredHandlers helpers below, which iterate the internal array
+ * directly and so allocate nothing on the hot path.
+ */
 export function getRegisteredAttributes(): readonly AttributeHandler[] {
-  return registry;
+  return registry.slice();
+}
+
+/**
+ * Runs every registered handler for one render.
+ *
+ * The registry iterates itself rather than exporting its array for a caller to
+ * loop over: it keeps the internal array unreachable, and it means the render
+ * path costs no allocation. The array is read LIVE here, so a handler
+ * registered by a bundle that loaded after core participates from its very next
+ * render.
+ */
+export function runRegisteredHandlers(
+  roots: { scanRoot: Element; wrapperRoot: Element },
+  send: SendFn,
+  domChanged: boolean
+): void {
+  runHandlers(registry, roots, send, domChanged);
+}
+
+/** Tears every registered handler down against one root. */
+export function teardownRegisteredHandlers(root: Element): void {
+  for (const handler of registry) {
+    teardownHandler(handler, root);
+  }
+}
+
+/** Runs every registered handler's root-less cleanup. */
+export function disposeRegisteredHandlers(): void {
+  disposeHandlers(registry);
 }
 
 /**

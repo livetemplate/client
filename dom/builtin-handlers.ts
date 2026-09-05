@@ -206,13 +206,31 @@ const builtinHandlers: AttributeHandler[] = [
   },
 ];
 
+let registered = false;
+
 /**
  * Registers every built-in. Called once at module load, before any user code
  * can run, so built-ins always occupy the earliest registry slots and a
  * third-party handler claiming the same name is the one that gets warned about.
+ *
+ * Guarded, because the registry is module-level state and this is now a named
+ * entry point rather than inline top-of-file code. A page that evaluates the
+ * bundle twice — a duplicated <script>, a bundler that fails to dedupe — would
+ * otherwise register all eighteen handlers a second time, and the six that
+ * carry needsServerChannel would dispatch every action to the server twice.
+ * The duplicate-name warning would fire eighteen times on the way there, so it
+ * would not be silent, but a doubled action is not something to leave to a
+ * console warning.
  */
 export function registerBuiltinHandlers(): void {
+  if (registered) return;
+  registered = true;
   for (const handler of builtinHandlers) {
     registerAttribute(handler);
   }
+}
+
+/** Test-only: lets a suite re-register after clearing the registry. */
+export function __resetBuiltinRegistrationForTesting(): void {
+  registered = false;
 }

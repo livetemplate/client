@@ -27,10 +27,12 @@ import {
   attachRegistryRoot,
   detachRegistryRoot,
   disposeHandlers,
-  getRegisteredAttributes,
+  disposeRegisteredHandlers,
   hasLiveRoots,
   registerAttribute,
   runHandlers,
+  runRegisteredHandlers,
+  teardownRegisteredHandlers,
   teardownHandler,
   type AttributeHandler,
   type RegistryRoot,
@@ -821,9 +823,7 @@ export class LiveTemplateClient {
       // teardown, in registration order. A handler that can be registered but
       // not torn down is half an interface — and Phase 4 cannot relocate a
       // handler whose cleanup is still named in core.
-      for (const handler of getRegisteredAttributes()) {
-        teardownHandler(handler, this.wrapperElement);
-      }
+      teardownRegisteredHandlers(this.wrapperElement);
       for (const handler of this.instanceHandlers) {
         teardownHandler(handler, this.wrapperElement);
       }
@@ -845,7 +845,7 @@ export class LiveTemplateClient {
     // same moment.
     disposeHandlers(this.instanceHandlers);
     if (!hasLiveRoots()) {
-      disposeHandlers(getRegisteredAttributes());
+      disposeRegisteredHandlers();
     }
 
     this.resetSessionState();
@@ -2329,7 +2329,7 @@ export class LiveTemplateClient {
       scanRoot: element,
       wrapperRoot: this.wrapperElement || element,
     };
-    runHandlers(getRegisteredAttributes(), roots, this.boundSend, domChanged);
+    runRegisteredHandlers(roots, this.boundSend, domChanged);
 
     if (domChanged) {
       // Event delegation stays OUTSIDE the registry by design: action routing

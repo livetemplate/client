@@ -6,13 +6,16 @@
  * `setupSpy`, …), which is what made them a clean regression net for the
  * registry migration — the functions did not change. The cost of that property
  * is that they cannot see the wiring at all. A registration list that silently
- * lost fourteen of its eighteen entries left all 851 of them green, and only
+ * lost fourteen of its eighteen entries left every one of them green, and only
  * the bundle size gave it away.
  *
  * So this file asserts the wiring itself: the exact set, and the exact order.
  */
 
-import { registerBuiltinHandlers } from "../dom/builtin-handlers";
+import {
+  registerBuiltinHandlers,
+  __resetBuiltinRegistrationForTesting,
+} from "../dom/builtin-handlers";
 import {
   getRegisteredAttributes,
   isDeclarative,
@@ -59,6 +62,7 @@ const SERVER_CHANNEL = [
 
 beforeEach(() => {
   __resetRegistryForTesting();
+  __resetBuiltinRegistrationForTesting();
   registerBuiltinHandlers();
 });
 
@@ -108,10 +112,17 @@ describe("built-in registration", () => {
     expect(disposers).toEqual(["lvt-fx:auto-click"]);
   });
 
-  it("is idempotent enough to warn rather than silently double-register", () => {
+  it("does not re-register if the module is evaluated twice", () => {
+    // A duplicated <script> or a bundler dedupe failure would otherwise give
+    // every built-in a second registration — and the six needsServerChannel
+    // handlers would dispatch every action to the server twice.
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const before = getRegisteredAttributes().length;
+
     registerBuiltinHandlers();
-    expect(warn.mock.calls.flat().join(" ")).toContain("already claims this name");
+
+    expect(getRegisteredAttributes()).toHaveLength(before);
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });
