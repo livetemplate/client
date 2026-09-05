@@ -150,7 +150,10 @@ export class LiveTemplateClient {
    */
   private registryRoot: RegistryRoot = {
     root: () => this.wrapperElement,
-    send: (message) => this.send(message),
+    // Reuses boundSend rather than allocating a second identical closure.
+    // Field initializers run in declaration order, so boundSend above is
+    // already assigned, and it is readonly — this cannot go stale.
+    send: this.boundSend,
   };
 
   // Initialization tracking for loading indicator

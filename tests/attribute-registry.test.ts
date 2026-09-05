@@ -681,3 +681,25 @@ describe("state scoping across handlers", () => {
     expect(emptyWarnings.some((w) => w.includes("lvt-x:rate"))).toBe(true);
   });
 });
+
+describe("low-level identity", () => {
+  // Reported on PR #159, round 11. `selectors` is descriptive and the
+  // duplicate-registration warning deliberately never keys on it, so a
+  // nameless low-level handler was invisible to that warning — silently, which
+  // is the one outcome the diagnostics exist to prevent. Required in the type
+  // AND at runtime, since the API is reachable from a plain <script>.
+  it("rejects a low-level handler with no name", () => {
+    registerAttribute({ selectors: ["[data-x]"], setup: () => {} } as any);
+
+    expect(getRegisteredAttributes()).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(" ")).toContain("must supply `name`");
+  });
+
+  it("warns when two named low-level handlers claim the same name", () => {
+    registerAttribute({ name: "dup", selectors: ["[a]"], setup: () => {} });
+    warn.mockClear();
+    registerAttribute({ name: "dup", selectors: ["[b]"], setup: () => {} });
+
+    expect(warn.mock.calls.flat().join(" ")).toContain("already claims this name");
+  });
+});

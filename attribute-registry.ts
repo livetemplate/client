@@ -73,7 +73,16 @@ export type SendFn = (message: { action: string; data: Record<string, unknown> }
 export type HandlerCategory = "fire-on-change" | "wire-idempotent";
 
 interface BaseHandler {
-  /** Defaults to `attribute` for declarative handlers; required for low-level. */
+  /**
+   * Defaults to `attribute` for declarative handlers; REQUIRED for low-level
+   * ones, where `LowLevelHandler` narrows it to non-optional.
+   *
+   * Required there because it is the only thing a low-level handler can be
+   * identified by: `selectors` is descriptive and the duplicate-registration
+   * warning deliberately never keys on it, so a nameless low-level handler is
+   * invisible to that warning — and a silent clash is the one case where it
+   * matters most.
+   */
   name?: string;
 
   /**
@@ -165,6 +174,9 @@ export interface DeclarativeHandler extends BaseHandler {
 }
 
 export interface LowLevelHandler extends BaseHandler {
+  /** Required: the handler's identity for diagnostics. See BaseHandler.name. */
+  name: string;
+
   /** Descriptive only — see the file header. e.g. '[lvt-fx\\:scroll]'. */
   selectors: string[];
   attribute?: undefined;
@@ -397,6 +409,18 @@ export function registerAttribute(handler: AttributeHandler): void {
     logger.warn(
       "registerAttribute: a handler declares either an `attribute` name (declarative) " +
         "or a `selectors` array with a setup() function (low-level). Ignored."
+    );
+    return;
+  }
+  // Checked at runtime as well as in the type, because this API is reachable
+  // from a plain <script> where no type ever ran. Without a name a low-level
+  // handler cannot be named in any diagnostic, and is invisible to the
+  // duplicate-registration warning — silently, which is the one outcome this
+  // registry's diagnostics exist to prevent.
+  if (!declarative && !handler.name) {
+    logger.warn(
+      "registerAttribute: a low-level handler must supply `name` — it is what " +
+        "diagnostics identify it by, and `selectors` is descriptive. Ignored."
     );
     return;
   }
