@@ -8,36 +8,11 @@
 import morphdom from "morphdom";
 import { FocusManager } from "./dom/focus-manager";
 import {
-  handleAnimateDirectives,
-  handleAreaSelectDirectives,
-  handleAutoClickDirectives,
-  handleHighlightDirectives,
-  handleIframeAutoHeightDirectives,
-  handlePreviewBridgeDirectives,
-  handleProxyBridgeDirectives,
-  handleRegionSelectDirectives,
-  handleTextSelectDirectives,
-  handleViewportReportDirectives,
-  handleScrollDirectives,
-  handleShadowRootHydration,
-  handleToastDirectives,
   handleURLHashDirective,
-  teardownAreaSelectForRoot,
-  teardownIframeAutoHeightForRoot,
-  teardownPreviewBridgeForRoot,
-  teardownProxyBridgeForRoot,
-  teardownRegionSelectForRoot,
-  teardownTextSelectForRoot,
-  teardownViewportReportForRoot,
-  teardownURLHashForRoot,
-  teardownAutoClickTimers,
   setupToastClickOutside,
-  setupFxDOMEventTriggers,
-  teardownFxDOMEventTriggers,
-  setupFxLifecycleListeners,
   teardownFxLifecycleListeners,
+  setupFxLifecycleListeners,
 } from "./dom/directives";
-import { handleResizeDirectives, teardownResizeForRoot } from "./dom/resize";
 import { EventDelegator } from "./dom/event-delegation";
 import { LinkInterceptor } from "./dom/link-interceptor";
 import { ObserverManager } from "./dom/observer-manager";
@@ -47,9 +22,23 @@ import { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
 import { preserveOneShotGuards, reapplyClientOwnedState } from "./dom/client-owned-state";
 import { setupInvokerPolyfill } from "./dom/invoker-polyfill";
 import { setupHashLink, teardownHashLink, openFromHash, safeMatchesPopoverOpen } from "./dom/hash-link";
-import { setupScrollAway, teardownScrollAway } from "./dom/scroll-away";
-import { setupSpy, teardownSpy } from "./dom/spy";
 import { hydrateRedactedTokens } from "./dom/redact";
+import {
+  attachRegistryRoot,
+  detachRegistryRoot,
+  disposeHandlers,
+  disposeRegisteredHandlers,
+  hasLiveRoots,
+  registerAttribute,
+  runHandlers,
+  runRegisteredHandlers,
+  teardownRegisteredHandlers,
+  teardownHandler,
+  type AttributeHandler,
+  type RegistryRoot,
+  type SendFn,
+} from "./attribute-registry";
+import { registerBuiltinHandlers } from "./dom/builtin-handlers";
 import { TreeRenderer } from "./state/tree-renderer";
 import {
   RangeDomApplier,
@@ -76,6 +65,34 @@ import type {
 import { createLogger, Logger } from "./utils/logger";
 export { loadAndApplyUpdate, compareHTML } from "./utils/testing";
 export { setupReactiveAttributeListeners } from "./dom/reactive-attributes";
+
+// The public attribute-handler API. `registerAttribute` MUST be a module-level
+// named export, not only a class static: the browser build runs
+// `--global-name=LiveTemplateClient` over this module, so `window.LiveTemplateClient`
+// is the module NAMESPACE object and `LiveTemplateClient.registerAttribute(...)`
+// — the spelling every doc example uses — resolves to this export. The class
+// itself sits at `LiveTemplateClient.LiveTemplateClient` in that build.
+export { registerAttribute } from "./attribute-registry";
+export { LIFECYCLE_EVENTS } from "./event-spec";
+export type {
+  LifecycleEventName,
+  FormLifecycleEvent,
+  FormLifecycleEventName,
+  PendingEvent,
+  UpdatedEvent,
+  TopicErrorEvent,
+  ConnectionEventName,
+  UploadEventName,
+} from "./event-spec";
+export type {
+  AttributeHandler,
+  DeclarativeHandler,
+  LowLevelHandler,
+  ElementContext,
+  SetupContext,
+  SendFn,
+  HandlerCategory,
+} from "./attribute-registry";
 
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
@@ -106,6 +123,38 @@ export class LiveTemplateClient {
   private formDisabler: FormDisabler;
   private uploadHandler: UploadHandler;
   private changeAutoWirer: ChangeAutoWirer;
+
+  /**
+   * Built-in handlers that close over a per-client object rather than module
+   * state, so they cannot live in the module-level registry. Kept separate
+   * (not registered) so that two clients on one page don't register the same
+   * handler twice, and so the public registry stays exactly what the page
+   * declared.
+   */
+  private instanceHandlers: AttributeHandler[];
+
+  /**
+   * One `send` for the client's whole life, so the per-render dispatch does not
+   * allocate a closure on every render. It delegates to `this.send`, which
+   * resolves the transport at call time — so a context holding this stays
+   * correct across a reconnect without the registry re-keying anything.
+   */
+  private readonly boundSend: SendFn = (message) => this.send(message);
+
+  /**
+   * This client's face to the registry, so a handler registered AFTER connect
+   * can immediately catch up against the live DOM instead of waiting for the
+   * next render. An accessor, not a field: the wrapper is reassigned on
+   * cross-handler navigation, so reading it at call time is what keeps a
+   * late-registered handler pointed at the current one.
+   */
+  private registryRoot: RegistryRoot = {
+    root: () => this.wrapperElement,
+    // Reuses boundSend rather than allocating a second identical closure.
+    // Field initializers run in declaration order, so boundSend above is
+    // already assigned, and it is readonly — this cannot go stale.
+    send: this.boundSend,
+  };
 
   // Initialization tracking for loading indicator
   private isInitialized: boolean = false;
@@ -195,6 +244,17 @@ export class LiveTemplateClient {
       liveUrl: window.location.pathname + window.location.search,
       ...restOptions,
     };
+
+    this.instanceHandlers = [
+      {
+        // File-input upload wiring. An attribute scan like any other, but it
+        // needs this client's UploadHandler, so it is instance-bound.
+        name: "lvt-upload",
+        selectors: ['input[type="file"][lvt-upload]'],
+        category: "wire-idempotent",
+        setup: ({ scanRoot }) => this.uploadHandler.initializeFileInputs(scanRoot),
+      },
+    ];
 
     this.treeRenderer = new TreeRenderer(this.logger.child("TreeRenderer"));
     this.rangeDomApplier = new RangeDomApplier({
@@ -379,6 +439,27 @@ export class LiveTemplateClient {
    * Auto-initialize when DOM is ready
    * Called automatically when script loads
    */
+  /**
+   * Registers a custom `lvt-*` attribute handler.
+   *
+   * Static, not an instance method, and that is not an accident: under the
+   * documented `<script defer>` load pattern autoInit() has already
+   * constructed and connected a client by the time a second script evaluates,
+   * so there is no pre-init instance to call a method on — and a separate IIFE
+   * bundle reaches core only through the global. Registering after a client
+   * exists is fully supported: the handler catches up against every live
+   * wrapper immediately.
+   *
+   * Mirrors the module-level `registerAttribute` export. The IIFE build sets
+   * `--global-name=LiveTemplateClient` on the module namespace, so a page
+   * script calls `LiveTemplateClient.registerAttribute(handler)` and reaches
+   * the named export; this static is the path for ESM consumers who imported
+   * the class alone.
+   */
+  static registerAttribute(handler: AttributeHandler): void {
+    registerAttribute(handler);
+  }
+
   static autoInit(): void {
     const autoInitLogger = createLogger({ scope: "Client:autoInit" });
     const init = () => {
@@ -691,8 +772,26 @@ export class LiveTemplateClient {
     // available` fallback that posts via HTTP, so the initial-arm
     // dispatch always reaches the server — no "best-effort" caveat.
     if (this.wrapperElement) {
+      // Connect-time arming, deliberately NOT the registry pass. Page load
+      // produces no updateDOM call, so a handler that only runs post-render
+      // never arms and a `#path:L4` URL is ignored until something else
+      // triggers a render.
+      //
+      // url-hash is not alone in needing this — initializeFileInputs above has
+      // the identical requirement for SSR'd inputs (issue #453), and so would
+      // any third-party handler over server-rendered markup. That makes
+      // connect-time arming a lifecycle phase the interface should express
+      // (an opt-in flag, with late registration's catch-up gated on the same
+      // predicate) rather than two hardcoded calls. Deferred to Phase 3: doing
+      // it here would move these calls relative to the rest of connect(), and
+      // this phase's bar is that nothing changes behaviour.
       handleURLHashDirective(this.wrapperElement, (message) => this.send(message));
     }
+
+    // Make this client visible to the registry, so a handler registered after
+    // connect catches up against the live DOM immediately rather than waiting
+    // for a render that may never come. Idempotent: the registry holds a Set.
+    attachRegistryRoot(this.registryRoot);
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
@@ -721,23 +820,37 @@ export class LiveTemplateClient {
     this.uploadHandler.revokePreviews();
     this.eventDelegator.teardownDOMEventTriggerDelegation();
     teardownHashLink();
-    teardownAutoClickTimers();
     this.loadingIndicator.disablePerActionIndicator();
     if (this.wrapperElement) {
-      teardownFxDOMEventTriggers(this.wrapperElement);
+      // Mirror of the post-render loop: every registered handler gets its
+      // teardown, in registration order. A handler that can be registered but
+      // not torn down is half an interface — and Phase 4 cannot relocate a
+      // handler whose cleanup is still named in core.
+      teardownRegisteredHandlers(this.wrapperElement);
+      for (const handler of this.instanceHandlers) {
+        teardownHandler(handler, this.wrapperElement);
+      }
+      // Connect-time, not per-render: setupFxLifecycleListeners is wired once
+      // in connect(), so it is not a registry entry and needs its own teardown.
       teardownFxLifecycleListeners(this.wrapperElement);
-      teardownScrollAway(this.wrapperElement);
-      teardownSpy(this.wrapperElement);
-      teardownAreaSelectForRoot(this.wrapperElement);
-      teardownResizeForRoot(this.wrapperElement);
-      teardownRegionSelectForRoot(this.wrapperElement);
-      teardownTextSelectForRoot(this.wrapperElement);
-      teardownViewportReportForRoot(this.wrapperElement);
-      teardownProxyBridgeForRoot(this.wrapperElement);
-      teardownIframeAutoHeightForRoot(this.wrapperElement);
-      teardownPreviewBridgeForRoot(this.wrapperElement);
-      teardownURLHashForRoot(this.wrapperElement);
     }
+    detachRegistryRoot(this.registryRoot);
+
+    // Root-less cleanup, deliberately outside the wrapper guard above: a
+    // handler whose state is module-global still has to be cleaned up when the
+    // client disconnects without ever having had a wrapper.
+    //
+    // instanceHandlers belong to THIS client, so they dispose unconditionally.
+    // The module registry is shared by every client on the page, so its
+    // handlers' global state may only be torn down once the last client has
+    // detached — which is why this runs after detachRegistryRoot rather than
+    // before it. In the single-client case autoInit produces, the two are the
+    // same moment.
+    disposeHandlers(this.instanceHandlers);
+    if (!hasLiveRoots()) {
+      disposeRegisteredHandlers();
+    }
+
     this.resetSessionState();
   }
 
@@ -2200,101 +2313,39 @@ export class LiveTemplateClient {
     // Restore focus to previously focused element
     this.focusManager.restoreFocusedElement();
 
-    // Two classes of post-render scans:
+    // Post-render attribute pass.
     //
-    //   FIRE-ON-CHANGE (always run): handleScrollDirectives,
-    //   handleHighlightDirectives, handleAnimateDirectives,
-    //   handleToastDirectives, setupScrollAway. These detect VALUE changes
-    //   on existing directive-bearing elements (e.g. lvt-fx:highlight
-    //   flashes on every render where the underlying value changed) — so
-    //   they must run on every render. Cost is bounded: each does a CSS
-    //   attribute selector qsa for its specific directive (`[lvt-fx\:highlight]`
-    //   etc.); for a 10k-row LargeTable where rows DON'T have these
-    //   directives, the qsa returns empty in ~1-3ms total.
+    // Every lvt-* attribute handler — built-in and third-party alike — is a
+    // registry entry, and this loop is the only thing that runs them. The
+    // registry is read LIVE on every render rather than snapshotted at
+    // construction, so a handler registered by a bundle that loaded after core
+    // participates from its very next render.
     //
-    //   WIRE-IDEMPOTENT (skip when nothing new): setupFxDOMEventTriggers,
-    //   setupDOMEventTriggerDelegation, uploadHandler.initializeFileInputs.
-    //   These walk EVERY descendant via qsa("*") to attach event listeners
-    //   on lvt-fx:event:on:trigger / lvt-el: / file inputs. They have
-    //   per-element guards so re-running is safe but wasteful — at 80k
-    //   descendants the walk costs ~150-200ms each. Skip when neither
-    //   morphdom.onNodeAdded fired nor a new lvt-* directive attribute
-    //   appeared on any morphed element (tracked via onBeforeElUpdated).
-    handleScrollDirectives(element);
-    handleHighlightDirectives(element);
-    handleAnimateDirectives(element);
-    handleToastDirectives(element);
-    handleAutoClickDirectives(element);
-    // Area-select needs the send() callback to dispatch the final-
-    // coords action on pointerup, unlike the other directives in this
-    // block (which are visual-only or click-through). Reuse the same
-    // send the event delegator uses so the WS/HTTP routing is
-    // identical to a normal action.
-    handleAreaSelectDirectives(element, (message) => this.send(message));
-    // resize is client-only (updates a CSS var on :root + localStorage), so
-    // unlike area-select it needs no send() callback. Arm/sweep is idempotent
-    // so an in-flight drag survives a re-render.
-    handleResizeDirectives(element);
-    // region-select is the area-select drag spine over an iframe / code
-    // overlay: a drawn box is hit-tested to a source line range. Same
-    // send-callback wiring; the overlay is parent light DOM so it works
-    // on iOS (unlike the deleted in-iframe tap).
-    handleRegionSelectDirectives(element, (message) => this.send(message));
-    // text-select captures a native text selection over the diff and dispatches
-    // a character range (word / phrase / multi-line span). Same send-callback
-    // wiring; uses window.getSelection rather than a drawn box, so it covers
-    // mouse, touch, and keyboard from one path.
-    handleTextSelectDirectives(element, (message) => this.send(message));
-    // viewport-report tracks how far the reviewer has scrolled/read and reports
-    // the visible line keys to the server (read-progress). Same send wiring;
-    // dumb reporter, server owns the logic.
-    handleViewportReportDirectives(element, (message) => this.send(message));
-    // proxy-bridge is the --external live-site bridge: it relays the proxied
-    // page's nav (→ setProxyURL) and scroll (→ pin-layer transform, no server
-    // hop) from the cross-origin beacon. Same send-callback wiring; the only
-    // thing that reaches across the cross-origin boundary, read-only.
-    handleProxyBridgeDirectives(element, (message) => this.send(message));
-    // iframe-autoheight sizes the sandboxed HTML-preview iframe to its
-    // content (iframes don't size to content). Selection over the preview
-    // is handled by a parent-document overlay (area/region-select), not
-    // from inside the iframe, so this directive needs no send callback.
-    handleIframeAutoHeightDirectives(element);
-    // preview-bridge is the opaque-origin successor to iframe-autoheight for the
-    // HTML preview: the iframe runs the page's own scripts (sandbox=allow-scripts)
-    // so contentDocument is unreadable, and the in-iframe beacon posts the height
-    // (auto-size) + the [data-from] block rects (region-select hit-testing) out
-    // via postMessage. No send callback — it only caches + sizes; region-select
-    // does the sending.
-    handlePreviewBridgeDirectives(element);
-    // url-hash bridges server state ↔ location.hash. Same send-callback
-    // wiring as area-select: the directive needs to dispatch a server
-    // action on user-driven hashchange events (anchor click, address-bar
-    // edit, back-button) and read the latest server-rendered hash from
-    // `data-lvt-url-hash` on every render.
-    handleURLHashDirective(element, (message) => this.send(message));
-    // Hydrate any server-emitted Declarative Shadow DOM templates that
-    // morphdom inserted via DOM APIs (which don't auto-activate them).
-    // Cheap when no templates are present (one querySelectorAll).
-    //
-    // Hard limitation: livetemplate directives placed INSIDE shadow
-    // content (e.g. lvt-on:click on an element inside a `<template
-    // shadowrootmode>`) NEVER register, on any render. The directive
-    // sweeps above (setupFxDOMEventTriggers, eventDelegator) walk via
-    // querySelectorAll which stops at shadow boundaries, and the
-    // hydration that follows doesn't run them against the new shadow
-    // root either. Treat shadow DOM as a style/structure isolation
-    // primitive only — keep directives in light DOM. (Consumers that
-    // need a real viewport for untrusted markup — e.g. prereview's HTML
-    // preview — use a sandboxed iframe + handleIframeAutoHeightDirectives
-    // instead, reaching the content via the same-origin contentDocument.)
-    handleShadowRootHydration(element);
-    setupScrollAway(element);
-    setupSpy(element);
-    if (this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender) {
-      setupFxDOMEventTriggers(element, this.wrapperElement || undefined);
+    // A handler's category decides whether it runs on a render that changed
+    // nothing structural (see attribute-registry.ts). `wire-idempotent`
+    // handlers walk every descendant to attach listeners; at 80k descendants
+    // that walk costs ~150-200ms and finds nothing new, so they are skipped
+    // unless morphdom added a node or touched a directive attribute.
+    const domChanged =
+      this.nodesAddedThisRender > 0 || this.directiveTouchedThisRender;
+    const roots = {
+      scanRoot: element,
+      wrapperRoot: this.wrapperElement || element,
+    };
+    runRegisteredHandlers(roots, this.boundSend, domChanged);
+
+    if (domChanged) {
+      // Event delegation stays OUTSIDE the registry by design: action routing
+      // (lvt-on:, lvt-mod:, lvt-key) must remain single-implementation, and a
+      // second delegator would fork the protocol. Handlers extend the event
+      // SET via `delegatedEvents`, never the routing.
       this.eventDelegator.setupDOMEventTriggerDelegation(element);
-      this.uploadHandler.initializeFileInputs(element);
     }
+
+    // Instance-bound built-ins: handlers that need a per-client object rather
+    // than module state, so they cannot be registered at module load. They run
+    // after the module registry, holding the position their hardcoded calls had.
+    runHandlers(this.instanceHandlers, roots, this.boundSend, domChanged);
 
     // changeAutoWirer always runs: its eviction loop must process
     // wirings on removed elements too, regardless of additions.
@@ -2400,6 +2451,12 @@ export class LiveTemplateClient {
     return this.treeRenderer.getStaticStructure();
   }
 }
+
+// Built-ins register first, at module load, before any page script can run.
+// That ordering is what gives them the earliest registry slots — so a
+// third-party handler claiming a built-in name is the one that gets warned
+// about, and built-ins keep the order their hardcoded call sequence had.
+registerBuiltinHandlers();
 
 // Auto-initialize when script loads (for browser use)
 if (typeof window !== "undefined") {

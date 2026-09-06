@@ -5,6 +5,81 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`lvt-*` attributes are now extensible: `LiveTemplateClient.registerAttribute()`.**
+  Adding an attribute used to mean forking this library — writing a `dom/*.ts`
+  module, importing it into `livetemplate-client.ts`, and inserting a call at the
+  right position in a hardcoded ~20-entry sequence. An app that wanted
+  `lvt-x:copy-to-clipboard` had no supported way to get one.
+
+  There are two layers. Most authors only need the declarative one: declare an
+  attribute *name* and get called per element.
+
+  ```html
+  <button lvt-x:copy="{{.ShareURL}}">Copy link</button>
+  <script src="{{ lvtClientScriptURL }}" defer></script>
+  <script>
+    LiveTemplateClient.registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded(el, ctx) {
+        el.addEventListener("click", () => navigator.clipboard.writeText(ctx.value));
+      },
+    });
+  </script>
+  ```
+
+  The framework owns selector escaping, the DOM scan, per-element match
+  tracking, empty-value rejection, and sweeping elements that lost the attribute
+  or left the DOM — the sweep runs on every render, so `onElementRemoved` is
+  never deferred — so the three classic mistakes (no sweep, listeners stacking
+  on every render, a captured transport that dies at reconnect) are not
+  reachable from this layer. `ctx.value` and `ctx.send` are live accessors, so a
+  listener wired once still reads the current attribute value and dispatches
+  through the current transport.
+
+  Set `needsServerChannel: true` to get `ctx.send`; the message routes through
+  the same path an `lvt-on:click` action uses, and the server cannot tell the
+  difference. No server-side registration, no new wire message type, no build
+  step.
+
+  A `selectors` + `setup()`/`teardown()` escape hatch covers handlers with
+  cross-element state; every built-in uses it, so an author is never on a lesser
+  API than the framework itself.
+
+  Registration is static and late registration is supported: calling
+  `registerAttribute` after the client has connected runs the handler against
+  the live DOM immediately, rather than waiting for the next render. That is the
+  only sequence available to a second `<script>`, because `autoInit()` has
+  already connected by the time one evaluates.
+
+  Exported types: `AttributeHandler`, `DeclarativeHandler`, `LowLevelHandler`,
+  `ElementContext`, `SetupContext`, `SendFn`, `HandlerCategory`.
+
+  `registerAttribute` is deliberately unauthenticated, and grants no capability
+  a page script did not already have: `window.liveTemplateClient.send()` has
+  always been public, so any script with page access could already dispatch
+  arbitrary actions. Server-side authorization is unchanged and remains the
+  boundary that matters.
+
+  Two limits worth knowing before you build on this. Registration is
+  append-only — there is no `unregisterAttribute` yet, so a dev server that
+  hot-reloads a handler bundle accumulates one live handler per reload; the
+  production `<script defer>` pattern, where a bundle evaluates once, is
+  unaffected. And `dispose()` runs when the *last* client on the page
+  disconnects, because the registry is shared by all of them; per-client
+  cleanup belongs in `teardown(root)`, which runs for each client as it goes.
+
+### Changed
+
+- **Every built-in attribute handler now runs through that same registry.** The
+  hardcoded post-render call sequence and the matching `disconnect()` teardown
+  list are gone, replaced by a loop over registered handlers. No attribute
+  changed its spelling, semantics, or server-side treatment, and no template
+  needs an edit; all 824 pre-existing tests pass unmodified.
+
 ## [v0.25.0] - 2026-08-15
 
 ### Changes
