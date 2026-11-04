@@ -616,8 +616,27 @@ describe("WebSocketManager connect", () => {
     const result = await connectPromise;
 
     expect(result.usingWebSocket).toBe(true);
+    expect(result.reason).toBeUndefined();
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(onDisconnected).not.toHaveBeenCalled();
+  });
+
+  // #160: the client retries a lost socket only for "failed" — the server
+  // speaks WS but the open did not complete — never for "unavailable".
+  it("reports reason 'unavailable' when the server says it has no WebSocket", async () => {
+    mockFetch
+      .mockReset()
+      .mockResolvedValueOnce({
+        headers: {
+          get: (name: string) =>
+            name === "X-LiveTemplate-WebSocket" ? "disabled" : null,
+        },
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ tree: null }) });
+    const result = await makeManager({}).connect();
+    expect(result.usingWebSocket).toBe(false);
+    expect(result.reason).toBe("unavailable");
+    expect(mockSocket).toBeNull(); // no socket was ever attempted
   });
 
   it("does NOT call onDisconnected when socket closes before opening (HTTP fallback)", async () => {
@@ -654,6 +673,7 @@ describe("WebSocketManager connect", () => {
     const result = await connectPromise;
 
     expect(result.usingWebSocket).toBe(false);
+    expect(result.reason).toBe("failed");
     expect(onConnected).not.toHaveBeenCalled();
     // Critical: we never connected, so we must NOT signal "disconnected"
     // to downstream — that would falsely flip UI state.
@@ -690,6 +710,7 @@ describe("WebSocketManager connect", () => {
     const result = await connectPromise;
 
     expect(result.usingWebSocket).toBe(false);
+    expect(result.reason).toBe("failed");
     expect(onConnected).not.toHaveBeenCalled();
     // Even though the catch block calls transport.disconnect() (which triggers
     // onClose), the hasConnected gate prevents a spurious onDisconnected.

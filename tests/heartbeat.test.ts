@@ -35,6 +35,12 @@ class MockWebSocket {
     this.readyState = MockWebSocket.OPEN;
     this.onopen?.(new Event("open"));
   }
+  // The network is down: the open errors, then closes, before it ever opened.
+  simulateFail() {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onerror?.(new Event("error"));
+    this.onclose?.(new CloseEvent("close", { code: 1006 }));
+  }
   // Deliver a server → client message through the transport's onmessage.
   deliver(obj: unknown) {
     this.onmessage?.(
@@ -44,12 +50,15 @@ class MockWebSocket {
 }
 
 let mockSockets: MockWebSocket[] = [];
+let socketCreatedAt: number[] = [];
 
 function installMockWebSocket() {
   mockSockets = [];
+  socketCreatedAt = [];
   const WS = jest.fn().mockImplementation((url: string) => {
     const sock = new MockWebSocket(url);
     mockSockets.push(sock);
+    socketCreatedAt.push(Date.now());
     return sock;
   }) as any;
   WS.CONNECTING = 0;
@@ -59,7 +68,12 @@ function installMockWebSocket() {
   (global as any).WebSocket = WS;
 }
 
+// wsHeader is what the HEAD probe reports; flip it to "disabled" to model a
+// server that genuinely has no WebSocket.
+let wsHeader = "enabled";
+
 function installFetchStub() {
+  wsHeader = "enabled";
   if (typeof (globalThis as any).fetch !== "function") {
     (globalThis as any).fetch = () => {};
   }
@@ -68,12 +82,17 @@ function installFetchStub() {
     .mockImplementation((...args: unknown[]) => {
       const opts = args[1] as any;
       if (opts?.method === "HEAD") {
-        return Promise.resolve(
-          new Response(null, {
-            status: 200,
-            headers: { "X-LiveTemplate-WebSocket": "enabled" },
-          })
-        );
+        // A minimal Response stand-in: jsdom has no global Response, and a
+        // throwing stub would make the probe's catch assume WS and never read
+        // the header at all.
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (k: string) =>
+              k === "X-LiveTemplate-WebSocket" ? wsHeader : null,
+          },
+        });
       }
       return Promise.resolve(new Response("{}", { status: 200 }));
     });
@@ -87,6 +106,39 @@ function createWrapper(): HTMLDivElement {
 }
 
 const HB = 10000; // heartbeat interval; pong deadline = max(2000, HB/2) = 5000
+
+// Connect a client with an explicit heartbeat interval (set pre-connect, exactly
+// as autoInit does from data-lvt-heartbeat-ms; 0 opts OUT, since the heartbeat
+// is ON by default) and open its first socket.
+async function connectClient(
+  heartbeatMs: number
+): Promise<{ client: LiveTemplateClient; wrapper: HTMLDivElement }> {
+  const wrapper = createWrapper();
+  const client = new LiveTemplateClient({ logLevel: "error" });
+  (client as any).heartbeatMs = heartbeatMs;
+  const p = client.connect();
+  await jest.advanceTimersByTimeAsync(0); // resolve HEAD fetch
+  mockSockets[0]?.simulateOpen();
+  await p;
+  return { client, wrapper };
+}
+
+function setHidden(hidden: boolean) {
+  Object.defineProperty(document, "hidden", {
+    value: hidden,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function fireVisibilityChange(hidden: boolean) {
+  setHidden(hidden);
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+function firePageShow(persisted: boolean) {
+  window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted }));
+}
 
 describe("Liveness heartbeat", () => {
   let client: LiveTemplateClient;
@@ -105,17 +157,8 @@ describe("Liveness heartbeat", () => {
     jest.restoreAllMocks();
   });
 
-  // Connect with an explicit heartbeat interval (set pre-connect, exactly as
-  // autoInit does from data-lvt-heartbeat-ms). enabled=false opts OUT (0), since
-  // the heartbeat is ON by default now.
   async function connectWithHeartbeat(enabled: boolean): Promise<void> {
-    createWrapper();
-    client = new LiveTemplateClient({ logLevel: "error" });
-    (client as any).heartbeatMs = enabled ? HB : 0;
-    const connectPromise = client.connect();
-    await jest.advanceTimersByTimeAsync(0); // resolve HEAD fetch
-    mockSockets[0]?.simulateOpen();
-    await connectPromise;
+    ({ client } = await connectClient(enabled ? HB : 0));
   }
 
   function pingsSent(sock: MockWebSocket): number {
@@ -197,5 +240,192 @@ describe("Liveness heartbeat", () => {
     await jest.advanceTimersByTimeAsync(HB * 2);
     expect(pingsSent(sock)).toBe(0);
     expect(mockSockets.length).toBe(1);
+  });
+});
+
+// #160: a RE-connect that fails because the network is down used to latch HTTP
+// mode forever — every self-heal path skipped useHTTP, so the page froze until a
+// reload. Every assertion counts constructed sockets (an observable retry), so a
+// gate that still blocks the lost state fails here rather than passing on a flag.
+describe("Lost-socket recovery (#160)", () => {
+  let client: LiveTemplateClient;
+  let wrapper: HTMLDivElement;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    document.body.replaceChildren();
+    installMockWebSocket();
+    installFetchStub();
+    history.replaceState(null, "", "/test");
+    setHidden(false);
+  });
+
+  afterEach(() => {
+    client?.disconnect();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  async function settle() {
+    for (let i = 0; i < 5; i++) await jest.advanceTimersByTimeAsync(0);
+  }
+
+  async function connectLive(): Promise<void> {
+    ({ client, wrapper } = await connectClient(HB));
+  }
+
+  // The live socket dies; the heartbeat's reconnect runs while the network is
+  // still down, so its new socket fails → the lost state.
+  async function loseSocket(): Promise<void> {
+    mockSockets[0].readyState = MockWebSocket.CLOSED;
+    await jest.advanceTimersByTimeAsync(HB); // tick → reconnect
+    await settle(); // HEAD probe resolves → socket #2 constructed
+    expect(mockSockets.length).toBe(2);
+    mockSockets[1].simulateFail();
+    await settle();
+    expect((client as any).useHTTP).toBe(true);
+    expect((client as any).wsLost).toBe(true);
+  }
+
+  // Lose the socket, then fail the next-tick retry too, so the next timed retry
+  // is 2×HB away: inside that window only an event trigger can explain a new
+  // socket.
+  async function loseSocketAndBurnRetry(): Promise<void> {
+    await connectLive();
+    await loseSocket();
+    await jest.advanceTimersByTimeAsync(HB);
+    await settle();
+    expect(mockSockets.length).toBe(3);
+    mockSockets[2].simulateFail();
+    await settle();
+  }
+
+  it("retries the socket on the next tick and goes live again", async () => {
+    await connectLive();
+    await loseSocket();
+    const reconnected = jest.fn();
+    wrapper.addEventListener("lvt:reconnected", reconnected);
+
+    await jest.advanceTimersByTimeAsync(HB);
+    await settle();
+    expect(mockSockets.length).toBe(3); // the retry
+
+    mockSockets[2].simulateOpen();
+    await settle();
+    expect((client as any).useHTTP).toBe(false);
+    expect((client as any).wsLost).toBe(false);
+    expect(client.isReady()).toBe(true);
+    expect(reconnected).toHaveBeenCalled();
+  });
+
+  it("backs off timed retries, capped at 5 min, and never stops", async () => {
+    await connectLive();
+    await loseSocket();
+    // Fail every retry for 45 min of fake time (the cap is reached at ~10 min).
+    let failed = 2;
+    for (let elapsed = 0; elapsed < 45 * 60 * 1000; elapsed += HB) {
+      await jest.advanceTimersByTimeAsync(HB);
+      await settle();
+      while (failed < mockSockets.length) mockSockets[failed++].simulateFail();
+      await settle();
+    }
+    const retries = socketCreatedAt.slice(1); // #2 onward
+    const gaps = retries.slice(1).map((t, i) => t - retries[i]);
+    expect(gaps.length).toBeGreaterThan(3);
+    for (let i = 1; i < gaps.length; i++) {
+      expect(gaps[i]).toBeGreaterThanOrEqual(gaps[i - 1]); // non-decreasing
+    }
+    const cap = 5 * 60 * 1000;
+    for (const g of gaps) expect(g).toBeLessThanOrEqual(cap + HB); // tick granularity
+    expect(gaps[gaps.length - 1]).toBeGreaterThanOrEqual(cap); // reached the cap
+    // Bounded: 45 min is about a dozen attempts, not 270 ticks.
+    expect(retries.length).toBeLessThan(20);
+  }, 60000);
+
+  it("does not retry a server that reports no WebSocket", async () => {
+    await connectLive();
+    wsHeader = "disabled";
+    mockSockets[0].readyState = MockWebSocket.CLOSED;
+    await jest.advanceTimersByTimeAsync(HB);
+    await settle();
+    expect((client as any).useHTTP).toBe(true);
+    expect((client as any).wsLost).toBe(false);
+    await jest.advanceTimersByTimeAsync(HB * 20);
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(1000);
+    await settle();
+    expect(mockSockets.length).toBe(1); // never another socket
+  });
+
+  it("keeps a first-connect failure in HTTP mode without retrying", async () => {
+    wrapper = createWrapper();
+    client = new LiveTemplateClient({ logLevel: "error" });
+    (client as any).heartbeatMs = HB;
+    const p = client.connect();
+    await jest.advanceTimersByTimeAsync(0);
+    mockSockets[0].simulateFail();
+    await p;
+    expect((client as any).useHTTP).toBe(true);
+    expect((client as any).wsLost).toBe(false);
+    await jest.advanceTimersByTimeAsync(HB * 10);
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(1000);
+    await settle();
+    expect(mockSockets.length).toBe(1);
+  });
+
+  it("retries at once when the network comes back (online)", async () => {
+    await loseSocketAndBurnRetry();
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(600); // the 500ms settle delay
+    await settle();
+    expect(mockSockets.length).toBe(4);
+  });
+
+  it("ignores online while the socket is healthy", async () => {
+    await connectLive();
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(1000);
+    await settle();
+    expect(mockSockets.length).toBe(1);
+  });
+
+  it("retries on any return to visible, even under 3s", async () => {
+    await loseSocketAndBurnRetry();
+    fireVisibilityChange(true);
+    await jest.advanceTimersByTimeAsync(1000); // well under 3s
+    fireVisibilityChange(false);
+    await jest.advanceTimersByTimeAsync(600);
+    await settle();
+    expect(mockSockets.length).toBe(4);
+  });
+
+  it("retries on a bfcache pageshow", async () => {
+    await loseSocketAndBurnRetry();
+    firePageShow(true);
+    await jest.advanceTimersByTimeAsync(600);
+    await settle();
+    expect(mockSockets.length).toBe(4);
+  });
+
+  it("coalesces simultaneous triggers into one attempt", async () => {
+    await loseSocketAndBurnRetry();
+    window.dispatchEvent(new Event("online"));
+    firePageShow(true);
+    fireVisibilityChange(false);
+    await jest.advanceTimersByTimeAsync(600);
+    await settle();
+    expect(mockSockets.length).toBe(4); // one, not three
+  });
+
+  it("disconnect() clears the lost state and the online listener", async () => {
+    await connectLive();
+    await loseSocket();
+    client.disconnect();
+    expect((client as any).wsLost).toBe(false);
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(HB * 3);
+    await settle();
+    expect(mockSockets.length).toBe(2);
   });
 });

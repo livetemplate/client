@@ -189,6 +189,19 @@ export class LiveTemplateClient {
   private visibilityHandler: (() => void) | null = null;
   private pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
   private visibilityReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private onlineHandler: (() => void) | null = null;
+
+  // Lost-WebSocket recovery (#160): a RE-connect that failed because the
+  // network was down. Actions keep going over HTTP (useHTTP stays true), but the
+  // heartbeat tick, a return to visible, pageshow and `online` retry the socket
+  // — before #160 every one of those skipped HTTP mode and the page froze.
+  private static readonly MAX_WS_RETRY_MS = 5 * 60 * 1000;
+  private wsRetryFailures: number = 0; // > 0 ⇔ the socket is lost
+  private wsRetryAt: number = 0;
+
+  private get wsLost(): boolean {
+    return this.wsRetryFailures > 0;
+  }
 
   // Liveness heartbeat: an app-level ping/pong the client drives to detect a
   // dead OR zombie socket (a socket that still reports OPEN but whose TCP is
@@ -815,6 +828,7 @@ export class LiveTemplateClient {
     this.useHTTP = false;
     this.hiddenAt = 0;
     this.reconnecting = false;
+    this.clearWSLost();
     this.stopHeartbeat();
     this.teardownVisibilityReconnect();
     this.uploadHandler.revokePreviews();
@@ -895,6 +909,13 @@ export class LiveTemplateClient {
         }
         return;
       }
+      // A lost socket has no hiddenAt (that is only recorded while OPEN) and no
+      // live connection to protect, so any return to visible retries it.
+      if (this.wsLost) {
+        this.hiddenAt = 0;
+        this.scheduleVisibilityReconnect();
+        return;
+      }
       if (this.hiddenAt === 0) return;
       const elapsed = Date.now() - this.hiddenAt;
       this.hiddenAt = 0;
@@ -911,8 +932,16 @@ export class LiveTemplateClient {
       }
     };
 
+    // The network came back: retry a lost socket now rather than waiting out
+    // the backoff. For an app that opted out of the heartbeat, this and a
+    // return to visible are the only retries.
+    this.onlineHandler = () => {
+      if (this.wsLost) this.scheduleVisibilityReconnect();
+    };
+
     document.addEventListener("visibilitychange", this.visibilityHandler);
     window.addEventListener("pageshow", this.pageshowHandler);
+    window.addEventListener("online", this.onlineHandler);
   }
 
   private teardownVisibilityReconnect(): void {
@@ -928,6 +957,10 @@ export class LiveTemplateClient {
     if (this.pageshowHandler) {
       window.removeEventListener("pageshow", this.pageshowHandler);
       this.pageshowHandler = null;
+    }
+    if (this.onlineHandler) {
+      window.removeEventListener("online", this.onlineHandler);
+      this.onlineHandler = null;
     }
     this.visibilityHandlerAttached = false;
   }
@@ -957,11 +990,13 @@ export class LiveTemplateClient {
       // the underlying TCP connection is dead. Always reconnecting after
       // a long background is cheap (morphdom diffs produce no DOM changes
       // on a healthy connection) and handles the zombie case.
+      // A lost socket (wsLost) passes too: it is in HTTP mode with no
+      // transport, which would otherwise read as "intentionally disconnected".
       if (
         this.wrapperElement &&
-        !this.useHTTP &&
         !this.reconnecting &&
-        this.webSocketManager.getReadyState() !== undefined
+        (this.wsLost ||
+          (!this.useHTTP && this.webSocketManager.getReadyState() !== undefined))
       ) {
         this.performVisibilityReconnect();
       }
@@ -991,6 +1026,12 @@ export class LiveTemplateClient {
 
       this.useHTTP = !result.usingWebSocket;
 
+      // "failed": the server speaks WS but the socket could not open (network
+      // down) — keep retrying. Live, or "unavailable" (a genuine, permanent
+      // fallback): nothing to retry.
+      if (result.reason === "failed") this.markWSLost();
+      else this.clearWSLost();
+
       if (this.useHTTP) {
         this.ws = null;
         if (result.initialState && this.wrapperElement) {
@@ -1001,9 +1042,31 @@ export class LiveTemplateClient {
       this.wrapperElement?.dispatchEvent(new Event("lvt:reconnected"));
     } catch (err) {
       this.logger.error("Visibility reconnect failed:", err);
+      if (this.wsLost) this.markWSLost(); // still lost: advance the backoff
     } finally {
       this.reconnecting = false;
     }
+  }
+
+  // markWSLost records one more failed retry of a lost socket and schedules the
+  // next timed one: after failure 1 the retry is due on the next tick; after
+  // failure n ≥ 2 it waits heartbeatMs × 2^(n-1) (2×, 4×, …), capped at
+  // MAX_WS_RETRY_MS.
+  private markWSLost(): void {
+    this.wsRetryFailures++;
+    const wait =
+      this.wsRetryFailures <= 1
+        ? 0
+        : Math.min(
+            this.heartbeatMs * 2 ** (this.wsRetryFailures - 1),
+            LiveTemplateClient.MAX_WS_RETRY_MS
+          );
+    this.wsRetryAt = Date.now() + wait;
+  }
+
+  private clearWSLost(): void {
+    this.wsRetryFailures = 0;
+    this.wsRetryAt = 0;
   }
 
   // startHeartbeat arms the liveness interval (idempotent; no-op unless
@@ -1033,12 +1096,19 @@ export class LiveTemplateClient {
   // (the visibility path owns that case), mid-reconnect, or in HTTP mode.
   private heartbeatTick(): void {
     if (
-      this.useHTTP ||
       this.reconnecting ||
       (typeof document !== "undefined" && document.hidden)
     ) {
       return;
     }
+    // A lost socket has no transport to ping; the tick is its retry clock
+    // instead. Checked before the useHTTP / no-transport early returns, which
+    // would otherwise skip it forever (#160).
+    if (this.wsLost) {
+      if (Date.now() >= this.wsRetryAt) void this.performVisibilityReconnect();
+      return;
+    }
+    if (this.useHTTP) return;
     const readyState = this.webSocketManager.getReadyState();
     // undefined ⇒ no transport (intentionally disconnected) → nothing to probe.
     if (readyState === undefined) return;
