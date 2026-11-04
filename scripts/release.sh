@@ -304,7 +304,7 @@ commit_and_tag() {
     local new_version=$1
 
     log_step "Committing version bump"
-    git add VERSION package.json package-lock.json CHANGELOG.md
+    git add VERSION package.json package-lock.json CHANGELOG.md README.md
     git commit -m "chore(release): v$new_version
 
 Release @livetemplate/client v$new_version
