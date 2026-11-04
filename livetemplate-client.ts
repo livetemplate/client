@@ -1049,8 +1049,9 @@ export class LiveTemplateClient {
   }
 
   // markWSLost records one more failed retry of a lost socket and schedules the
-  // next timed one: the first retry is due on the next tick, then the wait
-  // doubles from one heartbeat interval up to MAX_WS_RETRY_MS.
+  // next timed one: after failure 1 the retry is due on the next tick; after
+  // failure n ≥ 2 it waits heartbeatMs × 2^(n-1) (2×, 4×, …), capped at
+  // MAX_WS_RETRY_MS.
   private markWSLost(): void {
     this.wsRetryFailures++;
     const wait =

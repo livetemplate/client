@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5 minutes), on a return to visible, on `pageshow`, and on the browser's
   `online` event. Actions still go over HTTP in the meantime. A server that
   reports no WebSocket at all, or a socket that fails on the very first connect,
-  still falls back to HTTP for good, as before.
+  still falls back to HTTP for good, as before. An app that opted out of the
+  heartbeat (`data-lvt-heartbeat-ms="0"`) gets no timed retries — it recovers
+  on `online`, a return to visible, or `pageshow` only.
 
 ## [v0.25.1] - 2026-09-06
 
