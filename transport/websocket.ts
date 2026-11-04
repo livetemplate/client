@@ -139,6 +139,11 @@ export interface WebSocketManagerConfig {
 export interface WebSocketConnectResult {
   usingWebSocket: boolean;
   initialState?: UpdateResponse | null;
+  // Why the connect fell back to HTTP (absent when usingWebSocket):
+  //   "unavailable" — the server says it has no WebSocket; a permanent fallback.
+  //   "failed"      — the socket errored, closed before opening, or timed out;
+  //                   the server does speak WS, so a reconnect may retry it.
+  reason?: "unavailable" | "failed";
 }
 
 export class WebSocketManager {
@@ -168,7 +173,7 @@ export class WebSocketManager {
     );
     if (!wsAvailable) {
       const initialState = await fetchInitialState(liveUrl, this.config.logger);
-      return { usingWebSocket: false, initialState };
+      return { usingWebSocket: false, initialState, reason: "unavailable" };
     }
 
     // Await onopen before resolving, so downstream setup runs with a ready
@@ -277,7 +282,7 @@ export class WebSocketManager {
       this.transport?.disconnect();
       this.transport = null;
       const initialState = await fetchInitialState(liveUrl, this.config.logger);
-      return { usingWebSocket: false, initialState };
+      return { usingWebSocket: false, initialState, reason: "failed" };
     }
   }
 

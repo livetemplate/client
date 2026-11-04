@@ -5,6 +5,21 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A failed reconnect no longer freezes the page until a reload (#160).** When
+  a live socket dropped and the reconnect ran while the network was still down
+  (a phone waking from sleep, a Wi-Fi blip), the client fell back to HTTP mode
+  and never tried the WebSocket again — the heartbeat and visibility paths both
+  skip HTTP mode — so server pushes stopped until the user reloaded. The client
+  now keeps retrying: on the next heartbeat tick (then backing off, capped at
+  5 minutes), on a return to visible, on `pageshow`, and on the browser's
+  `online` event. Actions still go over HTTP in the meantime. A server that
+  reports no WebSocket at all, or a socket that fails on the very first connect,
+  still falls back to HTTP for good, as before.
+
 ## [v0.25.1] - 2026-09-06
 
 ### Added
