@@ -128,6 +128,51 @@ window.addEventListener("livetemplate:update", (e) => {
 });
 ```
 
+### Attribute handlers
+
+Add your own `lvt-*` attribute without forking the client. Push the handler onto
+`window.lvtAttributes`, which works in any load order. An inline `<script>`
+ignores `defer`, so it runs *before* the deferred client; the client registers
+whatever was queued when it loads.
+
+```html
+<button lvt-x:copy="{{.ShareURL}}">Copy link</button>
+<script src="{{ lvtClientScriptURL }}" defer></script>
+<script>
+  (window.lvtAttributes ||= []).push({
+    attribute: "lvt-x:copy",
+    onElementAdded(el, ctx) {
+      el.addEventListener("click", () => navigator.clipboard.writeText(ctx.value));
+    },
+  });
+</script>
+```
+
+Code that runs after the client (a deferred bundle, an ES module import) can call
+`LiveTemplateClient.registerAttribute(handler)` directly instead. Either way, a
+handler registered before the client connects runs over the server-rendered page
+at connect, and one registered later runs against the live DOM immediately.
+
+- `needsServerChannel: true` gives the handler `ctx.send({ action, data })`.
+- `delegatedEvents: ["my-widget-change"]` makes `lvt-on:my-widget-change="Save"`
+  reach the server. Event types must be lowercase, and the event must bubble.
+- A low-level handler (`selectors` + `setup()`) declares the names it implements
+  in `claims`, so the census below counts them as handled.
+
+**Attribute census.** The server tells the client every `lvt-*` attribute the
+template uses. After the window `load` event, the client warns once for each
+name nothing claims. That attribute does nothing, usually because the script
+that registers it didn't load, or because of a typo.
+
+**Stability.** The handler interface (`AttributeHandler` and its context types)
+is public API under semver:
+
+- **Minor release:** may add *optional* members.
+- **Major release:** needed to remove or rename a member, add a required one,
+  change a callback's arguments, or change when a callback fires.
+- **Deprecation:** a member being removed logs a deprecation warning for at least
+  one minor release first.
+
 ### Drag-and-drop notes
 
 The client supports six native HTML5 drag events as `lvt-on:*` bindings: `dragstart`, `dragover`, `drop`, `dragend`, `dragenter`, `dragleave`. On `drop`, the action message includes `dragSourceKey` (the dragged item's `data-key`) and `dragTargetKey` (the drop target's `data-key`).

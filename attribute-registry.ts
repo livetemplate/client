@@ -113,6 +113,20 @@ interface BaseHandler {
    */
   dispose?(): void;
 
+  /**
+   * Extra DOM event types the core event delegator should listen for, so that
+   * `lvt-on:<type>="Action"` reaches the server for an event the built-in set
+   * does not cover — typically a custom element's own event.
+   *
+   * Only widens the delegator's listener set; routing is unchanged, because a
+   * second delegator would fork the action protocol. Must be lowercase: HTML
+   * parsers lowercase attribute names, so `lvt-on:myEvent` can only ever be
+   * found as `lvt-on:myevent`, and an uppercase type here could never match.
+   * The event must bubble (and be `composed` if dispatched inside a shadow
+   * root) — the listener is on `document`.
+   */
+  delegatedEvents?: string[];
+
   // Reserved: per-element morphdom predicates (onBeforeElUpdated?, ...).
   // Deferred, not designed. Every extension point on this interface is an
   // OPTIONAL member by construction, so adding one stays a minor release.
@@ -183,6 +197,30 @@ export interface LowLevelHandler extends BaseHandler {
 
   setup(ctx: SetupContext): void;
   teardown?(root: Element): void;
+
+  /**
+   * The `lvt-*` attribute names this handler implements, for the attribute
+   * census: the server advertises every name a template uses, and the client
+   * warns about any name nothing claims. A name ending in `:` claims a whole
+   * namespace (`"lvt-x:"`). Compared case-insensitively.
+   *
+   * `selectors` cannot answer this — it is descriptive, and a handler that
+   * walks `*` claims no particular name — so a low-level handler that owns an
+   * attribute says so here. Omitted means it claims nothing, and a template
+   * using its attribute warns as unhandled.
+   */
+  claims?: string[];
+
+  /**
+   * Also run once when a client connects, not only after renders.
+   *
+   * A page load hydrates server-rendered markup without changing it, so a
+   * handler that must act on what is already on screen (arm a listener, read
+   * the URL) would otherwise wait for a render that changes something.
+   * Declarative handlers always get this pass; it is idempotent for them by
+   * construction. A low-level `setup()` has to be safe to call again.
+   */
+  runOnConnect?: boolean;
 }
 
 export type AttributeHandler = DeclarativeHandler | LowLevelHandler;
@@ -200,6 +238,10 @@ export interface RegistryRoot {
   /** The client's wrapper, read at call time — it is replaced on navigation. */
   root(): Element | null;
   send: SendFn;
+  /** Called when a registration widens the delegated event set. */
+  delegatedEventsChanged?(): void;
+  /** Handlers owned by this client rather than the module registry. */
+  handlers?(): readonly AttributeHandler[];
 }
 
 // MODULE-LEVEL STATE, AND WHAT EACH PIECE IS KEYED BY.
@@ -502,9 +544,25 @@ export function registerAttribute(handler: AttributeHandler): void {
     );
   }
 
+  const extraEvents = handler.delegatedEvents ?? [];
+  for (const type of extraEvents) {
+    if (typeof type !== "string" || !type || type !== type.toLowerCase()) {
+      logger.warn(
+        `registerAttribute("${handlerName(handler)}"): delegatedEvents entry ${JSON.stringify(type)} ` +
+          `can never match — lvt-on: attribute names are lowercased by the HTML parser, so the ` +
+          `event type must be a non-empty lowercase string.`
+      );
+    }
+  }
+
   resolved.set(handler, { category: deriveCategory(handler), selector });
 
+  const eventCountBefore = extraEvents.length > 0 ? registeredDelegatedEvents().length : 0;
   registry.push(handler);
+
+  if (extraEvents.length > 0 && registeredDelegatedEvents().length > eventCountBefore) {
+    for (const liveRoot of liveRoots) liveRoot.delegatedEventsChanged?.();
+  }
 
   // Late-registration catch-up.
   //
@@ -589,9 +647,88 @@ export function __resetRegistryForTesting(): void {
   liveRoots.clear();
 }
 
-/** Attaches a live client so late registration has somewhere to catch up to. */
+/**
+ * Attaches a live client, and runs the connect pass against its wrapper.
+ *
+ * Attaching is what gives late registration somewhere to catch up to. The
+ * connect pass is the mirror case: a handler registered BEFORE any client
+ * existed — a `window.lvtAttributes` queue entry, or a module imported ahead of
+ * the client — would otherwise never see the server-rendered markup, because a
+ * page load only hydrates it and the first render changes nothing.
+ */
 export function attachRegistryRoot(root: RegistryRoot): void {
   liveRoots.add(root);
+  const el = root.root();
+  if (!el) return;
+  const roots = { scanRoot: el, wrapperRoot: el };
+  runConnectPass(registry, roots, root.send);
+  if (root.handlers) runConnectPass(root.handlers(), roots, root.send);
+}
+
+/**
+ * Runs every handler that acts at connect: all declarative ones, and low-level
+ * ones that opted in with `runOnConnect`. Not gated on category — a connect is
+ * not a render, and nothing has run against this DOM yet.
+ */
+export function runConnectPass(
+  handlers: readonly AttributeHandler[],
+  roots: { scanRoot: Element; wrapperRoot: Element },
+  send: SendFn
+): void {
+  for (const handler of handlers) {
+    if (isDeclarative(handler) || handler.runOnConnect) runHandler(handler, roots, send);
+  }
+}
+
+/** The extra event types registered handlers asked the delegator to listen for. */
+export function registeredDelegatedEvents(): string[] {
+  const types = new Set<string>();
+  for (const handler of registry) {
+    for (const type of handler.delegatedEvents ?? []) types.add(type);
+  }
+  return Array.from(types);
+}
+
+/**
+ * Every attribute name, or namespace prefix ending in ":", that a registered
+ * handler claims — lowercased, for the attribute census.
+ */
+export function registeredClaims(handlers: readonly AttributeHandler[] = registry): string[] {
+  const claims: string[] = [];
+  for (const handler of handlers) {
+    if (isDeclarative(handler)) claims.push(handler.attribute.toLowerCase());
+    else for (const claim of handler.claims ?? []) claims.push(claim.toLowerCase());
+  }
+  return claims;
+}
+
+/**
+ * The pre-load queue: `(window.lvtAttributes ||= []).push(handler)`.
+ *
+ * An inline `<script>` ignores `defer`, so one placed after the documented
+ * `<script src=… defer>` client tag runs BEFORE the client and finds no
+ * `LiveTemplateClient` global. The queue makes registration order-free: entries
+ * pushed earlier are registered when the client evaluates, and `push` is then
+ * replaced so later entries register immediately. Guarded so a bundle that
+ * evaluates twice does not register the queue's contents twice.
+ */
+export function installAttributeQueue(): void {
+  if (typeof window === "undefined") return;
+  const pending = window.lvtAttributes;
+  if (pending && !Array.isArray(pending)) return;
+  window.lvtAttributes = {
+    push(...handlers: AttributeHandler[]): number {
+      for (const handler of handlers) registerAttribute(handler);
+      return 0;
+    },
+  };
+  for (const handler of pending ?? []) registerAttribute(handler);
+}
+
+declare global {
+  interface Window {
+    lvtAttributes?: AttributeHandler[] | { push(...handlers: AttributeHandler[]): number };
+  }
 }
 
 export function detachRegistryRoot(root: RegistryRoot): void {
