@@ -41,8 +41,14 @@ export const CORE_CLAIMS: readonly string[] = [
   // Morphdom hooks.
   "lvt-ignore",
   "lvt-ignore-attrs",
-  // Change auto-wirer.
+  // Change auto-wirer. It also still skips lvt-change and lvt-input, but those
+  // were removed in v0.8.13 for lvt-on:: a leftover never sends its action, so
+  // they stay unclaimed and warn.
   "lvt-debounce",
+  // Lifecycle hooks, run by the DOM patcher.
+  "lvt-mounted",
+  "lvt-updated",
+  "lvt-destroyed",
   // Infinite-scroll observer.
   "lvt-scroll-sentinel",
 ];

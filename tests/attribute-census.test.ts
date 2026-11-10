@@ -6,6 +6,8 @@
  * These tests feed it payloads shaped exactly like the Go side emits.
  */
 
+import * as fs from "fs";
+import * as path from "path";
 import {
   CORE_CLAIMS,
   isClaimed,
@@ -139,8 +141,13 @@ describe("attribute census", () => {
   });
 
   it("warns for dead attributes still present in real templates", () => {
-    reportUnclaimedAttributes(["lvt-click", "lvt-change", "lvt-data-id"], instanceHandlers);
-    expect(warnings()).toHaveLength(3);
+    reportUnclaimedAttributes(["lvt-click", "lvt-change", "lvt-input", "lvt-data-id"], instanceHandlers);
+    expect(warnings()).toHaveLength(4);
+  });
+
+  it("claims the lifecycle hooks", () => {
+    reportUnclaimedAttributes(["lvt-mounted", "lvt-updated", "lvt-destroyed"], instanceHandlers);
+    expect(warnings()).toEqual([]);
   });
 
   it("starts warning for a built-in's names once that handler is not registered", () => {
@@ -181,5 +188,58 @@ describe("attribute census", () => {
     } finally {
       readyState.mockRestore();
     }
+  });
+
+  it("claims every lvt-* name the client source reads", () => {
+    // The drift guard for CORE_CLAIMS: a mechanism that starts reading a new
+    // lvt-* attribute without claiming it would be reported as doing nothing.
+    // Every "lvt-…" literal or [lvt-…] selector in the source must be claimed,
+    // or be listed here as a string that is not an attribute name.
+    const notAttributes: Record<string, string> = {
+      "lvt-action": "form field name",
+      "lvt-submitter": "form field name",
+      "lvt-active": "class name",
+      "lvt-loading-bar": "class name",
+      "lvt-area-select-overlay": "class name",
+      "lvt-animate-styles": "element id",
+      "lvt-loading-styles": "element id",
+      "lvt-unknown": "fallback wrapper id",
+      "lvt-redact": "localStorage key prefix (the attribute is data-lvt-redact)",
+      "lvt-toast-stack": "handler name (the attribute is data-lvt-toast-stack)",
+      "lvt-fade-in": "@keyframes name",
+      "lvt-slide-in": "@keyframes name",
+      "lvt-scale-in": "@keyframes name",
+      "lvt-change": "removed in v0.8.13; a leftover never sends its action, so it must warn",
+      "lvt-input": "removed in v0.8.13; a leftover never sends its action, so it must warn",
+      "lvt-x:copy": "documentation example",
+      "lvt-x:dothing": "documentation example",
+    };
+    const root = path.join(__dirname, "..");
+    const sources: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (!["node_modules", "dist", "tests", "coverage"].includes(entry.name) && !entry.name.startsWith(".")) walk(full);
+        } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
+          sources.push(full);
+        }
+      }
+    };
+    walk(root);
+
+    // Not preceded by a name character (so data-lvt-* is skipped), and not a
+    // bare namespace followed by ":" (a name built at runtime).
+    // A selector escapes its colons (`[lvt-fx\\:scroll]`), so a colon may follow backslashes.
+    const literal = /(?<![\w-])["'`[](lvt-[a-z][a-z-]*(?:\\*:[a-z-]+)*)(?![\w:\\-])/g;
+    const claims = [...CORE_CLAIMS, ...registeredClaims(), ...registeredClaims(instanceHandlers)];
+    const unclaimed = new Set<string>();
+    for (const file of sources) {
+      for (const [, raw] of fs.readFileSync(file, "utf8").matchAll(literal)) {
+        const name = raw.replace(/\\/g, "").split(":on:")[0];
+        if (!(name in notAttributes) && !isClaimed(name, claims)) unclaimed.add(`${name} (${path.relative(root, file)})`);
+      }
+    }
+    expect([...unclaimed]).toEqual([]);
   });
 });
