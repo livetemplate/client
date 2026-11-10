@@ -546,11 +546,11 @@ export function registerAttribute(handler: AttributeHandler): void {
 
   const extraEvents = handler.delegatedEvents ?? [];
   for (const type of extraEvents) {
-    if (typeof type !== "string" || !type || type !== type.toLowerCase()) {
+    if (!isListenableEventType(type)) {
       logger.warn(
         `registerAttribute("${handlerName(handler)}"): delegatedEvents entry ${JSON.stringify(type)} ` +
           `can never match — lvt-on: attribute names are lowercased by the HTML parser, so the ` +
-          `event type must be a non-empty lowercase string.`
+          `event type must be a non-empty lowercase string. Ignored.`
       );
     }
   }
@@ -684,9 +684,16 @@ export function runConnectPass(
 export function registeredDelegatedEvents(): string[] {
   const types = new Set<string>();
   for (const handler of registry) {
-    for (const type of handler.delegatedEvents ?? []) types.add(type);
+    for (const type of handler.delegatedEvents ?? []) {
+      if (isListenableEventType(type)) types.add(type);
+    }
   }
   return Array.from(types);
+}
+
+/** Whether an lvt-on: attribute could ever name this event type (see `delegatedEvents`). */
+function isListenableEventType(type: unknown): type is string {
+  return typeof type === "string" && type !== "" && type === type.toLowerCase();
 }
 
 /**
@@ -724,7 +731,16 @@ export function installAttributeQueue(): void {
       return (taken += handlers.length);
     },
   };
-  for (const handler of pending ?? []) registerAttribute(handler);
+  // This drain runs while the bundle evaluates, before autoInit. A queued
+  // handler that throws (a throwing getter, say) must cost only itself, not
+  // the handlers queued after it or the client's start-up.
+  for (const handler of pending ?? []) {
+    try {
+      registerAttribute(handler);
+    } catch (error) {
+      logger.error("window.lvtAttributes: registering a queued handler threw:", error);
+    }
+  }
 }
 
 declare global {

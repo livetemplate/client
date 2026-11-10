@@ -70,4 +70,30 @@ describe("LiveTemplateClient attribute lifecycle", () => {
     expect(census).toHaveLength(1);
     expect(census[0]).toContain("lvt-x:nope");
   });
+
+  it("routes a type registered after connect, without double-binding the built-in listeners", async () => {
+    ssrWrapper(
+      `<button id="b" lvt-on:click="Clicked">b</button>` +
+        `<my-widget id="w" lvt-on:my-late-event="Changed"></my-widget>`
+    );
+    await connectClient();
+    const socket = mockSockets[0];
+    const actions = () =>
+      socket.sent.map((m) => JSON.parse(m).action).filter((a: string) => a === "Clicked" || a === "Changed");
+    const fire = () =>
+      document.getElementById("w")!.dispatchEvent(new CustomEvent("my-late-event", { bubbles: true }));
+
+    fire();
+    expect(actions()).toEqual([]);
+
+    registerAttribute({
+      name: "late-widget",
+      selectors: ["my-widget"],
+      delegatedEvents: ["my-late-event"],
+      setup: () => {},
+    });
+    fire();
+    document.getElementById("b")!.click();
+    expect(actions()).toEqual(["Changed", "Clicked"]);
+  });
 });

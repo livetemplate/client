@@ -157,12 +157,17 @@ at connect, and one registered later runs against the live DOM immediately.
 - `delegatedEvents: ["my-widget-change"]` makes `lvt-on:my-widget-change="Save"`
   reach the server. Event types must be lowercase, and the event must bubble.
 - A low-level handler (`selectors` + `setup()`) declares the names it implements
-  in `claims`, so the census below counts them as handled.
+  in `claims`, so the census below counts them as handled. Its `setup()` runs on
+  every render that changes the DOM (and at connect with `runOnConnect: true`),
+  so it must be safe to call again over elements it has already wired.
+- Once the client has loaded, `window.lvtAttributes` only supports `push`; it is
+  no longer an array.
 
 **Attribute census.** The server tells the client every `lvt-*` attribute the
 template uses. After the window `load` event, the client warns once for each
 name nothing claims. That attribute does nothing, usually because the script
-that registers it didn't load, or because of a typo.
+that registers it didn't load, or because of a typo. A handler registered after
+`load` (a lazily imported chunk, say) is reported even though it arrives later.
 
 **Stability.** The handler interface (`AttributeHandler` and its context types)
 is public API under semver:

@@ -77,6 +77,21 @@ describe("window.lvtAttributes queue", () => {
     expect(window.lvtAttributes!.push({ attribute: "lvt-x:b", onElementAdded: () => {} })).toBe(3);
   });
 
+  it("isolates a queued handler that throws, so later entries and start-up survive", () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const throwing = {
+      get attribute(): string {
+        throw new Error("boom");
+      },
+    } as unknown as AttributeHandler;
+    const after = copy();
+    (window.lvtAttributes ||= []).push(throwing, after);
+    expect(() => installAttributeQueue()).not.toThrow();
+    expect(getRegisteredAttributes()).toContain(after);
+    expect(error.mock.calls.map((a) => a.join(" ")).join("\n")).toMatch(/queued handler threw/);
+    error.mockRestore();
+  });
+
   it("does not register the queue twice if the bundle evaluates twice", () => {
     (window.lvtAttributes ||= []).push(copy());
     installAttributeQueue();
@@ -190,9 +205,18 @@ describe("delegatedEvents", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("warns about an uppercase type, which lvt-on: can never name", () => {
-    registerAttribute({ name: "w", selectors: ["*"], delegatedEvents: ["myEvent"], setup: () => {} });
+  it("warns about and ignores a type lvt-on: can never name", () => {
+    registerAttribute({
+      name: "w",
+      selectors: ["*"],
+      delegatedEvents: ["myEvent", "", 7 as unknown as string, "ok-event"],
+      setup: () => {},
+    });
     expect(warn.mock.calls.map((a) => a.join(" ")).join("\n")).toMatch(/lowercase/);
+    expect(delegatedEventTypes()).toContain("ok-event");
+    expect(delegatedEventTypes()).not.toContain("myEvent");
+    expect(delegatedEventTypes()).not.toContain("");
+    expect(delegatedEventTypes()).not.toContain(7);
   });
 
   it("dedupes a declared type that is already built in", () => {
