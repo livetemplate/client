@@ -61,6 +61,8 @@ export function isClaimed(name: string, claims: readonly string[]): boolean {
   return false;
 }
 
+// Module-level on purpose: the warning is once per page, so a second client
+// instance or a reconnect does not repeat it.
 const warned = new Set<string>();
 
 /**
