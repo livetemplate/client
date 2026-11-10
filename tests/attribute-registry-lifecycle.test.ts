@@ -70,6 +70,13 @@ describe("window.lvtAttributes queue", () => {
     expect(getRegisteredAttributes()).toContain(handler);
   });
 
+  it("returns a running count from push, like Array#push", () => {
+    (window.lvtAttributes ||= []).push(copy());
+    installAttributeQueue();
+    expect(window.lvtAttributes!.push({ attribute: "lvt-x:a", onElementAdded: () => {} })).toBe(2);
+    expect(window.lvtAttributes!.push({ attribute: "lvt-x:b", onElementAdded: () => {} })).toBe(3);
+  });
+
   it("does not register the queue twice if the bundle evaluates twice", () => {
     (window.lvtAttributes ||= []).push(copy());
     installAttributeQueue();

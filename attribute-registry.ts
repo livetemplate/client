@@ -716,10 +716,12 @@ export function installAttributeQueue(): void {
   if (typeof window === "undefined") return;
   const pending = window.lvtAttributes;
   if (pending && !Array.isArray(pending)) return;
+  // Like Array#push, push() returns how many entries the queue has taken.
+  let taken = pending?.length ?? 0;
   window.lvtAttributes = {
     push(...handlers: AttributeHandler[]): number {
       for (const handler of handlers) registerAttribute(handler);
-      return 0;
+      return (taken += handlers.length);
     },
   };
   for (const handler of pending ?? []) registerAttribute(handler);

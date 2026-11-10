@@ -78,7 +78,8 @@ export function reportUnclaimedAttributes(
       warned.add(name);
       logger.warn(
         `${authored} is used by this page's template, but no attribute handler claims it, ` +
-          `so it does nothing. Is the script that registers it loaded, or is the name misspelled?`
+          `so it does nothing. Is the script that registers it loaded, or is the name misspelled? ` +
+          `(A low-level handler claims names through \`claims\`.)`
       );
     }
   };
