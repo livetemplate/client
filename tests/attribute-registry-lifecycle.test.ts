@@ -22,6 +22,7 @@ import {
 } from "../attribute-registry";
 import { EventDelegator, delegatedEventTypes, type EventDelegationContext } from "../dom/event-delegation";
 import { createLogger } from "../utils/logger";
+import { registerBuiltinHandlers, __resetBuiltinRegistrationForTesting } from "../dom/builtin-handlers";
 
 const noopSend: SendFn = () => {};
 let warn: jest.SpyInstance;
@@ -142,6 +143,21 @@ describe("connect pass", () => {
     });
     attach(makeWrapper(""), { send });
     expect(seen).toBe(send);
+  });
+
+  it("dispatches the built-in url-hash deep link on connect, with no render", () => {
+    // The explicit connect-time call was replaced by runOnConnect, so this
+    // pins that the built-in still fires on a page load.
+    __resetBuiltinRegistrationForTesting();
+    registerBuiltinHandlers();
+    window.history.replaceState(null, "", "#README.md:L4");
+    const send = jest.fn();
+    try {
+      attach(makeWrapper(`<div lvt-fx:url-hash="Open"></div>`), { send });
+      expect(send).toHaveBeenCalledWith({ action: "Open", data: { hash: "README.md:L4" } });
+    } finally {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   });
 });
 
