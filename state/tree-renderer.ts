@@ -112,6 +112,14 @@ function shouldFullReplace(existing: any, update: any): boolean {
     return false;
   }
 
+  // The node itself switched between a range ({d, s}) and a non-range node: a
+  // different template branch. Checked before the "anywhere" rule below, which
+  // misses it when the new node holds a range deeper down — the merge then kept
+  // the old `d` and rendered the old range with the new statics.
+  if (Array.isArray(existing.d) !== Array.isArray(update.d)) {
+    return true;
+  }
+
   // Check for range→non-range transition (including nested ranges)
   if (hasRangeAnywhere(existing) && !hasRangeAnywhere(update)) {
     return true;
