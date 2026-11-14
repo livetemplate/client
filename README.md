@@ -31,7 +31,7 @@ npm install @livetemplate/client
 ### CDN
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.25.2/dist/livetemplate-client.browser.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.25.3/dist/livetemplate-client.browser.js"></script>
 ```
 
 ## Quick Start
@@ -42,7 +42,7 @@ npm install @livetemplate/client
 <!DOCTYPE html>
 <html>
 <head>
-    <script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.25.2/dist/livetemplate-client.browser.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@livetemplate/client@0.25.3/dist/livetemplate-client.browser.js"></script>
 </head>
 <body>
     <div id="app"></div>
