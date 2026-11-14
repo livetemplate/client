@@ -93,6 +93,21 @@ describe("window.lvtAttributes queue", () => {
     error.mockRestore();
   });
 
+  it("isolates a throwing handler pushed after install too", () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    installAttributeQueue();
+    const throwing = {
+      get attribute(): string {
+        throw new Error("boom");
+      },
+    } as unknown as AttributeHandler;
+    const after = copy();
+    expect(window.lvtAttributes!.push(throwing, after)).toBe(2);
+    expect(getRegisteredAttributes()).toContain(after);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it("does not register the queue twice if the bundle evaluates twice", () => {
     (window.lvtAttributes ||= []).push(copy());
     installAttributeQueue();

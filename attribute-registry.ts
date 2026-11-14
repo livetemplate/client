@@ -723,24 +723,25 @@ export function installAttributeQueue(): void {
   if (typeof window === "undefined") return;
   const pending = window.lvtAttributes;
   if (pending && !Array.isArray(pending)) return;
-  // Like Array#push, push() returns how many entries the queue has taken.
-  let taken = pending?.length ?? 0;
-  window.lvtAttributes = {
-    push(...handlers: AttributeHandler[]): number {
-      for (const handler of handlers) registerAttribute(handler);
-      return (taken += handlers.length);
-    },
-  };
-  // This drain runs while the bundle evaluates, before autoInit. A queued
-  // handler that throws (a throwing getter, say) must cost only itself, not
-  // the handlers queued after it or the client's start-up.
-  for (const handler of pending ?? []) {
+  // A handler that throws (a throwing getter, say) must cost only itself: not
+  // the handlers queued or pushed with it, and not the client's start-up, since
+  // the drain below runs while the bundle evaluates, before autoInit.
+  const register = (handler: AttributeHandler) => {
     try {
       registerAttribute(handler);
     } catch (error) {
       logger.error("window.lvtAttributes: registering a queued handler threw:", error);
     }
-  }
+  };
+  // Like Array#push, push() returns how many entries the queue has taken.
+  let taken = pending?.length ?? 0;
+  window.lvtAttributes = {
+    push(...handlers: AttributeHandler[]): number {
+      handlers.forEach(register);
+      return (taken += handlers.length);
+    },
+  };
+  (pending ?? []).forEach(register);
 }
 
 declare global {
