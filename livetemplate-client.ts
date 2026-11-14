@@ -8,7 +8,6 @@
 import morphdom from "morphdom";
 import { FocusManager } from "./dom/focus-manager";
 import {
-  handleURLHashDirective,
   setupToastClickOutside,
   teardownFxLifecycleListeners,
   setupFxLifecycleListeners,
@@ -29,6 +28,7 @@ import {
   disposeHandlers,
   disposeRegisteredHandlers,
   hasLiveRoots,
+  installAttributeQueue,
   registerAttribute,
   runHandlers,
   runRegisteredHandlers,
@@ -39,6 +39,7 @@ import {
   type SendFn,
 } from "./attribute-registry";
 import { registerBuiltinHandlers } from "./dom/builtin-handlers";
+import { reportUnclaimedAttributes } from "./attribute-census";
 import { TreeRenderer } from "./state/tree-renderer";
 import {
   RangeDomApplier,
@@ -154,6 +155,11 @@ export class LiveTemplateClient {
     // Field initializers run in declaration order, so boundSend above is
     // already assigned, and it is readonly — this cannot go stale.
     send: this.boundSend,
+    // A handler declaring delegatedEvents registered while this client is
+    // live: re-run delegation so the new types get document listeners too.
+    // Idempotent — each type's previous listener is replaced, not stacked.
+    delegatedEventsChanged: () => this.eventDelegator.setupEventDelegation(),
+    handlers: () => this.instanceHandlers,
   };
 
   // Initialization tracking for loading indicator
@@ -264,7 +270,13 @@ export class LiveTemplateClient {
         // needs this client's UploadHandler, so it is instance-bound.
         name: "lvt-upload",
         selectors: ['input[type="file"][lvt-upload]'],
+        claims: ["lvt-upload", "lvt-upload-with"],
         category: "wire-idempotent",
+        // SSR'd inputs are on screen before any render adds nodes, so without
+        // the connect pass AutoUpload-on-select silently no-ops (issue #453).
+        // initializeFileInputs is WeakMap-guarded, so re-running never
+        // double-binds.
+        runOnConnect: true,
         setup: ({ scanRoot }) => this.uploadHandler.initializeFileInputs(scanRoot),
       },
     ];
@@ -684,6 +696,9 @@ export class LiveTemplateClient {
       if (response.meta?.capabilities) {
         this.changeAutoWirer.setCapabilities(response.meta.capabilities);
       }
+      if (response.meta?.attributes) {
+        reportUnclaimedAttributes(response.meta.attributes, this.instanceHandlers);
+      }
       // Analyze statics before updateDOM so wireElements() inside updateDOM
       // has bound fields to work with. Additive: new fields from conditionally
       // rendered templates are detected as they appear in updates.
@@ -733,17 +748,6 @@ export class LiveTemplateClient {
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
 
-    // Bind change handlers on file inputs that were SSR'd and already present
-    // at connect time. The post-render block in updateDOM only (re)binds these
-    // when a render adds nodes or touches a directive; a hydrate-idempotent
-    // first render would otherwise leave SSR'd lvt-upload inputs without a
-    // change listener, so AutoUpload-on-select silently no-ops (issue #453).
-    // initializeFileInputs is WeakMap-guarded, so running it here AND in the
-    // post-render path never double-binds.
-    if (this.wrapperElement) {
-      this.uploadHandler.initializeFileInputs(this.wrapperElement);
-    }
-
     // Set up window-* event delegation
     this.eventDelegator.setupWindowEventDelegation();
 
@@ -771,39 +775,13 @@ export class LiveTemplateClient {
     setupInvokerPolyfill();
     setupHashLink();
 
-    // url-hash directive needs an initial-load arm here (not just in
-    // updateDOM's FIRE-ON-CHANGE block) because page load → no
-    // updateDOM call → directive never arms → a `#path:L4` URL never
-    // dispatches setURLHash. Subsequent state changes route through
-    // the FIRE-ON-CHANGE block's call site, which keeps the data-attr
-    // mirror in sync after server re-renders.
-    //
-    // Transport is reliable at this point: `connect()` above was
-    // awaited, so either the WebSocket is OPEN (`useHTTP=false`,
-    // readyState=1) or the HTTP fallback is wired (`useHTTP=true`).
-    // `this.send` covers both paths plus a `readyState!==1 && WS
-    // available` fallback that posts via HTTP, so the initial-arm
-    // dispatch always reaches the server — no "best-effort" caveat.
-    if (this.wrapperElement) {
-      // Connect-time arming, deliberately NOT the registry pass. Page load
-      // produces no updateDOM call, so a handler that only runs post-render
-      // never arms and a `#path:L4` URL is ignored until something else
-      // triggers a render.
-      //
-      // url-hash is not alone in needing this — initializeFileInputs above has
-      // the identical requirement for SSR'd inputs (issue #453), and so would
-      // any third-party handler over server-rendered markup. That makes
-      // connect-time arming a lifecycle phase the interface should express
-      // (an opt-in flag, with late registration's catch-up gated on the same
-      // predicate) rather than two hardcoded calls. Deferred to Phase 3: doing
-      // it here would move these calls relative to the rest of connect(), and
-      // this phase's bar is that nothing changes behaviour.
-      handleURLHashDirective(this.wrapperElement, (message) => this.send(message));
-    }
-
     // Make this client visible to the registry, so a handler registered after
     // connect catches up against the live DOM immediately rather than waiting
-    // for a render that may never come. Idempotent: the registry holds a Set.
+    // for a render that may never come. Attaching also runs the connect pass:
+    // a page load hydrates SSR'd markup without changing it, so handlers that
+    // must act on what is already on screen (declarative ones, and low-level
+    // ones with runOnConnect — url-hash, file inputs) run here, not post-render.
+    // Idempotent: the registry holds a Set.
     attachRegistryRoot(this.registryRoot);
 
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
@@ -2527,6 +2505,10 @@ export class LiveTemplateClient {
 // third-party handler claiming a built-in name is the one that gets warned
 // about, and built-ins keep the order their hardcoded call sequence had.
 registerBuiltinHandlers();
+
+// Then anything a page script queued on `window.lvtAttributes` before this
+// bundle evaluated — an inline script ignores `defer`, so it runs first.
+installAttributeQueue();
 
 // Auto-initialize when script loads (for browser use)
 if (typeof window !== "undefined") {

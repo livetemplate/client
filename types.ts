@@ -28,6 +28,8 @@ export interface ResponseMetadata {
   errors: { [key: string]: string };
   action?: string;
   capabilities?: string[];
+  /** Every lvt-* attribute name the template uses, authored spelling (initial render only). */
+  attributes?: string[];
 }
 
 export interface UpdateResponse {

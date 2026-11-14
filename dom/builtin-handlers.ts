@@ -24,7 +24,7 @@
  * highlight and one that scrolls the same element are not commutative.
  */
 
-import { registerAttribute, type AttributeHandler } from "../attribute-registry";
+import { isDeclarative, registerAttribute, type AttributeHandler } from "../attribute-registry";
 import {
   handleAnimateDirectives,
   handleAreaSelectDirectives,
@@ -91,6 +91,7 @@ const builtinHandlers: AttributeHandler[] = [
     // Claims [data-toast-trigger] and the toast stack, not an lvt-* name: the
     // framework emits the markers itself from lvt/components/toast.
     name: "lvt-toast-stack",
+    claims: [],
     selectors: ["[data-toast-trigger]", "[data-lvt-toast-stack]"],
     setup: ({ scanRoot }) => handleToastDirectives(scanRoot),
   },
@@ -169,6 +170,9 @@ const builtinHandlers: AttributeHandler[] = [
     name: "lvt-fx:url-hash",
     selectors: ["[lvt-fx\\:url-hash]"],
     needsServerChannel: true,
+    // A `#path:L4` URL must dispatch on page load, and a page load hydrates
+    // without a render that changes anything.
+    runOnConnect: true,
     setup: ({ scanRoot, send }) => handleURLHashDirective(scanRoot, send!),
     teardown: (root) => teardownURLHashForRoot(root),
   },
@@ -178,6 +182,7 @@ const builtinHandlers: AttributeHandler[] = [
     // A platform bridge, not an app feature: it activates Declarative Shadow
     // DOM that morphdom inserted via DOM APIs, which don't auto-hydrate.
     name: "shadow-root-hydration",
+    claims: [],
     selectors: ["template[shadowrootmode]"],
     setup: ({ scanRoot }) => handleShadowRootHydration(scanRoot),
   },
@@ -189,6 +194,7 @@ const builtinHandlers: AttributeHandler[] = [
   },
   {
     name: "lvt-spy",
+    claims: ["lvt-spy", "lvt-spy-link"],
     selectors: ["[lvt-spy]"],
     setup: ({ scanRoot }) => setupSpy(scanRoot),
     teardown: (root) => teardownSpy(root),
@@ -199,6 +205,9 @@ const builtinHandlers: AttributeHandler[] = [
     // at 80k descendants the walk costs ~150-200ms and re-running on an
     // unchanged DOM finds nothing new.
     name: "lvt-fx:*:on:*",
+    // The census reports `lvt-fx:highlight:on:click` as `lvt-fx:highlight`,
+    // which the effect's own handler claims; this walker claims nothing more.
+    claims: [],
     selectors: ["*"],
     category: "wire-idempotent",
     setup: ({ scanRoot, wrapperRoot }) => setupFxDOMEventTriggers(scanRoot, wrapperRoot),
@@ -226,7 +235,9 @@ export function registerBuiltinHandlers(): void {
   if (registered) return;
   registered = true;
   for (const handler of builtinHandlers) {
-    registerAttribute(handler);
+    // A built-in's name IS the attribute it implements unless it says
+    // otherwise, so it claims that name for the census by default.
+    registerAttribute(isDeclarative(handler) || handler.claims ? handler : { ...handler, claims: [handler.name] });
   }
 }
 

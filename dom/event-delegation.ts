@@ -4,6 +4,7 @@ import { lvtSelector } from "../utils/lvt-selector";
 import { executeAction, resolveTarget, processElementInteraction, isDOMEventTrigger, type ReactiveAction } from "./reactive-attributes";
 import type { Logger } from "../utils/logger";
 import { hasNoInterceptOptOut } from "../utils/legacy-attr";
+import { registeredDelegatedEvents } from "../attribute-registry";
 
 // Methods supported by click-away, derived from ReactiveAction values
 const CLICK_AWAY_METHOD_MAP: Record<string, ReactiveAction> = {
@@ -172,6 +173,16 @@ export const DELEGATED_EVENT_TYPES = [
   "dragleave",
 ] as const;
 
+/**
+ * The built-in types plus any a registered handler declared in
+ * `delegatedEvents`. Read live by setup AND teardown, so a type added by a
+ * late registration is also removed — registration is append-only, so the set
+ * only ever grows and teardown can never miss a type setup attached.
+ */
+export function delegatedEventTypes(): string[] {
+  return Array.from(new Set<string>([...DELEGATED_EVENT_TYPES, ...registeredDelegatedEvents()]));
+}
+
 export class EventDelegator {
   // Track forms we've already warned about for lvt-form:emit-submitter on
   // GET. Per-form de-dup so dev consoles aren't flooded; WeakSet so forms
@@ -191,7 +202,7 @@ export class EventDelegator {
    */
   teardownForWrapper(wrapperId: string | null): void {
     if (!wrapperId) return;
-    for (const eventType of DELEGATED_EVENT_TYPES) {
+    for (const eventType of delegatedEventTypes()) {
       const listenerKey = `__lvt_delegated_${eventType}_${wrapperId}`;
       const existingListener = (document as any)[listenerKey];
       if (existingListener) {
@@ -217,7 +228,7 @@ export class EventDelegator {
     const wrapperElement = this.context.getWrapperElement();
     if (!wrapperElement) return;
 
-    const eventTypes = DELEGATED_EVENT_TYPES;
+    const eventTypes = delegatedEventTypes();
     const wrapperId = wrapperElement.getAttribute("data-lvt-id");
     const rateLimitedHandlers = this.context.getRateLimitedHandlers();
 

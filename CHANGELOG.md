@@ -5,6 +5,36 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Register an attribute from an inline script: `window.lvtAttributes`.** An
+  inline `<script>` ignores `defer`, so one placed after the documented
+  `<script src=… defer>` client tag ran *before* the client and found no
+  `LiveTemplateClient` global. Push handlers onto
+  `(window.lvtAttributes ||= []).push(handler)` instead. Anything queued is
+  registered when the client loads, and later pushes register immediately.
+- **A warning for `lvt-*` attributes nothing handles (livetemplate#473).** The
+  server now sends every attribute name a template uses. After the window `load`
+  event, the client warns once for each name no handler claims. An attribute
+  without a handler does nothing, silently. Expect this to surface dead
+  attributes in existing templates (`lvt-click`, `lvt-change`, `lvt-data-*` are
+  not attributes this client implements). Low-level handlers declare their names
+  in a new optional `claims` field.
+- **`delegatedEvents` on a handler** adds event types to the core event
+  delegator. `lvt-on:my-widget-change="Save"` on a custom element now reaches
+  the server once a handler declares `delegatedEvents: ["my-widget-change"]`.
+  It works for handlers registered after connect too.
+- **Handlers run over the server-rendered page at connect.** A page load only
+  hydrates, so the first render changes nothing. Until now, a handler registered
+  before connect did nothing until some later render added a node. Declarative
+  handlers now always run at connect. Low-level handlers opt in with
+  `runOnConnect: true`. The built-in `lvt-fx:url-hash` and `lvt-upload` handlers
+  moved onto this path, replacing the two calls that were hardcoded into
+  `connect()`.
+- The handler interface's semver commitment is written down in the README.
+
 ## [v0.25.2] - 2026-11-04
 
 ### Fixed
