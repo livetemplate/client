@@ -145,6 +145,12 @@ describe("attribute census", () => {
     expect(warnings()).toHaveLength(4);
   });
 
+  it("skips a non-string census entry instead of throwing", () => {
+    const names = [7, null, "lvt-x:bad"] as unknown as string[];
+    expect(() => reportUnclaimedAttributes(names, instanceHandlers)).not.toThrow();
+    expect(warnings()).toHaveLength(1);
+  });
+
   it("claims the lifecycle hooks", () => {
     reportUnclaimedAttributes(["lvt-mounted", "lvt-updated", "lvt-destroyed"], instanceHandlers);
     expect(warnings()).toEqual([]);

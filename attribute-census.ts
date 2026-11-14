@@ -81,6 +81,7 @@ export function reportUnclaimedAttributes(
   const check = () => {
     const claims = [...CORE_CLAIMS, ...registeredClaims(), ...registeredClaims(instanceHandlers)];
     for (const authored of names) {
+      if (typeof authored !== "string") continue;
       const name = authored.toLowerCase();
       if (warned.has(name) || isClaimed(name, claims)) continue;
       warned.add(name);
