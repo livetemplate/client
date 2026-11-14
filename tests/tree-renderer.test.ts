@@ -148,6 +148,46 @@ describe("TreeRenderer", () => {
       expect(state[0][0]).not.toHaveProperty("d");
       expect(state[0][0][0]).toBe("No nested items");
     });
+
+    it("should replace a range node with a non-range node that nests its own range", () => {
+      // A branch switch (e.g. {{if .A}}…{{else}}…{{end}}) can put a non-range
+      // node where a range node was. When the new node holds a range DEEPER
+      // down, "range anywhere → none" doesn't fire, and a key-by-key merge kept
+      // the old node's `d`, so it still rendered as the old range with the new
+      // statics and the new content vanished.
+      renderer.applyUpdate({
+        s: ["<main>", "</main>"],
+        0: {
+          s: ["<section>", "</section>"],
+          0: {
+            d: [{ 0: "old row", _k: "r1" }],
+            s: ["<li>", "</li>"],
+            m: { idKey: "_k" },
+          },
+        },
+      });
+
+      const result = renderer.applyUpdate({
+        0: {
+          s: ["<section>", "</section>"],
+          0: {
+            s: ["<div class=\"code\">", "</div>"],
+            0: {
+              d: [{ 0: "new line", _k: "n1" }],
+              s: ["<p>", "</p>"],
+              m: { idKey: "_k" },
+            },
+          },
+        },
+      });
+
+      const state = renderer.getTreeState();
+      expect(state[0][0]).not.toHaveProperty("d");
+      expect(state[0][0]).not.toHaveProperty("m");
+      expect(result.html).toContain('<div class="code">');
+      expect(result.html).toContain("new line");
+      expect(result.html).not.toContain("old row");
+    });
   });
 
   describe("render - range to non-range transition", () => {
