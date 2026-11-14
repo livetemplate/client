@@ -188,6 +188,24 @@ describe("TreeRenderer", () => {
       expect(result.html).toContain("new line");
       expect(result.html).not.toContain("old row");
     });
+
+    it("should replace a non-range node with a range node", () => {
+      renderer.applyUpdate({
+        s: ["<main>", "</main>"],
+        0: { s: ["<p>", "</p>"], 0: "empty" },
+      });
+      const result = renderer.applyUpdate({
+        0: {
+          d: [{ 0: "row", _k: "r1" }],
+          s: ["<li>", "</li>"],
+          m: { idKey: "_k" },
+        },
+      });
+      const state = renderer.getTreeState();
+      expect(state[0]).not.toHaveProperty("0");
+      expect(result.html).toContain("<li>row</li>");
+      expect(result.html).not.toContain("empty");
+    });
   });
 
   describe("render - range to non-range transition", () => {
