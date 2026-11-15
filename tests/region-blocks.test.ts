@@ -38,6 +38,22 @@ describe("lineRangeFromBlocks", () => {
     expect(lineRangeFromBlocks(blocks, box(700, 720), 0, 0)).toEqual({ from: 1, to: 40 });
   });
 
+  it("ignores a wrapper the box touches when it also touches content", () => {
+    // the box spans the inner wrapper's padding above the first card and the card
+    expect(lineRangeFromBlocks(blocks, box(105, 140), 0, 0)).toEqual({ from: 8, to: 9 });
+  });
+
+  it("shifts blocks by the iframe offset on the wrapper path too", () => {
+    // blocks are iframe-viewport coords; the iframe sits 30px down the page
+    expect(lineRangeFromBlocks(blocks, box(235, 265), 0, 30)).toEqual({ from: 5, to: 30 });
+    expect(lineRangeFromBlocks(blocks, box(165, 180), 0, 30)).toEqual({ from: 8, to: 9 });
+  });
+
+  it("breaks an equal-area wrapper tie by the narrower line span", () => {
+    const tie: PreviewBlock[] = [block(1, 50, 0, 100, true), block(2, 10, 0, 100, true)];
+    expect(lineRangeFromBlocks(tie, box(10, 20), 0, 0)).toEqual({ from: 2, to: 10 });
+  });
+
   it("returns null when the box touches nothing", () => {
     expect(lineRangeFromBlocks(blocks, { left: 500, right: 600, top: 10, bottom: 20 }, 0, 0)).toBeNull();
   });

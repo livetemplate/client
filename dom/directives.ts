@@ -3407,8 +3407,10 @@ export function lineRangeFromBlocks(
       continue;
     }
     if (b.wrap) {
+      // Smallest area wins; on a tie, the narrower line span (deterministic).
       const area = (right - left) * (bottom - top);
-      if (!wrap || area < wrap.area) {
+      const span = b.to - b.from;
+      if (!wrap || area < wrap.area || (area === wrap.area && span < wrap.range.to - wrap.range.from)) {
         wrap = { area, range: { from: b.from, to: b.to } };
       }
       continue;
