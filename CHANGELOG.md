@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the server disarmed it, and a re-armed element got a second listener.
   The README's copy-button example had this bug and now passes the signal.
 
+  `signal` is a required member of `ElementContext`, so a TypeScript test stub
+  typed as a full `ElementContext` stops compiling until it adds one. Type the
+  stub as `Partial<ElementContext>` and cast it, as the README's Stability
+  section now says.
+
 ## [v0.25.5] - 2026-11-15
 
 ### Changes
