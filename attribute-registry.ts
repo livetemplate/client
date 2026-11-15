@@ -135,7 +135,7 @@ interface BaseHandler {
 /**
  * Per-element context handed to a declarative handler's callbacks.
  *
- * Both members are LIVE ACCESSORS, deliberately. Capturing `ctx` inside a
+ * Its members are LIVE ACCESSORS, deliberately. Capturing `ctx` inside a
  * listener is the normal thing to do, so reading it later has to be correct:
  *
  *   - `value` re-reads the attribute, so a server re-render is picked up rather
@@ -147,6 +147,14 @@ export interface ElementContext {
   readonly value: string;
   readonly send?: SendFn;
   readonly wrapperRoot: Element;
+  /**
+   * Aborts when the element disarms (attribute removed or emptied, element
+   * detached, client teardown), just before `onElementRemoved`. Pass it to
+   * what `onElementAdded` wires up so the wiring goes with the arming. Fresh
+   * per arming. Wire in `onElementAdded` only: `onElement` sees the same
+   * signal every render, so a listener added there would stack.
+   */
+  readonly signal: AbortSignal;
 }
 
 /** Context handed to a low-level handler's `setup()`. */
@@ -173,7 +181,10 @@ export interface DeclarativeHandler extends BaseHandler {
 
   /** Once per element, the first time it matches. */
   onElementAdded?(el: Element, ctx: ElementContext): void;
-  /** Every run, for every currently matching element. */
+  /**
+   * Every run, for every currently matching element. Read `ctx` here; attach
+   * listeners in `onElementAdded`, which fires once per arming.
+   */
   onElement?(el: Element, ctx: ElementContext): void;
   /**
    * The element detached, or its attribute was removed or emptied by a server
@@ -309,6 +320,8 @@ interface ElementEntry {
   ctx: ElementContext;
   send: SendFn | undefined;
   wrapperRoot: Element;
+  /** Backs `ctx.signal`. Created on first read: most handlers never read it. */
+  armed?: AbortController;
 }
 
 /**
@@ -870,8 +883,7 @@ export function teardownHandler(handler: AttributeHandler, root: Element): void 
   if (!handler.onElementRemoved && map.size === 0) return;
   for (const el of Array.from(map.keys())) {
     if (root.contains(el) || !el.isConnected) {
-      map.delete(el);
-      notifyRemoved(handler, el);
+      untrack(handler, map, el);
     }
   }
 }
@@ -885,7 +897,21 @@ function reportHookError(handler: AttributeHandler, hook: string, error: unknown
   logger.error(`${handlerName(handler)}.${hook}() threw:`, error);
 }
 
-function notifyRemoved(handler: DeclarativeHandler, el: Element): void {
+/**
+ * Shared by every entry whose signal was never read before it disarmed, so a
+ * first read after disarming still sees an aborted signal.
+ */
+const DISARMED = new AbortController();
+DISARMED.abort();
+
+/** Forget the element, abort its signal, tell the handler. The only disarm path. */
+function untrack(handler: DeclarativeHandler, map: Map<Element, ElementEntry>, el: Element): void {
+  const entry = map.get(el);
+  map.delete(el);
+  if (entry) {
+    if (entry.armed) entry.armed.abort();
+    else entry.armed = DISARMED;
+  }
   if (!handler.onElementRemoved) return;
   try {
     handler.onElementRemoved(el);
@@ -933,7 +959,11 @@ function dispatchDeclarative(
         continue;
       }
       warnedEmpty.get(handler)?.delete(el);
-      entry = { ctx: null as unknown as ElementContext, send: channel, wrapperRoot: roots.wrapperRoot };
+      entry = {
+        ctx: null as unknown as ElementContext,
+        send: channel,
+        wrapperRoot: roots.wrapperRoot,
+      };
       entry.ctx = makeElementContext(handler, el, entry);
       seen.set(el, entry);
       if (wantsAdded) {
@@ -977,6 +1007,9 @@ function makeElementContext(
     get wrapperRoot(): Element {
       return entry.wrapperRoot;
     },
+    get signal(): AbortSignal {
+      return (entry.armed ??= new AbortController()).signal;
+    },
   };
 }
 
@@ -1007,7 +1040,6 @@ function sweep(handler: DeclarativeHandler, seen: Map<Element, ElementEntry>): v
     // the sweep insists an emptied one is still live — and a handler wired for
     // `{{.ShareURL}}` keeps its listeners after the URL goes away.
     if (el.isConnected && el.getAttribute(handler.attribute)) continue;
-    seen.delete(el);
-    notifyRemoved(handler, el);
+    untrack(handler, seen, el);
   }
 }

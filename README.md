@@ -142,11 +142,20 @@ whatever was queued when it loads.
   (window.lvtAttributes ||= []).push({
     attribute: "lvt-x:copy",
     onElementAdded(el, ctx) {
-      el.addEventListener("click", () => navigator.clipboard.writeText(ctx.value));
+      el.addEventListener("click", () => navigator.clipboard.writeText(ctx.value), {
+        signal: ctx.signal,
+      });
     },
   });
 </script>
 ```
+
+`ctx.signal` aborts when the element stops being armed: the server removes or
+empties the attribute, or the element leaves the page. Pass it to anything
+`onElementAdded` wires up, and the wiring is undone for you. Without it the
+button keeps copying after the server disarms it, and gets a second listener
+when the attribute comes back. `ctx.value` is read at click time, so it is
+always the current value.
 
 Code that runs after the client (a deferred bundle, an ES module import) can call
 `LiveTemplateClient.registerAttribute(handler)` directly instead. Either way, a
@@ -173,6 +182,9 @@ that registers it didn't load, or because of a typo. A handler registered after
 is public API under semver:
 
 - **Minor release:** may add *optional* members.
+- **Any release:** the context types the client constructs and hands to your
+  callbacks (`ElementContext`, `SetupContext`) may gain members. Only a test stub
+  builds one; type those as `Partial<ElementContext>` and cast.
 - **Major release:** needed to remove or rename a member, add a required one,
   change a callback's arguments, or change when a callback fires.
 - **Deprecation:** a member being removed logs a deprecation warning for at least
