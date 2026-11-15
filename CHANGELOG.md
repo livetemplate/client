@@ -5,6 +5,14 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.25.4] - 2026-11-15
+
+### Changes
+
+- fix(tree): replace a node that switches between a range and a non-range (#164) (90e4418)
+
+
+
 ## [v0.25.3] - 2026-11-14
 
 ### Added
