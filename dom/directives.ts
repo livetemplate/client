@@ -1202,13 +1202,18 @@ function attachIframeAutoHeight(
 //   - left/top/right/bottom are VIEWPORT-relative (getBoundingClientRect), so
 //     lineRangeFromBlocks shifts them by the iframe element's own viewport
 //     offset — NOT document/scroll-relative coords.
-type PreviewBlock = {
+//   - wrap (optional) marks a block whose content is all in other posted
+//     blocks (a page wrapper). lineRangeFromBlocks uses wrappers only when a
+//     box hits no content block, so a drag over empty space between content
+//     still lands somewhere — the smallest wrapper around it.
+export type PreviewBlock = {
   from: number;
   to: number;
   left: number;
   top: number;
   right: number;
   bottom: number;
+  wrap?: boolean;
 };
 
 // previewBlockRects caches the latest blocks posted by each preview iframe's
@@ -1318,7 +1323,9 @@ function attachPreviewBridge(iframe: HTMLIFrameElement): PreviewBridgeEntry {
         ) {
           continue;
         }
-        clean.push({ from, to: to >= from ? to : from, left, top, right, bottom });
+        const block: PreviewBlock = { from, to: to >= from ? to : from, left, top, right, bottom };
+        if (b?.wrap === true) block.wrap = true;
+        clean.push(block);
       }
       previewBlockRects.set(iframe, clean);
     }
@@ -3373,7 +3380,9 @@ export function lineRangeFromBox(
  * offsetX/offsetY shift each block into the box's coordinate space (the iframe's
  * viewport origin on the parent page). Same overlap + union semantics as
  * lineRangeFromBox; rendered HTML has no diff sides, so every overlap unions.
- * Returns null when nothing overlaps.
+ * Blocks flagged `wrap` (pure wrappers) don't join the union: when the box hits
+ * no content block, the smallest wrapper it touches is the answer instead, so a
+ * drag over empty space still resolves. Returns null when nothing overlaps.
  */
 export function lineRangeFromBlocks(
   blocks: PreviewBlock[],
@@ -3382,6 +3391,8 @@ export function lineRangeFromBlocks(
   offsetY: number
 ): LineRange | null {
   const hits: { top: number; range: LineRange }[] = [];
+  // The smallest wrapper the box touches: the fallback when it hits no content.
+  let wrap: { area: number; range: LineRange } | null = null;
   for (const b of blocks) {
     const top = b.top + offsetY;
     const bottom = b.bottom + offsetY;
@@ -3395,7 +3406,17 @@ export function lineRangeFromBlocks(
     ) {
       continue;
     }
+    if (b.wrap) {
+      const area = (right - left) * (bottom - top);
+      if (!wrap || area < wrap.area) {
+        wrap = { area, range: { from: b.from, to: b.to } };
+      }
+      continue;
+    }
     hits.push({ top, range: { from: b.from, to: b.to } });
+  }
+  if (hits.length === 0 && wrap) {
+    return wrap.range;
   }
   return unionHits(hits);
 }
