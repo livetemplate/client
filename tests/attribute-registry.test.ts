@@ -18,6 +18,7 @@ import {
   resolveCategory,
   runHandlers,
   teardownHandler,
+  teardownRegisteredHandlers,
   __resetRegistryForTesting,
   type AttributeHandler,
   type ElementContext,
@@ -231,6 +232,137 @@ describe("declarative layer", () => {
     teardownHandler(getRegisteredAttributes()[0], root);
 
     expect(removed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ctx.signal", () => {
+  /**
+   * The handler shape the docs teach: wire a click listener in onElementAdded
+   * with { signal: ctx.signal } and write no removal code at all. Tests count
+   * real dispatched clicks, so they fail if the listener outlives the arming or
+   * stacks on re-arm, not merely if a flag is wrong.
+   *
+   * Registers the handler and renders one armed button.
+   */
+  function armedCopyButton() {
+    let clicks = 0;
+    const signals: AbortSignal[] = [];
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded(el, ctx) {
+        signals.push(ctx.signal);
+        el.addEventListener("click", () => clicks++, { signal: ctx.signal });
+      },
+    });
+    const root = makeRoot(`<button lvt-x:copy="a">Copy</button>`);
+    render(root);
+    return { root, btn: root.firstElementChild as HTMLElement, clicks: () => clicks, signals };
+  }
+
+  it("stops the listener when a server diff removes the attribute", () => {
+    const { root, btn, clicks, signals } = armedCopyButton();
+    btn.click();
+    expect(clicks()).toBe(1);
+
+    btn.removeAttribute("lvt-x:copy");
+    render(root);
+    btn.click();
+
+    expect(signals[0].aborted).toBe(true);
+    expect(clicks()).toBe(1);
+  });
+
+  it("stops the listener when the value is emptied, like a removal", () => {
+    const { root, btn, clicks, signals } = armedCopyButton();
+
+    btn.setAttribute("lvt-x:copy", "");
+    render(root);
+    btn.click();
+
+    expect(signals[0].aborted).toBe(true);
+    expect(clicks()).toBe(0);
+  });
+
+  it("leaves exactly one listener after the attribute is removed and re-added", () => {
+    const { root, btn, clicks, signals } = armedCopyButton();
+    btn.removeAttribute("lvt-x:copy");
+    render(root);
+    btn.setAttribute("lvt-x:copy", "b");
+    render(root);
+
+    btn.click();
+
+    expect(clicks()).toBe(1);
+    expect(signals).toHaveLength(2);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+  });
+
+  it("stays live across renders that keep the element armed", () => {
+    const { root, btn, signals } = armedCopyButton();
+    btn.setAttribute("lvt-x:copy", "b");
+    render(root);
+    render(root, false);
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(false);
+  });
+
+  it("aborts when the element detaches", () => {
+    const { root, signals } = armedCopyButton();
+
+    root.innerHTML = "";
+    render(root);
+
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it("aborts when the client tears the wrapper down", () => {
+    const { root, signals } = armedCopyButton();
+
+    teardownRegisteredHandlers(root);
+
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it("is already aborted when onElementRemoved runs", () => {
+    let abortedAtRemoval: boolean | undefined;
+    let signal: AbortSignal | undefined;
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded(_el, ctx) {
+        signal = ctx.signal;
+      },
+      onElementRemoved() {
+        abortedAtRemoval = signal!.aborted;
+      },
+    });
+    const root = makeRoot(`<button lvt-x:copy="a">Copy</button>`);
+    render(root);
+
+    root.firstElementChild!.removeAttribute("lvt-x:copy");
+    render(root);
+
+    expect(abortedAtRemoval).toBe(true);
+  });
+
+  // The signal is created lazily on first read, so a context captured while
+  // armed and first read only after disarming must still report aborted.
+  it("is aborted when first read after the element disarmed", () => {
+    let captured: ElementContext | undefined;
+    registerAttribute({
+      attribute: "lvt-x:copy",
+      onElementAdded(_el, ctx) {
+        captured = ctx;
+      },
+    });
+    const root = makeRoot(`<button lvt-x:copy="a">Copy</button>`);
+    render(root);
+
+    root.firstElementChild!.removeAttribute("lvt-x:copy");
+    render(root);
+
+    expect(captured!.signal.aborted).toBe(true);
   });
 });
 

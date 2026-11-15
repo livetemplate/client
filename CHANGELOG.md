@@ -5,6 +5,19 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ctx.signal` on a declarative handler's `ElementContext`.** An `AbortSignal`
+  that aborts when the element stops being armed: its attribute is removed or
+  emptied by a server diff, it detaches, or its client tears down. It aborts
+  just before `onElementRemoved` runs. Pass it to what `onElementAdded` wires up
+  (`addEventListener(type, fn, { signal: ctx.signal })`). Without it, a listener
+  added in `onElementAdded` outlived the attribute, so the element kept reacting
+  after the server disarmed it, and a re-armed element got a second listener.
+  The README's copy-button example had this bug and now passes the signal.
+
 ## [v0.25.5] - 2026-11-15
 
 ### Changes
