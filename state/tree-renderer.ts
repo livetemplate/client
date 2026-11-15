@@ -112,6 +112,24 @@ function shouldFullReplace(existing: any, update: any): boolean {
     return false;
   }
 
+  // The node itself switched between a range ({d, s}) and a non-range node: a
+  // different template branch. Checked before the "anywhere" rule below, which
+  // misses it when the new node holds a range deeper down — the merge then kept
+  // the old `d` and rendered the old range with the new statics.
+  //   range → non-range: the update has numbered dynamic slots, which a range
+  //     node never has (its dynamics live in `d`). Requiring them keeps a
+  //     range update that carries statics but omits `d` merging as before.
+  //   non-range → range: the update carries `d`.
+  const existingIsRange = Array.isArray(existing.d);
+  const updateIsRange = Array.isArray(update.d);
+  const updateHasSlots = Object.keys(update).some((k) => /^\d+$/.test(k));
+  if (existingIsRange && !updateIsRange && updateHasSlots) {
+    return true;
+  }
+  if (!existingIsRange && updateIsRange) {
+    return true;
+  }
+
   // Check for range→non-range transition (including nested ranges)
   if (hasRangeAnywhere(existing) && !hasRangeAnywhere(update)) {
     return true;
