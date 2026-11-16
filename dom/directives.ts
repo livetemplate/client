@@ -2421,6 +2421,13 @@ function attachTextSelect(
   // "block" (rendered Markdown/HTML — line ranges, no caret, arrows left alone).
   const surface = el.getAttribute("data-surface") === "block" ? "block" : "code";
   let button: HTMLButtonElement | null = null;
+  // iOS dismisses a non-editable selection when you tap outside it, and the
+  // page can't stop it, so tapping the button collapses the very selection it
+  // is for. Hence the button commits `pending`, the range it was shown for,
+  // and while a touch or pen press is on it (`pressing`) a collapse doesn't
+  // hide it, or the release would land on whatever is underneath.
+  let pending: TextRange | null = null;
+  let pressing = false;
   let debounce: ReturnType<typeof setTimeout> | null = null;
   // Keyboard block caret — a client-only visual overlay over one character.
   // Its LINE follows the server's is-cursor line (Up/Down move it via the
@@ -2434,6 +2441,8 @@ function attachTextSelect(
   let lastLine: Element | null = null; // detect line changes to restore goalCol
 
   const hideButton = () => {
+    pending = null;
+    pressing = false;
     if (button) {
       button.remove();
       button = null;
@@ -2624,10 +2633,10 @@ function attachTextSelect(
     // selectionchange → evaluate → the Comment button appears.
   };
 
-  // confirmSelection dispatches the current selection as a text comment and
-  // resets — shared by the floating button (mouse/touch) and Enter (keyboard).
-  const confirmSelection = () => {
-    const data = textOffsetsFromSelection(window.getSelection(), el);
+  // confirmSelection dispatches a text comment and resets — shared by the
+  // floating button (`pending`) and Enter (the live selection: a fast
+  // Shift+Arrow, Enter can beat the debounce that refreshes `pending`).
+  const confirmSelection = (data: TextRange | null) => {
     if (data) send({ action, data });
     hideButton();
     selecting = false;
@@ -2635,40 +2644,82 @@ function attachTextSelect(
     // The caret re-renders after the server's render (via sync()).
   };
 
-  const showButton = (box: DOMRect) => {
+  // commitButton sends `pending` once: hideButton clears it, so the click that
+  // follows a touch release is a no-op.
+  const commitButton = () => {
+    if (pending) confirmSelection(pending);
+  };
+
+  // Touch devices show a NATIVE selection callout (iOS "Copy | Look Up …") in
+  // an OS layer that beats any z-index, placed above or below the selection
+  // depending on where it sits on screen, which the page can't know. So on a
+  // coarse pointer the button is pinned to the bottom centre of the viewport,
+  // out of that callout's reach. A mouse keeps it just above the selection.
+  // One live MediaQueryList per host; `.matches` tracks device changes.
+  const coarsePointer =
+    typeof window.matchMedia === "function" ? window.matchMedia("(pointer: coarse)") : null;
+
+  const showButton = (range: Range) => {
     if (!button) {
-      button = document.createElement("button");
-      button.type = "button";
-      button.setAttribute(TEXT_SELECT_BUTTON_ATTR, "");
-      button.textContent = "Comment";
-      // preventDefault on pointerdown keeps the native selection alive when the
-      // button is tapped (a default pointerdown would move focus and collapse
-      // it before our click handler reads the range).
-      button.addEventListener("pointerdown", (e) => e.preventDefault());
-      button.addEventListener("click", (e) => {
+      const b = document.createElement("button");
+      button = b;
+      b.type = "button";
+      b.setAttribute(TEXT_SELECT_BUTTON_ATTR, "");
+      b.textContent = "Comment";
+      // preventDefault on pointerdown keeps a desktop selection alive (a default
+      // mousedown would move focus and collapse it), so a mouse press needs no
+      // `pressing` and commits on click, as before.
+      b.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        if (e.pointerType === "mouse") return;
+        pressing = true;
+        // Refresh `pending` from the live selection if it's still intact: a
+        // handle drag within the debounce hasn't reached evaluate yet.
+        const live = textOffsetsFromSelection(window.getSelection(), el);
+        if (live) pending = live;
+        // Touch is captured implicitly; capture pen too, so its release always
+        // reaches the button even after sliding off.
+        try {
+          b.setPointerCapture?.(e.pointerId);
+        } catch {
+          // no active pointer with that id (synthetic event): nothing to capture
+        }
+      });
+      // Touch and pen commit on a release INSIDE the button, so the tap works
+      // even if the platform drops the click after dismissing the selection;
+      // sliding off cancels. Either way the press is over: re-evaluate.
+      const release = (e: PointerEvent) => {
+        if (e.pointerType === "mouse") return;
+        pressing = false;
+        const r = b.getBoundingClientRect();
+        const inside =
+          e.type === "pointerup" &&
+          e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (inside) commitButton();
+        else evaluate();
+      };
+      b.addEventListener("pointerup", release);
+      b.addEventListener("pointercancel", release);
+      b.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        confirmSelection();
+        commitButton();
       });
-      document.body.appendChild(button);
+      document.body.appendChild(b);
     }
-    // Fixed to the viewport, centered above the selection's end. Visual look
-    // is a sensible default overridable via --lvt-text-select-* custom props
+    // Fixed to the viewport (placement: see coarsePointer). Visual look is a
+    // sensible default overridable via --lvt-text-select-* custom props
     // (mirrors area-select's --lvt-area-select-* convention). The overlay lives
     // on document.body (outside the themed subtree), so it can't inherit host
     // theme tokens — hence concrete fallbacks here.
-    // Touch devices show a NATIVE selection callout (iOS "Copy | Look Up …")
-    // anchored ABOVE the selection, rendered in an OS layer that beats any
-    // z-index. So on a coarse pointer, put our button just BELOW the selection
-    // (clear of that callout, still near where the user is looking); a mouse
-    // keeps the compact anchor just above the selection.
-    const coarse =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(pointer: coarse)").matches;
-    const cx = Math.round(box.left + box.width / 2);
-    const position = coarse
-      ? `left:${cx}px;top:${Math.round(box.bottom + 10)}px;transform:translateX(-50%);`
-      : `left:${cx}px;top:${Math.round(box.top)}px;transform:translate(-50%,calc(-100% - 6px));`;
+    let position: string;
+    if (coarsePointer?.matches) {
+      position =
+        "left:50%;bottom:calc(env(safe-area-inset-bottom, 0px) + var(--lvt-text-select-bottom, 16px));transform:translateX(-50%);";
+    } else {
+      const box = range.getBoundingClientRect(); // only a beside-the-selection button needs layout
+      position = `left:${Math.round(box.left + box.width / 2)}px;top:${Math.round(box.top)}px;transform:translate(-50%,calc(-100% - 6px));`;
+    }
     button.style.cssText =
       "position:fixed;z-index:var(--lvt-text-select-z-index,9999);margin:0;" +
       "padding:var(--lvt-text-select-pad,10px 20px);cursor:pointer;white-space:nowrap;" +
@@ -2681,16 +2732,13 @@ function attachTextSelect(
 
   const evaluate = () => {
     const sel = window.getSelection();
-    if (!selectionInsideHost(sel, el)) {
-      hideButton();
-      return;
-    }
-    const range = textOffsetsFromSelection(sel, el);
+    const range = selectionInsideHost(sel, el) ? textOffsetsFromSelection(sel, el) : null;
     if (!range) {
-      hideButton();
+      if (!pressing) hideButton(); // mid-press, the release decides
       return;
     }
-    showButton(sel!.getRangeAt(0).getBoundingClientRect());
+    pending = range;
+    showButton(sel!.getRangeAt(0));
   };
 
   const onSelectionChange = () => {
@@ -2743,7 +2791,7 @@ function attachTextSelect(
     if (e.key === "Enter" && haveSel) {
       e.preventDefault();
       e.stopPropagation();
-      confirmSelection();
+      confirmSelection(textOffsetsFromSelection(sel, el));
       return;
     }
     if (e.key === "Escape" && (selecting || haveSel)) {

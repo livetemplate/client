@@ -58,6 +58,16 @@ function tokenText(content: HTMLElement, tokenIndex: number): Text {
   return content.children[tokenIndex].firstChild as Text;
 }
 
+// Arming renders the block caret and showing the button reads Range layout
+// geometry. jsdom does no layout (getClientRects is absent), so stub the two
+// Range layout methods — real geometry is covered by the chromedp e2e, not here.
+beforeAll(() => {
+  const emptyRects = Object.assign([], { item: () => null }) as unknown as DOMRectList;
+  const zeroRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
+  (Range.prototype as any).getClientRects = () => emptyRects;
+  (Range.prototype as any).getBoundingClientRect = () => zeroRect;
+});
+
 afterEach(() => {
   teardownTextSelectForRoot(document.body); // drop any armed window keydown listeners
   document.body.replaceChildren();
@@ -169,16 +179,6 @@ describe("textOffsetsFromSelection", () => {
 });
 
 describe("keyboard commit gating (regression: bot review of #140)", () => {
-  // Arming renders the block caret, which reads Range layout geometry. jsdom
-  // does no layout (getClientRects is absent), so stub the two Range layout
-  // methods — real geometry is covered by the chromedp e2e, not here.
-  const emptyRects = Object.assign([], { item: () => null }) as unknown as DOMRectList;
-  const zeroRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
-  beforeAll(() => {
-    (Range.prototype as any).getClientRects = () => emptyRects;
-    (Range.prototype as any).getBoundingClientRect = () => zeroRect;
-  });
-
   it("does NOT commit on Enter while a text field is focused, even with a live host selection", () => {
     const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
     host.setAttribute("lvt-fx:text-select", "selectText");
@@ -215,13 +215,6 @@ describe("keyboard commit gating (regression: bot review of #140)", () => {
 });
 
 describe("keyboard scoping (regression: bot review round 2 of #140)", () => {
-  const emptyRects = Object.assign([], { item: () => null }) as unknown as DOMRectList;
-  const zeroRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
-  beforeAll(() => {
-    (Range.prototype as any).getClientRects = () => emptyRects;
-    (Range.prototype as any).getBoundingClientRect = () => zeroRect;
-  });
-
   it("ignores Enter when an unrelated non-editable widget is focused", () => {
     const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
     host.setAttribute("lvt-fx:text-select", "selectText");
@@ -313,5 +306,164 @@ describe("textOffsetsFromSelection — block surface (rendered Markdown)", () =>
     const { host, blocks } = mountBlocks([{ from: 1, to: 1, html: "<p>abc</p>" }]);
     const t = blocks[0].querySelector("p")!.firstChild as Text;
     expect(textOffsetsFromSelection(selectRange(t, 1, t, 1), host)).toBeNull();
+  });
+});
+
+// #243 (prereview): on iOS, tapping the floating Comment button dismisses the
+// native selection before the button's click runs, so the button must commit
+// the range it was SHOWN for, survive the collapse mid-press, and commit on a
+// touch release. jsdom fires no selectionchange of its own and does no layout,
+// so the tests dispatch selectionchange and stub geometry.
+describe("Comment button on touch (#243)", () => {
+  const realMatchMedia = window.matchMedia;
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    window.matchMedia = realMatchMedia;
+  });
+
+  const pointer = (
+    el: Element,
+    type: "pointerdown" | "pointerup" | "pointercancel",
+    pointerType: "touch" | "mouse",
+    clientX = 50,
+    clientY = 20
+  ) => {
+    const e = new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true, cancelable: true });
+    Object.defineProperty(e, "pointerType", { value: pointerType });
+    el.dispatchEvent(e);
+  };
+  const settle = () => {
+    document.dispatchEvent(new Event("selectionchange"));
+    jest.advanceTimersByTime(200); // past the 150ms debounce
+  };
+  const buttonEl = () =>
+    document.querySelector<HTMLButtonElement>("[data-lvt-text-select-button]");
+
+  // Arms a host, selects "alpha" (L1 runes [0,5)) and waits for the button,
+  // whose rect is stubbed to (0,0)-(100,40) so pointerup inside/outside is testable.
+  const showButtonForAlpha = () => {
+    const { contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5);
+    settle();
+    const b = buttonEl();
+    expect(b).not.toBeNull();
+    b!.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 }) as DOMRect;
+    return { send, button: b! };
+  };
+  const expectSentAlphaOnce = (send: jest.Mock) => {
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({
+      action: "selectText",
+      data: { fromLine: 1, fromCol: 0, toLine: 1, toCol: 5, text: "alpha" },
+    });
+  };
+
+  it("a click after the selection was cleared commits the range the button was shown for", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "mouse");
+    window.getSelection()!.removeAllRanges(); // iOS dismisses it on the tap
+    button.click();
+    expectSentAlphaOnce(send);
+    expect(buttonEl()).toBeNull();
+  });
+
+  it("keeps the button through a collapse selectionchange while a press is held", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "touch");
+    window.getSelection()!.removeAllRanges();
+    settle(); // the collapse's debounced evaluate runs mid-press
+    expect(button.isConnected).toBe(true);
+    button.click();
+    expectSentAlphaOnce(send);
+  });
+
+  it("a touch release inside the button commits once; the click after it sends nothing more", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "touch");
+    window.getSelection()!.removeAllRanges();
+    pointer(button, "pointerup", "touch", 50, 20);
+    expectSentAlphaOnce(send);
+    button.click(); // the platform's click, if it still sends one
+    expectSentAlphaOnce(send);
+  });
+
+  it("a touch press re-reads a selection that changed within the debounce", () => {
+    const { contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5); // "alpha"
+    settle();
+    const b = buttonEl()!;
+    b.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 }) as DOMRect;
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 3); // handle dragged to "alp"
+    pointer(b, "pointerdown", "touch"); // before the debounce re-ran evaluate
+    window.getSelection()!.removeAllRanges();
+    pointer(b, "pointerup", "touch", 50, 20);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].data).toMatchObject({ fromCol: 0, toCol: 3, text: "alp" });
+  });
+
+  it("a touch release outside the button (slid off) sends nothing and drops a dismissed selection's button", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "touch");
+    window.getSelection()!.removeAllRanges();
+    pointer(button, "pointerup", "touch", 300, 300);
+    expect(send).not.toHaveBeenCalled();
+    expect(buttonEl()).toBeNull();
+  });
+
+  it("a mouse pointerup defers to the click (no double send)", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "mouse");
+    pointer(button, "pointerup", "mouse");
+    expect(send).not.toHaveBeenCalled();
+    button.click();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a mouse press released off the button never blocks a later collapse from hiding it", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "mouse");
+    pointer(document.body, "pointerup", "mouse", 300, 300); // dragged off, released elsewhere
+    window.getSelection()!.removeAllRanges();
+    settle();
+    expect(buttonEl()).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("a cancelled touch (the tap became a scroll) drops the button of a dismissed selection", () => {
+    const { send, button } = showButtonForAlpha();
+    pointer(button, "pointerdown", "touch");
+    window.getSelection()!.removeAllRanges();
+    pointer(button, "pointercancel", "touch");
+    expect(buttonEl()).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  const withPointer = (coarse: boolean) => {
+    window.matchMedia = ((q: string) =>
+      ({ matches: coarse && q === "(pointer: coarse)", media: q }) as MediaQueryList) as typeof window.matchMedia;
+  };
+
+  it("pins the button to the bottom of the viewport on a coarse pointer", () => {
+    withPointer(true);
+    const { button } = showButtonForAlpha();
+    const style = button.getAttribute("style") ?? "";
+    expect(style).toMatch(/bottom:/);
+    expect(style).not.toMatch(/(^|;)\s*top:/);
+    expect(style).toMatch(/left:\s*50%/);
+  });
+
+  it("anchors the button above the selection on a fine pointer", () => {
+    withPointer(false);
+    const { button } = showButtonForAlpha();
+    const style = button.getAttribute("style") ?? "";
+    expect(style).toMatch(/(^|;)\s*top:/);
+    expect(style).not.toMatch(/bottom:/);
   });
 });

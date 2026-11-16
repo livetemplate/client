@@ -5,6 +5,25 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`lvt-fx:text-select`: tapping the Comment button on iOS sends the selection.**
+  iOS dismisses a non-editable selection when you tap outside it, and web
+  events can't stop that. The button used to read `getSelection()` when its
+  click ran, found it empty, and sent nothing. It now sends the range it was
+  shown for. A collapse while you're still pressing the button no longer hides
+  it. A touch or pen release inside the button commits, so the tap works even
+  if the platform drops the click; sliding off still cancels. Keyboard Enter
+  still reads the live selection.
+- **`lvt-fx:text-select`: on a coarse pointer the Comment button is pinned to
+  the bottom centre of the viewport.** iOS draws its Copy / Look Up callout
+  above or below the selection depending on where it sits on screen, so a
+  button placed beside the selection could end up under it. The offset is
+  `env(safe-area-inset-bottom)` plus `--lvt-text-select-bottom` (default
+  `16px`). A mouse keeps the button just above the selection.
+
 ## [v0.25.6] - 2026-11-15
 
 ### Added
