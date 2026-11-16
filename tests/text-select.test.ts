@@ -179,7 +179,6 @@ describe("textOffsetsFromSelection", () => {
 });
 
 describe("keyboard commit gating (regression: bot review of #140)", () => {
-
   it("does NOT commit on Enter while a text field is focused, even with a live host selection", () => {
     const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
     host.setAttribute("lvt-fx:text-select", "selectText");
@@ -216,7 +215,6 @@ describe("keyboard commit gating (regression: bot review of #140)", () => {
 });
 
 describe("keyboard scoping (regression: bot review round 2 of #140)", () => {
-
   it("ignores Enter when an unrelated non-editable widget is focused", () => {
     const { host, contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
     host.setAttribute("lvt-fx:text-select", "selectText");
@@ -391,6 +389,23 @@ describe("Comment button on touch (#243)", () => {
     expectSentAlphaOnce(send);
     button.click(); // the platform's click, if it still sends one
     expectSentAlphaOnce(send);
+  });
+
+  it("a touch press re-reads a selection that changed within the debounce", () => {
+    const { contents } = mountCode([{ line: 1, tokens: ["alpha beta"] }]);
+    const send = jest.fn();
+    handleTextSelectDirectives(document.body, send);
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 5); // "alpha"
+    settle();
+    const b = buttonEl()!;
+    b.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 }) as DOMRect;
+    selectRange(tokenText(contents[0], 0), 0, tokenText(contents[0], 0), 3); // handle dragged to "alp"
+    pointer(b, "pointerdown", "touch"); // before the debounce re-ran evaluate
+    window.getSelection()!.removeAllRanges();
+    pointer(b, "pointerup", "touch", 50, 20);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].data).toMatchObject({ fromCol: 0, toCol: 3, text: "alp" });
   });
 
   it("a touch release outside the button (slid off) sends nothing and drops a dismissed selection's button", () => {

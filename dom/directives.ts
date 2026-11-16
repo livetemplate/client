@@ -2673,6 +2673,10 @@ function attachTextSelect(
         e.preventDefault();
         if (e.pointerType === "mouse") return;
         pressing = true;
+        // Refresh `pending` from the live selection if it's still intact: a
+        // handle drag within the debounce hasn't reached evaluate yet.
+        const live = textOffsetsFromSelection(window.getSelection(), el);
+        if (live) pending = live;
         // Touch is captured implicitly; capture pen too, so its release always
         // reaches the button even after sliding off.
         try {
