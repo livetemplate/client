@@ -114,9 +114,10 @@ export class LiveTemplateClient {
   // on the SSR'd markup before the handshake, so a click can land before there
   // is anywhere to send it; null outside that window.
   private pendingSends: unknown[] | null = null;
-  // Only the latest connect() flushes pendingSends: an earlier one that
-  // finishes first would otherwise end the window while the later transport is
-  // still undecided.
+  // Bumped by each connect() and by disconnect(). A connect() whose generation
+  // is stale when its handshake returns was superseded or torn down, so it
+  // stops there: it must neither end a later connect's queue window nor set up
+  // listeners on a disconnected client.
   private connectGeneration: number = 0;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
@@ -766,6 +767,7 @@ export class LiveTemplateClient {
       if (generation === this.connectGeneration) this.pendingSends = null;
       throw error;
     }
+    if (generation !== this.connectGeneration) return;
     this.useHTTP = !connectionResult.usingWebSocket;
 
     if (this.useHTTP) {
@@ -776,7 +778,7 @@ export class LiveTemplateClient {
         this.handleWebSocketPayload(connectionResult.initialState);
       }
     }
-    if (generation === this.connectGeneration) this.flushPendingSends();
+    this.flushPendingSends();
 
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
@@ -824,7 +826,13 @@ export class LiveTemplateClient {
   private flushPendingSends(): void {
     const queued = this.pendingSends;
     this.pendingSends = null;
-    for (const message of queued ?? []) this.send(message);
+    for (const message of queued ?? []) {
+      try {
+        this.send(message);
+      } catch (error) {
+        this.logger.warn("Failed to send a message queued during connect():", error);
+      }
+    }
   }
 
   /**
@@ -832,6 +840,7 @@ export class LiveTemplateClient {
    */
   disconnect(): void {
     this.pendingSends = null;
+    this.connectGeneration++;
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;

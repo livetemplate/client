@@ -158,7 +158,7 @@ describe("LiveTemplateClient attribute lifecycle", () => {
           text: () => Promise.resolve(JSON.stringify(initialState)),
         });
       });
-      registerRating("lvt-x:early-http");
+      const added = registerRating("lvt-x:early-http");
       ssrWrapper(button);
       client = new LiveTemplateClient({ logLevel: "error" });
       const connectPromise = client.connect();
@@ -172,6 +172,9 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       expect(mockSockets).toHaveLength(0);
       expect(posts()).toHaveLength(1);
       expect(JSON.parse((posts()[0][1] as any).body)).toEqual({ action: "SetRating", data: { stars: 3 } });
+      // The initial state renders the same button over the armed one: the
+      // morph keeps the element, so it stays armed once.
+      expect(added).toHaveBeenCalledTimes(1);
     });
   });
 });
