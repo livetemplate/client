@@ -768,60 +768,64 @@ export class LiveTemplateClient {
       throw error;
     }
     if (generation !== this.connectGeneration) return;
-    this.useHTTP = !connectionResult.usingWebSocket;
+    try {
+      this.useHTTP = !connectionResult.usingWebSocket;
 
-    if (this.useHTTP) {
-      this.ws = null;
-      this.logger.info("WebSocket not available, using HTTP mode");
-      this.options.onConnect?.();
-      if (connectionResult.initialState && this.wrapperElement) {
-        this.handleWebSocketPayload(connectionResult.initialState);
+      if (this.useHTTP) {
+        this.ws = null;
+        this.logger.info("WebSocket not available, using HTTP mode");
+        this.options.onConnect?.();
+        if (connectionResult.initialState && this.wrapperElement) {
+          this.handleWebSocketPayload(connectionResult.initialState);
+        }
       }
+      // Set up event delegation for lvt-* attributes
+      this.eventDelegator.setupEventDelegation();
+
+      // Set up window-* event delegation
+      this.eventDelegator.setupWindowEventDelegation();
+
+      // Set up click-away delegation
+      this.eventDelegator.setupClickAwayDelegation();
+
+      // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
+      this.eventDelegator.setupDOMEventTriggerDelegation();
+
+      // Set up click-outside listener for client-managed toast stack
+      setupToastClickOutside();
+
+      // Set up focus trap delegation for lvt-focus-trap attribute
+      this.eventDelegator.setupFocusTrapDelegation();
+
+      // Set up autofocus delegation for lvt-autofocus attribute
+      this.eventDelegator.setupAutofocusDelegation();
+
+      // Set up link interception for SPA navigation
+      this.linkInterceptor.setup(this.wrapperElement);
+
+      // Set up reactive attribute listeners for lvt-el:*:on:* attributes
+      setupReactiveAttributeListeners();
+
+      setupInvokerPolyfill();
+      setupHashLink();
+
+      // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
+      setupFxLifecycleListeners(this.wrapperElement);
+
+      // Initialize focus tracking
+      this.focusManager.attach(this.wrapperElement);
+
+      // Set up infinite scroll observers
+      this.observerManager.setupInfiniteScrollObserver();
+      this.observerManager.setupInfiniteScrollMutationObserver();
+
+      this.setupVisibilityReconnect();
+    } finally {
+      // Last, so any response to a queued action meets a fully set-up client.
+      // In finally, so a setup step that throws cannot leave the queue open,
+      // which would hold every later send() back.
+      this.flushPendingSends();
     }
-    // Set up event delegation for lvt-* attributes
-    this.eventDelegator.setupEventDelegation();
-
-    // Set up window-* event delegation
-    this.eventDelegator.setupWindowEventDelegation();
-
-    // Set up click-away delegation
-    this.eventDelegator.setupClickAwayDelegation();
-
-    // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
-    this.eventDelegator.setupDOMEventTriggerDelegation();
-
-    // Set up click-outside listener for client-managed toast stack
-    setupToastClickOutside();
-
-    // Set up focus trap delegation for lvt-focus-trap attribute
-    this.eventDelegator.setupFocusTrapDelegation();
-
-    // Set up autofocus delegation for lvt-autofocus attribute
-    this.eventDelegator.setupAutofocusDelegation();
-
-    // Set up link interception for SPA navigation
-    this.linkInterceptor.setup(this.wrapperElement);
-
-    // Set up reactive attribute listeners for lvt-el:*:on:* attributes
-    setupReactiveAttributeListeners();
-
-    setupInvokerPolyfill();
-    setupHashLink();
-
-    // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
-    setupFxLifecycleListeners(this.wrapperElement);
-
-    // Initialize focus tracking
-    this.focusManager.attach(this.wrapperElement);
-
-    // Set up infinite scroll observers
-    this.observerManager.setupInfiniteScrollObserver();
-    this.observerManager.setupInfiniteScrollMutationObserver();
-
-    this.setupVisibilityReconnect();
-
-    // Last, so any response to a queued action meets a fully set-up client.
-    this.flushPendingSends();
   }
 
   private flushPendingSends(): void {

@@ -178,6 +178,22 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       expect(delegation).not.toHaveBeenCalled();
     });
 
+    it("still sends a queued click when a setup step after the handshake throws", async () => {
+      registerRating("lvt-x:early-setup");
+      ssrWrapper(`<button id="r" lvt-x:early-setup="SetRating">3</button>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      jest.spyOn((client as any).eventDelegator, "setupEventDelegation").mockImplementation(() => {
+        throw new Error("setup broke");
+      });
+      const connectPromise = client.connect();
+      document.getElementById("r")!.click();
+      await jest.advanceTimersByTimeAsync(0);
+      mockSockets[0].simulateOpen();
+      await expect(connectPromise).rejects.toThrow("setup broke");
+      expect((client as any).pendingSends).toBeNull();
+      expect(mockSockets[0].sent.map((m) => JSON.parse(m).action)).toEqual(["SetRating"]);
+    });
+
     it("sends an early click over HTTP when the server has no WebSocket", async () => {
       const button = `<button id="r" lvt-x:early-http="SetRating">3</button>`;
       const initialState = { tree: { s: [button] }, meta: { success: true, errors: {} } };
