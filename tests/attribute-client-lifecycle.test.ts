@@ -144,6 +144,40 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       expect(posts()).toEqual([]);
     });
 
+    it("drops a queued click, with a warning, when connect() fails", async () => {
+      registerRating("lvt-x:early-fail");
+      ssrWrapper(`<button id="r" lvt-x:early-fail="SetRating">3</button>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      jest.spyOn((client as any).webSocketManager, "connect").mockRejectedValue(new Error("boom"));
+      const loggerWarn = jest.spyOn((client as any).logger, "warn");
+      const connectPromise = client.connect();
+      document.getElementById("r")!.click();
+      await expect(connectPromise).rejects.toThrow("boom");
+      expect(loggerWarn.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        expect.stringContaining("dropping 1 message(s)")
+      );
+      expect((client as any).pendingSends).toBeNull();
+      expect(posts()).toEqual([]);
+    });
+
+    it("sends nothing and sets nothing up when disconnect() runs mid-connect", async () => {
+      registerRating("lvt-x:early-torn");
+      ssrWrapper(`<button id="r" lvt-x:early-torn="SetRating">3</button>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const delegation = jest.spyOn((client as any).eventDelegator, "setupEventDelegation");
+      let finish!: (v: unknown) => void;
+      jest
+        .spyOn((client as any).webSocketManager, "connect")
+        .mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      const connectPromise = client.connect();
+      document.getElementById("r")!.click();
+      client.disconnect();
+      finish({ usingWebSocket: true });
+      await connectPromise;
+      expect(posts()).toEqual([]);
+      expect(delegation).not.toHaveBeenCalled();
+    });
+
     it("sends an early click over HTTP when the server has no WebSocket", async () => {
       const button = `<button id="r" lvt-x:early-http="SetRating">3</button>`;
       const initialState = { tree: { s: [button] }, meta: { success: true, errors: {} } };

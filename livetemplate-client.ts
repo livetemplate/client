@@ -778,8 +778,6 @@ export class LiveTemplateClient {
         this.handleWebSocketPayload(connectionResult.initialState);
       }
     }
-    this.flushPendingSends();
-
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
 
@@ -821,6 +819,9 @@ export class LiveTemplateClient {
     this.observerManager.setupInfiniteScrollMutationObserver();
 
     this.setupVisibilityReconnect();
+
+    // Last, so any response to a queued action meets a fully set-up client.
+    this.flushPendingSends();
   }
 
   private flushPendingSends(): void {
