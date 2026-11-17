@@ -110,6 +110,15 @@ export class LiveTemplateClient {
   private wrapperElement: Element | null = null;
   private options: LiveTemplateClientOptions;
   private useHTTP: boolean = false; // True when WebSocket is unavailable
+  // Messages sent while connect() is still choosing a transport. Handlers arm
+  // on the SSR'd markup before the handshake, so a click can land before there
+  // is anywhere to send it; null outside that window.
+  private pendingSends: unknown[] | null = null;
+  // Bumped by each connect() and by disconnect(). A connect() whose generation
+  // is stale when its handshake returns was superseded or torn down, so it
+  // stops there: it must neither end a later connect's queue window nor set up
+  // listeners on a disconnected client.
+  private connectGeneration: number = 0;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
   // Rate limiting: cache of debounced/throttled handlers per element+eventType
@@ -734,73 +743,109 @@ export class LiveTemplateClient {
 
     this.webSocketManager.disconnect();
 
-    const connectionResult = await this.webSocketManager.connect();
-    this.useHTTP = !connectionResult.usingWebSocket;
-
-    if (this.useHTTP) {
-      this.ws = null;
-      this.logger.info("WebSocket not available, using HTTP mode");
-      this.options.onConnect?.();
-      if (connectionResult.initialState && this.wrapperElement) {
-        this.handleWebSocketPayload(connectionResult.initialState);
-      }
-    }
-    // Set up event delegation for lvt-* attributes
-    this.eventDelegator.setupEventDelegation();
-
-    // Set up window-* event delegation
-    this.eventDelegator.setupWindowEventDelegation();
-
-    // Set up click-away delegation
-    this.eventDelegator.setupClickAwayDelegation();
-
-    // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
-    this.eventDelegator.setupDOMEventTriggerDelegation();
-
-    // Set up click-outside listener for client-managed toast stack
-    setupToastClickOutside();
-
-    // Set up focus trap delegation for lvt-focus-trap attribute
-    this.eventDelegator.setupFocusTrapDelegation();
-
-    // Set up autofocus delegation for lvt-autofocus attribute
-    this.eventDelegator.setupAutofocusDelegation();
-
-    // Set up link interception for SPA navigation
-    this.linkInterceptor.setup(this.wrapperElement);
-
-    // Set up reactive attribute listeners for lvt-el:*:on:* attributes
-    setupReactiveAttributeListeners();
-
-    setupInvokerPolyfill();
-    setupHashLink();
-
-    // Make this client visible to the registry, so a handler registered after
-    // connect catches up against the live DOM immediately rather than waiting
-    // for a render that may never come. Attaching also runs the connect pass:
-    // a page load hydrates SSR'd markup without changing it, so handlers that
-    // must act on what is already on screen (declarative ones, and low-level
-    // ones with runOnConnect — url-hash, file inputs) run here, not post-render.
+    // Attach to the registry before the handshake, not after it. Attaching runs
+    // the connect pass, which arms declarative handlers and low-level ones with
+    // runOnConnect (url-hash, file inputs) on the SSR'd markup; on a remote site
+    // that markup is clickable well before the socket opens. Their sends queue
+    // in pendingSends until the transport is chosen, rather than taking send()'s
+    // CONNECTING→HTTP fallback, whose POST would race the WS mount. Attaching
+    // also lets a handler registered later catch up against the live DOM.
     // Idempotent: the registry holds a Set.
+    this.pendingSends ??= [];
+    const generation = ++this.connectGeneration;
     attachRegistryRoot(this.registryRoot);
 
-    // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
-    setupFxLifecycleListeners(this.wrapperElement);
+    let connectionResult;
+    try {
+      connectionResult = await this.webSocketManager.connect();
+    } catch (error) {
+      if (generation === this.connectGeneration && this.pendingSends?.length) {
+        this.logger.warn(
+          `connect() failed; dropping ${this.pendingSends.length} message(s) sent before it finished`
+        );
+      }
+      if (generation === this.connectGeneration) this.pendingSends = null;
+      throw error;
+    }
+    if (generation !== this.connectGeneration) return;
+    try {
+      this.useHTTP = !connectionResult.usingWebSocket;
 
-    // Initialize focus tracking
-    this.focusManager.attach(this.wrapperElement);
+      if (this.useHTTP) {
+        this.ws = null;
+        this.logger.info("WebSocket not available, using HTTP mode");
+        this.options.onConnect?.();
+        if (connectionResult.initialState && this.wrapperElement) {
+          this.handleWebSocketPayload(connectionResult.initialState);
+        }
+      }
+      // Set up event delegation for lvt-* attributes
+      this.eventDelegator.setupEventDelegation();
 
-    // Set up infinite scroll observers
-    this.observerManager.setupInfiniteScrollObserver();
-    this.observerManager.setupInfiniteScrollMutationObserver();
+      // Set up window-* event delegation
+      this.eventDelegator.setupWindowEventDelegation();
 
-    this.setupVisibilityReconnect();
+      // Set up click-away delegation
+      this.eventDelegator.setupClickAwayDelegation();
+
+      // Set up DOM event trigger delegation for lvt-el:*:on:{event} attributes
+      this.eventDelegator.setupDOMEventTriggerDelegation();
+
+      // Set up click-outside listener for client-managed toast stack
+      setupToastClickOutside();
+
+      // Set up focus trap delegation for lvt-focus-trap attribute
+      this.eventDelegator.setupFocusTrapDelegation();
+
+      // Set up autofocus delegation for lvt-autofocus attribute
+      this.eventDelegator.setupAutofocusDelegation();
+
+      // Set up link interception for SPA navigation
+      this.linkInterceptor.setup(this.wrapperElement);
+
+      // Set up reactive attribute listeners for lvt-el:*:on:* attributes
+      setupReactiveAttributeListeners();
+
+      setupInvokerPolyfill();
+      setupHashLink();
+
+      // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
+      setupFxLifecycleListeners(this.wrapperElement);
+
+      // Initialize focus tracking
+      this.focusManager.attach(this.wrapperElement);
+
+      // Set up infinite scroll observers
+      this.observerManager.setupInfiniteScrollObserver();
+      this.observerManager.setupInfiniteScrollMutationObserver();
+
+      this.setupVisibilityReconnect();
+    } finally {
+      // Last, so any response to a queued action meets a fully set-up client.
+      // In finally, so a setup step that throws cannot leave the queue open,
+      // which would hold every later send() back.
+      this.flushPendingSends();
+    }
+  }
+
+  private flushPendingSends(): void {
+    const queued = this.pendingSends;
+    this.pendingSends = null;
+    for (const message of queued ?? []) {
+      try {
+        this.send(message);
+      } catch (error) {
+        this.logger.warn("Failed to send a message queued during connect():", error);
+      }
+    }
   }
 
   /**
    * Disconnect from WebSocket
    */
   disconnect(): void {
+    this.pendingSends = null;
+    this.connectGeneration++;
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
@@ -1186,6 +1231,10 @@ export class LiveTemplateClient {
    * @param message - Message to send (will be JSON stringified)
    */
   send(message: any): void {
+    if (this.pendingSends) {
+      this.pendingSends.push(message);
+      return;
+    }
     const readyState = this.webSocketManager.getReadyState();
 
     if (this.logger.isDebugEnabled()) {
