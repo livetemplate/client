@@ -96,6 +96,7 @@ describe("LiveTemplateClient attribute lifecycle", () => {
     document.getElementById("b")!.click();
     expect(actions()).toEqual(["Changed", "Clicked"]);
   });
+
   describe("before the transport is chosen", () => {
     // A page is interactive as soon as its SSR'd markup paints, which on a
     // remote site is well before the WebSocket handshake finishes. A click in

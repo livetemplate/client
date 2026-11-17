@@ -114,6 +114,10 @@ export class LiveTemplateClient {
   // on the SSR'd markup before the handshake, so a click can land before there
   // is anywhere to send it; null outside that window.
   private pendingSends: unknown[] | null = null;
+  // Only the latest connect() flushes pendingSends: an earlier one that
+  // finishes first would otherwise end the window while the later transport is
+  // still undecided.
+  private connectGeneration: number = 0;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
   // Rate limiting: cache of debounced/throttled handlers per element+eventType
@@ -747,13 +751,19 @@ export class LiveTemplateClient {
     // also lets a handler registered later catch up against the live DOM.
     // Idempotent: the registry holds a Set.
     this.pendingSends ??= [];
+    const generation = ++this.connectGeneration;
     attachRegistryRoot(this.registryRoot);
 
     let connectionResult;
     try {
       connectionResult = await this.webSocketManager.connect();
     } catch (error) {
-      this.pendingSends = null;
+      if (generation === this.connectGeneration && this.pendingSends?.length) {
+        this.logger.warn(
+          `connect() failed; dropping ${this.pendingSends.length} message(s) sent before it finished`
+        );
+      }
+      if (generation === this.connectGeneration) this.pendingSends = null;
       throw error;
     }
     this.useHTTP = !connectionResult.usingWebSocket;
@@ -766,7 +776,7 @@ export class LiveTemplateClient {
         this.handleWebSocketPayload(connectionResult.initialState);
       }
     }
-    this.flushPendingSends();
+    if (generation === this.connectGeneration) this.flushPendingSends();
 
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
