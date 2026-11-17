@@ -96,4 +96,81 @@ describe("LiveTemplateClient attribute lifecycle", () => {
     document.getElementById("b")!.click();
     expect(actions()).toEqual(["Changed", "Clicked"]);
   });
+  describe("before the transport is chosen", () => {
+    // A page is interactive as soon as its SSR'd markup paints, which on a
+    // remote site is well before the WebSocket handshake finishes. A click in
+    // that window must not be lost, and must not race the WS mount over HTTP.
+    // The registry is module-global, so each test registers its own name.
+    function registerRating(attribute: string): jest.Mock {
+      const added = jest.fn();
+      registerAttribute({
+        attribute,
+        needsServerChannel: true,
+        onElementAdded(el, ctx) {
+          added();
+          el.addEventListener("click", () => ctx.send?.({ action: ctx.value, data: { stars: 3 } }), {
+            signal: ctx.signal,
+          });
+        },
+      });
+      return added;
+    }
+    const posts = () =>
+      (globalThis.fetch as unknown as jest.Mock).mock.calls.filter((c) => (c[1] as any)?.method === "POST");
+
+    it("arms handlers while the socket is connecting and sends the click once it opens", async () => {
+      const added = registerRating("lvt-x:early-ws");
+      ssrWrapper(`<button id="r" lvt-x:early-ws="SetRating">3</button>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+
+      document.getElementById("r")!.click(); // before the HEAD probe resolves
+      await jest.advanceTimersByTimeAsync(0);
+      const socket = mockSockets[0];
+      expect(socket.readyState).toBe(0);
+      document.getElementById("r")!.click(); // while the socket is CONNECTING
+
+      expect(added).toHaveBeenCalledTimes(1);
+      expect(socket.sent).toEqual([]);
+      expect(posts()).toEqual([]);
+
+      socket.simulateOpen();
+      await connectPromise;
+      expect(socket.sent.map((m) => JSON.parse(m))).toEqual([
+        { action: "SetRating", data: { stars: 3 } },
+        { action: "SetRating", data: { stars: 3 } },
+      ]);
+      expect(posts()).toEqual([]);
+    });
+
+    it("sends an early click over HTTP when the server has no WebSocket", async () => {
+      const button = `<button id="r" lvt-x:early-http="SetRating">3</button>`;
+      const initialState = { tree: { s: [button] }, meta: { success: true, errors: {} } };
+      // Plain stand-ins, as in heartbeat.test.ts: jsdom has no usable Response.
+      (globalThis.fetch as unknown as jest.Mock).mockImplementation((...args: unknown[]) => {
+        const opts = args[1] as any;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: (k: string) => (opts?.method === "HEAD" && k === "X-LiveTemplate-WebSocket" ? "disabled" : null) },
+          json: () => Promise.resolve(initialState),
+          text: () => Promise.resolve(JSON.stringify(initialState)),
+        });
+      });
+      registerRating("lvt-x:early-http");
+      ssrWrapper(button);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+      document.getElementById("r")!.click();
+      expect(posts()).toEqual([]);
+
+      let settled = false;
+      connectPromise.then(() => (settled = true));
+      for (let i = 0; i < 20 && !settled; i++) await jest.advanceTimersByTimeAsync(10);
+      expect(settled).toBe(true);
+      expect(mockSockets).toHaveLength(0);
+      expect(posts()).toHaveLength(1);
+      expect(JSON.parse((posts()[0][1] as any).body)).toEqual({ action: "SetRating", data: { stars: 3 } });
+    });
+  });
 });

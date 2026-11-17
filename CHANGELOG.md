@@ -5,6 +5,18 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A click on a custom attribute before the WebSocket opens is no longer
+  lost.** `connect()` armed registered handlers only after the handshake, so on
+  a slow connection the server-rendered page was clickable with nothing
+  listening. Handlers now arm on the SSR'd markup before the handshake. What
+  they send while the transport is still being chosen is queued, then sent once
+  `connect()` has picked WebSocket or HTTP. The queue avoids the HTTP fallback
+  for a socket still connecting, whose POST would race the WebSocket mount.
+
 ## [v0.25.7] - 2026-11-16
 
 ### Fixed

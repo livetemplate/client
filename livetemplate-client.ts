@@ -110,6 +110,10 @@ export class LiveTemplateClient {
   private wrapperElement: Element | null = null;
   private options: LiveTemplateClientOptions;
   private useHTTP: boolean = false; // True when WebSocket is unavailable
+  // Messages sent while connect() is still choosing a transport. Handlers arm
+  // on the SSR'd markup before the handshake, so a click can land before there
+  // is anywhere to send it; null outside that window.
+  private pendingSends: unknown[] | null = null;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
   // Rate limiting: cache of debounced/throttled handlers per element+eventType
@@ -734,7 +738,24 @@ export class LiveTemplateClient {
 
     this.webSocketManager.disconnect();
 
-    const connectionResult = await this.webSocketManager.connect();
+    // Attach to the registry before the handshake, not after it. Attaching runs
+    // the connect pass, which arms declarative handlers and low-level ones with
+    // runOnConnect (url-hash, file inputs) on the SSR'd markup; on a remote site
+    // that markup is clickable well before the socket opens. Their sends queue
+    // in pendingSends until the transport is chosen, rather than taking send()'s
+    // CONNECTING→HTTP fallback, whose POST would race the WS mount. Attaching
+    // also lets a handler registered later catch up against the live DOM.
+    // Idempotent: the registry holds a Set.
+    this.pendingSends ??= [];
+    attachRegistryRoot(this.registryRoot);
+
+    let connectionResult;
+    try {
+      connectionResult = await this.webSocketManager.connect();
+    } catch (error) {
+      this.pendingSends = null;
+      throw error;
+    }
     this.useHTTP = !connectionResult.usingWebSocket;
 
     if (this.useHTTP) {
@@ -745,6 +766,8 @@ export class LiveTemplateClient {
         this.handleWebSocketPayload(connectionResult.initialState);
       }
     }
+    this.flushPendingSends();
+
     // Set up event delegation for lvt-* attributes
     this.eventDelegator.setupEventDelegation();
 
@@ -775,15 +798,6 @@ export class LiveTemplateClient {
     setupInvokerPolyfill();
     setupHashLink();
 
-    // Make this client visible to the registry, so a handler registered after
-    // connect catches up against the live DOM immediately rather than waiting
-    // for a render that may never come. Attaching also runs the connect pass:
-    // a page load hydrates SSR'd markup without changing it, so handlers that
-    // must act on what is already on screen (declarative ones, and low-level
-    // ones with runOnConnect — url-hash, file inputs) run here, not post-render.
-    // Idempotent: the registry holds a Set.
-    attachRegistryRoot(this.registryRoot);
-
     // Set up lifecycle listeners for lvt-fx:*:on:{lifecycle} attributes
     setupFxLifecycleListeners(this.wrapperElement);
 
@@ -797,10 +811,17 @@ export class LiveTemplateClient {
     this.setupVisibilityReconnect();
   }
 
+  private flushPendingSends(): void {
+    const queued = this.pendingSends;
+    this.pendingSends = null;
+    for (const message of queued ?? []) this.send(message);
+  }
+
   /**
    * Disconnect from WebSocket
    */
   disconnect(): void {
+    this.pendingSends = null;
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
@@ -1186,6 +1207,10 @@ export class LiveTemplateClient {
    * @param message - Message to send (will be JSON stringified)
    */
   send(message: any): void {
+    if (this.pendingSends) {
+      this.pendingSends.push(message);
+      return;
+    }
     const readyState = this.webSocketManager.getReadyState();
 
     if (this.logger.isDebugEnabled()) {
