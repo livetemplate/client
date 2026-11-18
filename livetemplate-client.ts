@@ -119,8 +119,9 @@ export class LiveTemplateClient {
   // stops there: it must neither end a later connect's queue window nor set up
   // listeners on a disconnected client.
   private connectGeneration: number = 0;
-  // Set once a connect() has chosen a transport. Until then the delegator
-  // leaves form submits to the browser (see EventDelegationContext).
+  // Set once a connect() has chosen a transport; cleared by disconnect(). While
+  // false the delegator leaves form submits to the browser (see
+  // EventDelegationContext.hasTransport).
   private transportChosen: boolean = false;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
@@ -852,6 +853,7 @@ export class LiveTemplateClient {
   disconnect(): void {
     this.pendingSends = null;
     this.connectGeneration++;
+    this.transportChosen = false;
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;

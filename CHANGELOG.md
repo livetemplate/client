@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **An `lvt-on:*` click before the WebSocket opens is no longer lost.** The
-  `lvt-on:*` and `lvt-on:window-*` delegators were set up only after the
+  `lvt-on:*` and `lvt-on:window:*` delegators were set up only after the
   handshake, so on a slow connection a click on an `lvt-on:click` button, or on
   a named button outside a form, did nothing. They are now set up before the handshake,
   and what they send is queued until `connect()` has chosen WebSocket or HTTP,

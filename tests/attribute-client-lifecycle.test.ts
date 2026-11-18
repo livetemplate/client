@@ -264,6 +264,28 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       expect(socket.sent.map((m) => JSON.parse(m).action)).toEqual(["Save"]);
     });
 
+    it("queues an lvt-on:window:* event made while the socket is connecting", async () => {
+      ssrWrapper(`<div lvt-on:window:keydown="Key"></div>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k" }));
+      await jest.advanceTimersByTimeAsync(0);
+      const socket = mockSockets[0];
+      expect(socket.sent).toEqual([]);
+      socket.simulateOpen();
+      await connectPromise;
+      expect(socket.sent.map((m) => JSON.parse(m).action)).toEqual(["Key"]);
+    });
+
+    it("leaves form submits to the browser again after disconnect()", async () => {
+      ssrWrapper(`<form id="f" lvt-on:submit="Save"><input name="title" value="a"></form>`);
+      await connectClient();
+      client.disconnect();
+      const event = new Event("submit", { bubbles: true, cancelable: true });
+      document.getElementById("f")!.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
     it("keeps intercepting form submits during a later connect()", async () => {
       ssrWrapper(`<form id="f" lvt-on:submit="Save"><input name="title" value="a"></form>`);
       await connectClient();
