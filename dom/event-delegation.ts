@@ -146,6 +146,13 @@ export interface EventDelegationContext {
   ): void;
   getWebSocketReadyState(): number | undefined;
   triggerPendingUploads(uploadName: string): void;
+  /**
+   * False until the client's first connect() has chosen WebSocket or HTTP.
+   * Until then a form submit is left to the browser, so it reaches the server
+   * as a native POST even if the connection never opens, instead of being
+   * queued and dropped when connect() fails.
+   */
+  hasTransport(): boolean;
 }
 
 /**
@@ -240,6 +247,10 @@ export class EventDelegator {
       }
 
       const listener = (e: Event) => {
+        // First, because the code below mutates the form (lvt-submitter,
+        // disable-with) and a native submit sends the form as it stands.
+        if (eventType === "submit" && !this.context.hasTransport()) return;
+
         const currentWrapper = this.context.getWrapperElement();
         if (!currentWrapper) return;
 

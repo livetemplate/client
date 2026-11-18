@@ -187,6 +187,7 @@ describe("delegatedEvents", () => {
       setActiveSubmission: jest.fn(),
       getWebSocketReadyState: () => 1,
       triggerPendingUploads: jest.fn(),
+      hasTransport: () => true,
     };
     return new EventDelegator(context, createLogger({ scope: "test", level: "silent" }));
   }

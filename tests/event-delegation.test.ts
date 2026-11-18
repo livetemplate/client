@@ -34,6 +34,7 @@ describe("EventDelegator", () => {
       setActiveSubmission: jest.fn(),
       getWebSocketReadyState: () => 1,
       triggerPendingUploads: jest.fn(),
+      hasTransport: () => true,
     };
 
     return { ...baseContext, ...overrides } as EventDelegationContext & {
