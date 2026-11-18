@@ -164,7 +164,7 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       registerRating("lvt-x:early-torn");
       ssrWrapper(`<button id="r" lvt-x:early-torn="SetRating">3</button>`);
       client = new LiveTemplateClient({ logLevel: "error" });
-      const delegation = jest.spyOn((client as any).eventDelegator, "setupEventDelegation");
+      const postHandshakeSetup = jest.spyOn((client as any).eventDelegator, "setupDOMEventTriggerDelegation");
       let finish!: (v: unknown) => void;
       jest
         .spyOn((client as any).webSocketManager, "connect")
@@ -175,14 +175,14 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       finish({ usingWebSocket: true });
       await connectPromise;
       expect(posts()).toEqual([]);
-      expect(delegation).not.toHaveBeenCalled();
+      expect(postHandshakeSetup).not.toHaveBeenCalled();
     });
 
     it("still sends a queued click when a setup step after the handshake throws", async () => {
       registerRating("lvt-x:early-setup");
       ssrWrapper(`<button id="r" lvt-x:early-setup="SetRating">3</button>`);
       client = new LiveTemplateClient({ logLevel: "error" });
-      jest.spyOn((client as any).eventDelegator, "setupEventDelegation").mockImplementation(() => {
+      jest.spyOn((client as any).eventDelegator, "setupDOMEventTriggerDelegation").mockImplementation(() => {
         throw new Error("setup broke");
       });
       const connectPromise = client.connect();
@@ -225,6 +225,78 @@ describe("LiveTemplateClient attribute lifecycle", () => {
       // The initial state renders the same button over the armed one: the
       // morph keeps the element, so it stays armed once.
       expect(added).toHaveBeenCalledTimes(1);
+    });
+
+    it("queues a built-in lvt-on:click made while the socket is connecting", async () => {
+      ssrWrapper(`<button id="b" lvt-on:click="Inc">+</button>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+      document.getElementById("b")!.click();
+      await jest.advanceTimersByTimeAsync(0);
+      const socket = mockSockets[0];
+      expect(socket.sent).toEqual([]);
+      socket.simulateOpen();
+      await connectPromise;
+      expect(socket.sent.map((m) => JSON.parse(m).action)).toEqual(["Inc"]);
+      expect(posts()).toEqual([]);
+    });
+
+    // A native submit reaches the server even if the socket never opens; a
+    // queued one is dropped when connect() fails.
+    it("leaves a form submit to the browser until the first transport is chosen", async () => {
+      ssrWrapper(`<form id="f" lvt-on:submit="Save"><input name="title" value="a"></form>`);
+      const submit = () => {
+        const event = new Event("submit", { bubbles: true, cancelable: true });
+        document.getElementById("f")!.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+      expect(submit()).toBe(false);
+      await jest.advanceTimersByTimeAsync(0);
+      const socket = mockSockets[0];
+      expect(submit()).toBe(false);
+      socket.simulateOpen();
+      await connectPromise;
+      expect(socket.sent).toEqual([]);
+
+      expect(submit()).toBe(true);
+      expect(socket.sent.map((m) => JSON.parse(m).action)).toEqual(["Save"]);
+    });
+
+    it("queues an lvt-on:window:* event made while the socket is connecting", async () => {
+      ssrWrapper(`<div lvt-on:window:keydown="Key"></div>`);
+      client = new LiveTemplateClient({ logLevel: "error" });
+      const connectPromise = client.connect();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k" }));
+      await jest.advanceTimersByTimeAsync(0);
+      const socket = mockSockets[0];
+      expect(socket.sent).toEqual([]);
+      socket.simulateOpen();
+      await connectPromise;
+      expect(socket.sent.map((m) => JSON.parse(m).action)).toEqual(["Key"]);
+    });
+
+    it("leaves form submits to the browser again after disconnect()", async () => {
+      ssrWrapper(`<form id="f" lvt-on:submit="Save"><input name="title" value="a"></form>`);
+      await connectClient();
+      client.disconnect();
+      const event = new Event("submit", { bubbles: true, cancelable: true });
+      document.getElementById("f")!.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("keeps intercepting form submits during a later connect()", async () => {
+      ssrWrapper(`<form id="f" lvt-on:submit="Save"><input name="title" value="a"></form>`);
+      await connectClient();
+      const again = client.connect();
+      const event = new Event("submit", { bubbles: true, cancelable: true });
+      document.getElementById("f")!.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      await jest.advanceTimersByTimeAsync(0);
+      mockSockets[1].simulateOpen();
+      await again;
+      expect(mockSockets[1].sent.map((m) => JSON.parse(m).action)).toEqual(["Save"]);
     });
   });
 });

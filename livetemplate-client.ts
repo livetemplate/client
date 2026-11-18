@@ -119,6 +119,10 @@ export class LiveTemplateClient {
   // stops there: it must neither end a later connect's queue window nor set up
   // listeners on a disconnected client.
   private connectGeneration: number = 0;
+  // Set once a connect() has chosen a transport; cleared by disconnect(). While
+  // false the delegator leaves form submits to the browser (see
+  // EventDelegationContext.hasTransport).
+  private transportChosen: boolean = false;
   private sessionCookie: string | null = null; // For HTTP mode session tracking
 
   // Rate limiting: cache of debounced/throttled handlers per element+eventType
@@ -396,6 +400,7 @@ export class LiveTemplateClient {
         getWebSocketReadyState: () => this.webSocketManager.getReadyState(),
         triggerPendingUploads: (uploadName: string) =>
           this.uploadHandler.triggerPendingUploads(uploadName),
+        hasTransport: () => this.transportChosen,
       },
       this.logger.child("EventDelegator")
     );
@@ -743,14 +748,21 @@ export class LiveTemplateClient {
 
     this.webSocketManager.disconnect();
 
-    // Attach to the registry before the handshake, not after it. Attaching runs
-    // the connect pass, which arms declarative handlers and low-level ones with
-    // runOnConnect (url-hash, file inputs) on the SSR'd markup; on a remote site
-    // that markup is clickable well before the socket opens. Their sends queue
-    // in pendingSends until the transport is chosen, rather than taking send()'s
-    // CONNECTING→HTTP fallback, whose POST would race the WS mount. Attaching
-    // also lets a handler registered later catch up against the live DOM.
-    // Idempotent: the registry holds a Set.
+    // Arm everything that sends before the handshake, not after it: on a
+    // remote site the SSR'd markup is clickable well before the socket opens.
+    // That is the lvt-on:* delegators and the registry; attaching to the
+    // registry runs the connect pass, which arms declarative handlers and
+    // low-level ones with runOnConnect (url-hash, file inputs), and lets a
+    // handler registered later catch up against the live DOM. Their sends
+    // queue in pendingSends until the transport is chosen, rather than taking
+    // send()'s CONNECTING→HTTP fallback, whose POST would race the WS mount.
+    // Form submits stay native until a first transport is chosen
+    // (hasTransport). All of this is idempotent, so a later connect() re-runs
+    // it safely. The delegators send nothing while being set up, so they run
+    // before the queue opens and one that throws cannot leave it open;
+    // attaching can send (runOnConnect), so it runs after.
+    this.eventDelegator.setupEventDelegation();
+    this.eventDelegator.setupWindowEventDelegation();
     this.pendingSends ??= [];
     const generation = ++this.connectGeneration;
     attachRegistryRoot(this.registryRoot);
@@ -769,6 +781,7 @@ export class LiveTemplateClient {
     }
     if (generation !== this.connectGeneration) return;
     try {
+      this.transportChosen = true;
       this.useHTTP = !connectionResult.usingWebSocket;
 
       if (this.useHTTP) {
@@ -779,12 +792,6 @@ export class LiveTemplateClient {
           this.handleWebSocketPayload(connectionResult.initialState);
         }
       }
-      // Set up event delegation for lvt-* attributes
-      this.eventDelegator.setupEventDelegation();
-
-      // Set up window-* event delegation
-      this.eventDelegator.setupWindowEventDelegation();
-
       // Set up click-away delegation
       this.eventDelegator.setupClickAwayDelegation();
 
@@ -846,6 +853,7 @@ export class LiveTemplateClient {
   disconnect(): void {
     this.pendingSends = null;
     this.connectGeneration++;
+    this.transportChosen = false;
     this.webSocketManager.disconnect();
     this.ws = null;
     this.useHTTP = false;
