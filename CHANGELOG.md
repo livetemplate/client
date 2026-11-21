@@ -5,6 +5,19 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A checkbox or radio wired with `lvt-on:change` now shows a change the
+  server makes by itself.** The client keeps a checkbox or radio the user set.
+  So a change the server made on its own never reached it: a keyboard
+  shortcut, say, or another control bound to the same state. Such a control
+  now takes the server's `checked` when the server renders a different value
+  than it did last time. That includes a handler on an ancestor such as the
+  form. A handler that only logs never changes what it renders, so the user's
+  selection still wins there, as documented.
+
 ## [v0.25.9] - 2026-11-18
 
 ### Fixed
