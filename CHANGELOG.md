@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than it did last time. That includes a handler on an ancestor such as the
   form. A handler that only logs never changes what it renders, so the user's
   selection still wins there, as documented.
+- **Focus restore survives an id, field name or key holding a quote, colon or
+  bracket.** The focus manager built `#id`, `[name="..."]` and
+  `[data-key="..."]` selectors from raw values, so such a value broke the
+  lookup. Every selector the client builds is now escaped (#170).
 
 ## [v0.25.9] - 2026-11-18
 
