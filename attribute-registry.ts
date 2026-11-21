@@ -217,8 +217,8 @@ export interface LowLevelHandler extends BaseHandler {
    *
    * `selectors` cannot answer this — it is descriptive, and a handler that
    * walks `*` claims no particular name — so a low-level handler that owns an
-   * attribute says so here. Omitted means it claims nothing, and a template
-   * using its attribute warns as unhandled.
+   * attribute says so here. Omitted means it claims its own `name`, the usual
+   * case of one handler per attribute; `[]` claims nothing.
    */
   claims?: string[];
 
@@ -717,7 +717,7 @@ export function registeredClaims(handlers: readonly AttributeHandler[] = registr
   const claims: string[] = [];
   for (const handler of handlers) {
     if (isDeclarative(handler)) claims.push(handler.attribute.toLowerCase());
-    else for (const claim of handler.claims ?? []) claims.push(claim.toLowerCase());
+    else for (const claim of handler.claims ?? [handler.name]) claims.push(claim.toLowerCase());
   }
   return claims;
 }

@@ -34,30 +34,9 @@ const EXPECTED_ORDER = [
   "lvt-fx:highlight",
   "lvt-fx:animate",
   "lvt-toast-stack",
-  "lvt-fx:auto-click",
-  "lvt-fx:area-select",
-  "lvt-fx:resize",
-  "lvt-fx:region-select",
-  "lvt-fx:text-select",
-  "lvt-fx:viewport-report",
-  "lvt-fx:proxy-bridge",
-  "lvt-fx:iframe-autoheight",
-  "lvt-fx:preview-bridge",
-  "lvt-fx:url-hash",
   "shadow-root-hydration",
   "lvt-scroll-away",
-  "lvt-spy",
   "lvt-fx:*:on:*",
-];
-
-/** The six handlers that dispatch server actions. */
-const SERVER_CHANNEL = [
-  "lvt-fx:area-select",
-  "lvt-fx:region-select",
-  "lvt-fx:text-select",
-  "lvt-fx:viewport-report",
-  "lvt-fx:proxy-bridge",
-  "lvt-fx:url-hash",
 ];
 
 beforeEach(() => {
@@ -83,11 +62,10 @@ describe("built-in registration", () => {
     }
   });
 
-  it("grants the server channel to exactly the handlers that dispatch actions", () => {
-    const withChannel = getRegisteredAttributes()
-      .filter((h) => h.needsServerChannel)
-      .map((h) => h.name);
-    expect(withChannel.sort()).toEqual([...SERVER_CHANNEL].sort());
+  it("grants the server channel to no built-in", () => {
+    // The handlers that dispatched actions were all prereview's, and moved
+    // there (#473 Phase 4). A core one would need a reason to send.
+    expect(getRegisteredAttributes().filter((h) => h.needsServerChannel)).toEqual([]);
   });
 
   it("keeps only the descendant walker on the wire-idempotent skip", () => {
@@ -104,18 +82,9 @@ describe("built-in registration", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("declares root-less cleanup only where teardown(root) cannot express it", () => {
-    const disposers = getRegisteredAttributes()
-      .filter((h) => h.dispose)
-      .map((h) => h.name);
-    // auto-click arms module-global timers, so there is no root to scope them to.
-    expect(disposers).toEqual(["lvt-fx:auto-click"]);
-  });
-
   it("does not re-register if the module is evaluated twice", () => {
     // A duplicated <script> or a bundler dedupe failure would otherwise give
-    // every built-in a second registration — and the six needsServerChannel
-    // handlers would dispatch every action to the server twice.
+    // every built-in a second registration, so each would run twice per render.
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     const before = getRegisteredAttributes().length;
 
