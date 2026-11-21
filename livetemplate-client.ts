@@ -95,6 +95,11 @@ export type {
   HandlerCategory,
 } from "./attribute-registry";
 
+// The checked state the server last rendered for each checkbox and radio, so a
+// change-routed control can tell "the server changed its mind" from "the server
+// re-rendered what it already had" (see onBeforeElUpdated).
+const lastRenderedChecked = new WeakMap<Element, boolean>();
+
 export class LiveTemplateClient {
   private readonly treeRenderer: TreeRenderer;
   private readonly rangeDomApplier: RangeDomApplier;
@@ -2236,6 +2241,13 @@ export class LiveTemplateClient {
         // toggle never reflects in the DOM. This makes lvt-on:click checkboxes
         // server-authoritative without needing an explicit data-lvt-force-update.
         //
+        // A control whose change is routed by lvt-on:change (on it, or on an
+        // ancestor such as its form) keeps the user's selection, so a handler
+        // that only logs leaves it alone, but takes the server's state when the
+        // server renders a DIFFERENT checked value than it did last time: the
+        // server changed it on its own (a keyboard shortcut, another control
+        // bound to the same state), and the DOM has to show that.
+        //
         // Known limitation: forcing one radio can uncheck a sibling that was
         // already processed earlier in the same morphdom pass, since browser
         // mutual exclusion fires synchronously mid-loop. To safely reset a
@@ -2247,8 +2259,17 @@ export class LiveTemplateClient {
           (fromEl.type === "checkbox" || fromEl.type === "radio")
         ) {
           const explicitForce = toEl.hasAttribute("data-lvt-force-update");
+          // Read before the else branch below rewrites toEl's attribute. With
+          // no record yet, fromEl's attribute is still the server's first render.
+          const rendered = toEl.hasAttribute("checked");
+          const lastRendered =
+            lastRenderedChecked.get(fromEl) ?? fromEl.hasAttribute("checked");
+          lastRenderedChecked.set(fromEl, rendered);
+          const serverChanged =
+            rendered !== lastRendered &&
+            fromEl.closest("[lvt-on\\:change]") !== null;
           const serverAuthoritative =
-            explicitForce || toEl.hasAttribute("lvt-on:click");
+            explicitForce || toEl.hasAttribute("lvt-on:click") || serverChanged;
           if (serverAuthoritative) {
             fromEl.checked = toEl.checked;
             if (fromEl.type === "checkbox") {

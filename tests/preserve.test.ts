@@ -299,6 +299,60 @@ describe("lvt-ignore and lvt-ignore-attrs", () => {
     expect(after[1].checked).toBe(true);
   });
 
+  // lvt-on:change controls keep the user's selection unless the server renders
+  // a different checked value than last time. Each tree carries a label that
+  // changes per push, so every update is a real morphdom pass (an identical
+  // tree short-circuits in updateDOM).
+  const changeRadios = (picked: "a" | "b", n: number, onForm = false) => {
+    const h = onForm ? "" : ` lvt-on:change="SetView"`;
+    return {
+      s: [onForm ? `<form lvt-on:change="SetView">` : `<form>`, ``, `</form>`],
+      0: `<input type="radio" name="view" data-key="va"${h} value="a"${picked === "a" ? " checked" : ""}>` +
+         `<input type="radio" name="view" data-key="vb"${h} value="b"${picked === "b" ? " checked" : ""}>`,
+      1: `<span>v${n}</span>`,
+    };
+  };
+
+  it.each([
+    ["on each radio", false],
+    ["on the form", true],
+  ])("server's own change reaches an lvt-on:change radio group (handler %s)", (_, onForm) => {
+    // A keyboard shortcut or another control moves the server's choice with
+    // no click on either radio.
+    const radios = () => wrapper.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    client.updateDOM(wrapper, changeRadios("a", 1, onForm));
+    expect(radios()[0].checked).toBe(true);
+
+    client.updateDOM(wrapper, changeRadios("b", 2, onForm));
+    expect(radios()[0].checked).toBe(false);
+    expect(radios()[1].checked).toBe(true);
+
+    client.updateDOM(wrapper, changeRadios("a", 3, onForm));
+    expect(radios()[0].checked).toBe(true);
+    expect(radios()[1].checked).toBe(false);
+  });
+
+  it("keeps the user's pick on an lvt-on:change control the server re-renders unchanged", () => {
+    // The documented escape hatch: a change handler that doesn't render the
+    // state (it only logs) leaves the user's selection alone.
+    const tree = (on: boolean, n: number) => ({
+      s: [`<form>`, ``, `</form>`],
+      0: `<input type="checkbox" data-key="c1" lvt-on:change="Log"${on ? " checked" : ""}>`,
+      1: `<span>v${n}</span>`,
+    });
+    const cb = () => wrapper.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    client.updateDOM(wrapper, tree(false, 1));
+
+    cb().checked = true; // the user checks it; the server doesn't track it
+    client.updateDOM(wrapper, tree(false, 2));
+    expect(cb().checked).toBe(true);
+
+    client.updateDOM(wrapper, tree(true, 3)); // the server now renders it on
+    cb().checked = false; // the user unchecks it again
+    client.updateDOM(wrapper, tree(true, 4)); // the server re-renders the same
+    expect(cb().checked).toBe(false);
+  });
+
   it("still preserves user state for a checkbox with NO server-bound handler", () => {
     // Control: a plain form checkbox (no lvt-on:click) keeps the user's
     // selection across a server refresh — the default must not regress.
