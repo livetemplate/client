@@ -219,4 +219,25 @@ describe("FocusManager", () => {
       expect(manager.shouldSkipUpdate(input)).toBe(true);
     });
   });
+
+  it("builds selectors that work for ids, names and keys with special characters", () => {
+    const wrapper = document.createElement("div");
+    document.body.appendChild(wrapper);
+    const manager = createManager();
+    const cases: Array<[string, (el: HTMLInputElement) => void]> = [
+      ["id", (el) => (el.id = "user:name.1")],
+      ["name", (el) => (el.name = 'q"uoted')],
+      ["data-key", (el) => el.setAttribute("data-key", `TestParseValue/"hello"`)],
+    ];
+    for (const [what, set] of cases) {
+      wrapper.innerHTML = "";
+      const el = document.createElement("input");
+      set(el);
+      wrapper.appendChild(el);
+      const selector = (manager as any).getElementSelector(el) as string;
+      expect(() => wrapper.querySelector(selector)).not.toThrow();
+      expect(wrapper.querySelector(selector)).toBe(el);
+      void what;
+    }
+  });
 });
