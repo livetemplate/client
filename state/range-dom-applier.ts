@@ -1,6 +1,7 @@
 import morphdom from "morphdom";
 import type { Logger } from "../utils/logger";
 import type { TargetedRangeOp } from "../types";
+import { cssEscape } from "../utils/css-escape";
 
 const KEY_ATTRIBUTES = ["data-key", "data-lvt-key"] as const;
 // Pre-compile attribute-presence regexes once at module load — these were
@@ -565,22 +566,7 @@ export class RangeDomApplier {
   }
 
   private findItemByKey(scope: Element, key: string): Element | null {
-    let escaped: string;
-    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-      escaped = CSS.escape(key);
-    } else {
-      // CSS.escape polyfill is incomplete: only handles `"` and `\`.
-      // Keys containing other CSS special chars ([], (), :, ., #, >, ~,
-      // whitespace, etc.) would produce a malformed selector and miss the
-      // match. Warn so it's visible in test logs rather than silently
-      // returning null and looking like the row simply doesn't exist.
-      if (/[\[\]():.#>~+*=^$|! \t\n\r]/.test(key)) {
-        this.ctx.logger.warn(
-          `[RangeDomApplier] CSS.escape unavailable; key "${key}" contains characters that need escaping. Lookup may miss the row.`
-        );
-      }
-      escaped = key.replace(/(["\\])/g, "\\$1");
-    }
+    const escaped = cssEscape(key);
     for (const attr of KEY_ATTRIBUTES) {
       const el = scope.querySelector(`[${attr}="${escaped}"]`);
       if (el) return el;

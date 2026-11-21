@@ -1,5 +1,6 @@
 import { FOCUSABLE_INPUTS } from "../constants";
 import type { Logger } from "../utils/logger";
+import { cssEscape } from "../utils/css-escape";
 
 export class FocusManager {
   private wrapperElement: Element | null = null;
@@ -214,10 +215,12 @@ export class FocusManager {
   }
 
   private getElementSelector(el: HTMLElement): string | null {
-    if (el.id) return `#${el.id}`;
-    if ((el as any).name) return `[name="${(el as any).name}"]`;
-    if (el.getAttribute("data-key"))
-      return `[data-key="${el.getAttribute("data-key")}"]`;
+    // Escape every value: an id, name or data-key may hold quotes, colons
+    // or brackets, and an unescaped one breaks the selector or matches nothing.
+    if (el.id) return `#${cssEscape(el.id)}`;
+    if ((el as any).name) return `[name="${cssEscape((el as any).name)}"]`;
+    const key = el.getAttribute("data-key");
+    if (key) return `[data-key="${cssEscape(key)}"]`;
 
     const index = this.focusableElements.indexOf(el);
     return index >= 0 ? `data-focus-index-${index}` : null;
