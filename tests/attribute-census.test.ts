@@ -27,8 +27,8 @@ import {
 
 /**
  * Every legitimate name the server census reported across the docs, lvt,
- * prereview and checklistkit template corpus (2026-11-08), authored spelling.
- * A page using all of them must warn about none.
+ * prereview and checklistkit template corpus (2026-11-08), authored spelling,
+ * less PREREVIEW_NAMES. A page using all of them must warn about none.
  */
 const REAL_CORPUS = [
   "lvt-autofocus",
@@ -45,17 +45,8 @@ const REAL_CORPUS = [
   "lvt-form:no-intercept",
   "lvt-form:preserve",
   "lvt-fx:animate",
-  "lvt-fx:area-select",
-  "lvt-fx:auto-click",
   "lvt-fx:highlight",
-  "lvt-fx:preview-bridge",
-  "lvt-fx:proxy-bridge",
-  "lvt-fx:region-select",
-  "lvt-fx:resize",
   "lvt-fx:scroll",
-  "lvt-fx:text-select",
-  "lvt-fx:url-hash",
-  "lvt-fx:viewport-report",
   "lvt-ignore",
   "lvt-ignore-attrs",
   "lvt-key",
@@ -69,10 +60,26 @@ const REAL_CORPUS = [
   "lvt-persist",
   "lvt-scroll-away",
   "lvt-scroll-sentinel",
-  "lvt-spy",
-  "lvt-spy-link",
   "lvt-upload",
   "lvt-upload-with",
+];
+
+/**
+ * The names whose handlers moved to prereview's own bundle (#473 Phase 4).
+ * With core alone, each one warns.
+ */
+const PREREVIEW_NAMES = [
+  "lvt-fx:area-select",
+  "lvt-fx:auto-click",
+  "lvt-fx:preview-bridge",
+  "lvt-fx:proxy-bridge",
+  "lvt-fx:region-select",
+  "lvt-fx:resize",
+  "lvt-fx:text-select",
+  "lvt-fx:url-hash",
+  "lvt-fx:viewport-report",
+  "lvt-spy",
+  "lvt-spy-link",
 ];
 
 /** Mirrors the client's instance-bound upload handler, which is not in the module registry. */
@@ -156,15 +163,19 @@ describe("attribute census", () => {
     expect(warnings()).toEqual([]);
   });
 
-  it("starts warning for a built-in's names once that handler is not registered", () => {
-    // The Phase 4 case: a handler moved to another bundle that did not load.
-    // Its claim must leave with it, or the warning could never fire.
-    expect(registeredClaims()).toContain("lvt-fx:url-hash");
-    __resetRegistryForTesting();
-    reportUnclaimedAttributes(["lvt-fx:url-hash", "lvt-on:click"], instanceHandlers);
-    expect(warnings()).toHaveLength(1);
-    expect(warnings()[0]).toContain("lvt-fx:url-hash");
+  it("warns for each of prereview's names when its bundle is not loaded", () => {
+    reportUnclaimedAttributes(PREREVIEW_NAMES, instanceHandlers);
+    expect(warnings()).toHaveLength(PREREVIEW_NAMES.length);
   });
+
+  it("lets a low-level handler that omits claims claim its own name", () => {
+    registerAttribute({ name: "lvt-x:mine", selectors: ["[lvt-x\\:mine]"], setup: () => {} });
+    registerAttribute({ name: "lvt-x:walker", claims: [], selectors: ["*"], setup: () => {} });
+    reportUnclaimedAttributes(["lvt-x:mine", "lvt-x:walker"], instanceHandlers);
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain("lvt-x:walker");
+  });
+
 
   it("counts a declarative handler's attribute as its claim", () => {
     registerAttribute({ attribute: "lvt-x:copy", onElementAdded: () => {} });
@@ -206,7 +217,6 @@ describe("attribute census", () => {
       "lvt-submitter": "form field name",
       "lvt-active": "class name",
       "lvt-loading-bar": "class name",
-      "lvt-area-select-overlay": "class name",
       "lvt-animate-styles": "element id",
       "lvt-loading-styles": "element id",
       "lvt-unknown": "fallback wrapper id",

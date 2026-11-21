@@ -5,6 +5,31 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **prereview's ten attribute handlers left the client.** They now ship in
+  prereview's own bundle, which registers them through the public API
+  (livetemplate#473 Phase 4). prereview was their only user:
+  - `lvt-fx:area-select`, `lvt-fx:region-select`, `lvt-fx:text-select`,
+    `lvt-fx:viewport-report`, `lvt-fx:proxy-bridge`, `lvt-fx:preview-bridge`,
+    `lvt-fx:url-hash`, `lvt-fx:resize`, `lvt-fx:auto-click` and
+    `lvt-spy`/`lvt-spy-link`.
+
+  The minified bundle is 31 KB smaller (153,375 to 122,218 bytes). A page that
+  still uses one of these attributes without loading a bundle that registers
+  it gets the existing "no attribute handler claims it" warning after `load`.
+- **`lvt-fx:iframe-autoheight` is gone.** Nothing used it;
+  `lvt-fx:preview-bridge` had replaced it.
+
+### Changed
+
+- **A low-level handler that omits `claims` now claims its own `name`.** The
+  built-ins already got this default, but a handler registered from outside the
+  client claimed nothing, so a page using its attribute warned that nothing
+  handled it. `claims: []` still claims nothing.
+
 ## [v0.25.11] - 2026-11-22
 
 ### Fixed
