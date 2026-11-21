@@ -10,9 +10,8 @@
  * the declarative one. They predate the registry, their bodies are unchanged by
  * the migration, and `tests/directives.test.ts` calls those bodies directly —
  * so keeping the functions intact is what makes the existing suite a regression
- * net for this refactor rather than a casualty of it. New handlers, and the
- * ones that move to their owning app in Phase 4, should prefer the declarative
- * layer.
+ * net for this refactor rather than a casualty of it. New handlers should
+ * prefer the declarative layer.
  *
  * `selectors` is descriptive here: the loop dispatches by calling `setup()`,
  * never by reading the array. It documents what the handler claims, for a human
@@ -24,37 +23,17 @@
  * highlight and one that scrolls the same element are not commutative.
  */
 
-import { isDeclarative, registerAttribute, type AttributeHandler } from "../attribute-registry";
+import { registerAttribute, type AttributeHandler } from "../attribute-registry";
 import {
   handleAnimateDirectives,
-  handleAreaSelectDirectives,
-  handleAutoClickDirectives,
   handleHighlightDirectives,
-  handleIframeAutoHeightDirectives,
-  handlePreviewBridgeDirectives,
-  handleProxyBridgeDirectives,
-  handleRegionSelectDirectives,
   handleScrollDirectives,
   handleShadowRootHydration,
-  handleTextSelectDirectives,
   handleToastDirectives,
-  handleURLHashDirective,
-  handleViewportReportDirectives,
   setupFxDOMEventTriggers,
-  teardownAreaSelectForRoot,
-  teardownAutoClickTimers,
   teardownFxDOMEventTriggers,
-  teardownIframeAutoHeightForRoot,
-  teardownPreviewBridgeForRoot,
-  teardownProxyBridgeForRoot,
-  teardownRegionSelectForRoot,
-  teardownTextSelectForRoot,
-  teardownURLHashForRoot,
-  teardownViewportReportForRoot,
 } from "./directives";
-import { handleResizeDirectives, teardownResizeForRoot } from "./resize";
 import { setupScrollAway, teardownScrollAway } from "./scroll-away";
-import { setupSpy, teardownSpy } from "./spy";
 
 /**
  * Every built-in, in the order the hardcoded post-render sequence called them.
@@ -63,15 +42,14 @@ import { setupSpy, teardownSpy } from "./spy";
  * is that nothing changes behaviour, and reordering would be a change made
  * without evidence. No non-commuting pair is currently known.
  *
- * Phase 4 will test that: the handlers marked below as relocating move to a
- * bundle that necessarily evaluates AFTER core, so they will register last
- * rather than in the middle. If that turns out to matter for any pair, order
- * has to become something the interface expresses — a coarse stable-sorted
- * phase, never integer priorities, which in a public registry become a z-index
- * war. If it does not matter, this note can go.
+ * prereview's handlers ran in the middle of this list until they moved to
+ * prereview's own bundle (#473 Phase 4), which registers after core. If order
+ * turns out to matter for a pair, it has to become something the interface
+ * expresses: a coarse stable-sorted phase, never integer priorities, which in
+ * a public registry become a z-index war.
  */
 const builtinHandlers: AttributeHandler[] = [
-  // ---- core: referenced by code the framework ships, or by 2+ apps ----
+  // Core: referenced by code the framework ships, or by 2+ apps.
   {
     name: "lvt-fx:scroll",
     selectors: ["[lvt-fx\\:scroll]"],
@@ -96,88 +74,6 @@ const builtinHandlers: AttributeHandler[] = [
     setup: ({ scanRoot }) => handleToastDirectives(scanRoot),
   },
 
-  // ---- relocating to prereview in Phase 4 ----
-  //
-  // Their only consumer is prereview. They register through the public
-  // interface from this repo today so that Phase 4 is a file move rather than a
-  // rewrite. Six of them are the `needsServerChannel` path's real consumers —
-  // no core handler exercises that flag, so without these it would ship
-  // untried.
-  {
-    name: "lvt-fx:auto-click",
-    selectors: ["[lvt-fx\\:auto-click]"],
-    setup: ({ scanRoot }) => handleAutoClickDirectives(scanRoot),
-    // dispose(), not teardown(root): the timers this arms are module-global,
-    // so there is no root to scope their cleanup to. dispose() runs on every
-    // disconnect, including one with no wrapper element — which is what the
-    // hardcoded teardownAutoClickTimers() call used to guarantee.
-    dispose: () => teardownAutoClickTimers(),
-  },
-  {
-    name: "lvt-fx:area-select",
-    selectors: ["[lvt-fx\\:area-select]"],
-    needsServerChannel: true,
-    setup: ({ scanRoot, send }) => handleAreaSelectDirectives(scanRoot, send!),
-    teardown: (root) => teardownAreaSelectForRoot(root),
-  },
-  {
-    name: "lvt-fx:resize",
-    selectors: ["[lvt-fx\\:resize]"],
-    setup: ({ scanRoot }) => handleResizeDirectives(scanRoot),
-    teardown: (root) => teardownResizeForRoot(root),
-  },
-  {
-    name: "lvt-fx:region-select",
-    selectors: ["[lvt-fx\\:region-select]"],
-    needsServerChannel: true,
-    setup: ({ scanRoot, send }) => handleRegionSelectDirectives(scanRoot, send!),
-    teardown: (root) => teardownRegionSelectForRoot(root),
-  },
-  {
-    name: "lvt-fx:text-select",
-    selectors: ["[lvt-fx\\:text-select]"],
-    needsServerChannel: true,
-    setup: ({ scanRoot, send }) => handleTextSelectDirectives(scanRoot, send!),
-    teardown: (root) => teardownTextSelectForRoot(root),
-  },
-  {
-    name: "lvt-fx:viewport-report",
-    selectors: ["[lvt-fx\\:viewport-report]"],
-    needsServerChannel: true,
-    setup: ({ scanRoot, send }) => handleViewportReportDirectives(scanRoot, send!),
-    teardown: (root) => teardownViewportReportForRoot(root),
-  },
-  {
-    name: "lvt-fx:proxy-bridge",
-    selectors: ["[lvt-fx\\:proxy-bridge]"],
-    needsServerChannel: true,
-    setup: ({ scanRoot, send }) => handleProxyBridgeDirectives(scanRoot, send!),
-    teardown: (root) => teardownProxyBridgeForRoot(root),
-  },
-  {
-    name: "lvt-fx:iframe-autoheight",
-    selectors: ["iframe[lvt-fx\\:iframe-autoheight]"],
-    setup: ({ scanRoot }) => handleIframeAutoHeightDirectives(scanRoot),
-    teardown: (root) => teardownIframeAutoHeightForRoot(root),
-  },
-  {
-    name: "lvt-fx:preview-bridge",
-    selectors: ["iframe[lvt-fx\\:preview-bridge]"],
-    setup: ({ scanRoot }) => handlePreviewBridgeDirectives(scanRoot),
-    teardown: (root) => teardownPreviewBridgeForRoot(root),
-  },
-  {
-    name: "lvt-fx:url-hash",
-    selectors: ["[lvt-fx\\:url-hash]"],
-    needsServerChannel: true,
-    // A `#path:L4` URL must dispatch on page load, and a page load hydrates
-    // without a render that changes anything.
-    runOnConnect: true,
-    setup: ({ scanRoot, send }) => handleURLHashDirective(scanRoot, send!),
-    teardown: (root) => teardownURLHashForRoot(root),
-  },
-
-  // ---- core, continued (these ran after the relocating group) ----
   {
     // A platform bridge, not an app feature: it activates Declarative Shadow
     // DOM that morphdom inserted via DOM APIs, which don't auto-hydrate.
@@ -191,13 +87,6 @@ const builtinHandlers: AttributeHandler[] = [
     selectors: ["[lvt-scroll-away]"],
     setup: ({ scanRoot }) => setupScrollAway(scanRoot),
     teardown: (root) => teardownScrollAway(root),
-  },
-  {
-    name: "lvt-spy",
-    claims: ["lvt-spy", "lvt-spy-link"],
-    selectors: ["[lvt-spy]"],
-    setup: ({ scanRoot }) => setupSpy(scanRoot),
-    teardown: (root) => teardownSpy(root),
   },
   {
     // Walks every descendant to attach direct listeners for
@@ -225,20 +114,15 @@ let registered = false;
  * Guarded, because the registry is module-level state and this is now a named
  * entry point rather than inline top-of-file code. A page that evaluates the
  * bundle twice — a duplicated <script>, a bundler that fails to dedupe — would
- * otherwise register all eighteen handlers a second time, and the six that
- * carry needsServerChannel would dispatch every action to the server twice.
- * The duplicate-name warning would fire eighteen times on the way there, so it
- * would not be silent, but a doubled action is not something to leave to a
- * console warning.
+ * otherwise register every handler a second time, and each would run twice per
+ * render. The duplicate-name warning would fire on the way there, so it would
+ * not be silent, but doubled work is not something to leave to a console
+ * warning.
  */
 export function registerBuiltinHandlers(): void {
   if (registered) return;
   registered = true;
-  for (const handler of builtinHandlers) {
-    // A built-in's name IS the attribute it implements unless it says
-    // otherwise, so it claims that name for the census by default.
-    registerAttribute(isDeclarative(handler) || handler.claims ? handler : { ...handler, claims: [handler.name] });
-  }
+  for (const handler of builtinHandlers) registerAttribute(handler);
 }
 
 /** Test-only: lets a suite re-register after clearing the registry. */

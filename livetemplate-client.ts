@@ -757,7 +757,7 @@ export class LiveTemplateClient {
     // remote site the SSR'd markup is clickable well before the socket opens.
     // That is the lvt-on:* delegators and the registry; attaching to the
     // registry runs the connect pass, which arms declarative handlers and
-    // low-level ones with runOnConnect (url-hash, file inputs), and lets a
+    // low-level ones with runOnConnect (file inputs), and lets a
     // handler registered later catch up against the live DOM. Their sends
     // queue in pendingSends until the transport is chosen, rather than taking
     // send()'s CONNECTING→HTTP fallback, whose POST would race the WS mount.
