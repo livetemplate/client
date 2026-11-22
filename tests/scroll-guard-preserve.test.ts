@@ -73,13 +73,14 @@ describe("one-shot scroll/autofocus guards survive morphdom", () => {
     // data-lvt-scroll-sticky is the same kind of one-shot guard. Unpreserved, `initialized` was
     // false on every render, so bottom-sticky re-ran its first-encounter branch — an unconditional
     // scrollTo(bottom, behavior:"instant") — yanking back any user who had scrolled up to read
-    // history, and making the near-bottom threshold check dead code.
+    // history.
     const scrollToSpy = jest.fn();
     (Element.prototype as any).scrollTo = scrollToSpy;
-    // jsdom has no layout: a viewport far from the bottom (500 - 0 - 100 = 400 > 100 threshold).
+    // jsdom has no layout: the log starts pinned at the bottom (500 - 400 - 100 = 0).
+    let top = 400;
     Object.defineProperty(Element.prototype, "scrollHeight", { value: 500, configurable: true });
     Object.defineProperty(Element.prototype, "clientHeight", { value: 100, configurable: true });
-    Object.defineProperty(Element.prototype, "scrollTop", { value: 0, configurable: true });
+    Object.defineProperty(Element.prototype, "scrollTop", { get: () => top, configurable: true });
 
     client.updateDOM(wrapper, {
       s: [`<div class="log" lvt-fx:scroll="bottom-sticky"><span class="sib">`, `</span></div>`],
@@ -90,7 +91,10 @@ describe("one-shot scroll/autofocus guards survive morphdom", () => {
     expect(scrollToSpy).toHaveBeenLastCalledWith({ top: 500, behavior: "instant" });
     expect(log.dataset.lvtScrollSticky).toBe("1");
 
-    // The user has scrolled up. A later render must leave them where they are.
+    // The user scrolls up (far from the bottom: 500 - 0 - 100 = 400 > 100 threshold). A later
+    // render must leave them where they are.
+    top = 0;
+    log.dispatchEvent(new Event("scroll"));
     client.updateDOM(wrapper, { 0: "b" });
 
     expect(wrapper.querySelector(".log")).toBe(log); // node reused
