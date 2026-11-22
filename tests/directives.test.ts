@@ -185,6 +185,90 @@ describe("handleScrollDirectives", () => {
     expect(scrollToSpy).not.toHaveBeenCalled();
   });
 
+  describe("bottom-sticky following", () => {
+    // A list that starts empty and then gets many rows in one render: the
+    // height jumps past the threshold without the reader scrolling.
+    function setup(): { el: HTMLElement; scrollTo: jest.Mock; set: (h: number, top: number) => void } {
+      document.body.replaceChildren();
+      const el = document.createElement("div");
+      el.setAttribute("lvt-fx:scroll", "bottom-sticky");
+      el.style.setProperty("--lvt-scroll-threshold", "50");
+      document.body.appendChild(el);
+      let height = 100, top = 0;
+      Object.defineProperty(el, "scrollHeight", { get: () => height, configurable: true });
+      Object.defineProperty(el, "scrollTop", { get: () => top, configurable: true });
+      Object.defineProperty(el, "clientHeight", { value: 100, configurable: true });
+      const scrollTo = jest.fn();
+      el.scrollTo = scrollTo;
+      return { el, scrollTo, set: (h, t) => { height = h; top = t; } };
+    }
+    const scrolled = (el: HTMLElement) => el.dispatchEvent(new Event("scroll"));
+
+    it("keeps following when one render adds many rows", () => {
+      const { scrollTo, set } = setup();
+      handleScrollDirectives(document.body); // empty: initializes at the bottom
+      set(9000, 0); // 200 rows arrive at once; no scroll event
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 9000, behavior: "auto" });
+    });
+
+    it("stops following once the reader scrolls up, and resumes at the bottom", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      set(1000, 300);
+      scrolled(el); // the reader scrolls up
+      set(1200, 300);
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      set(1200, 1100);
+      scrolled(el); // back at the bottom
+      set(1400, 1100);
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1400, behavior: "auto" });
+    });
+
+    it("rows removed while following keep it following", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      set(600, 500); // rows dropped: the browser clamps scrollTop, still at the bottom
+      scrolled(el);
+      set(800, 500);
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: "auto" });
+    });
+
+    it("the scroll handler uses the threshold of the latest render", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      el.style.setProperty("--lvt-scroll-threshold", "400");
+      handleScrollDirectives(document.body);
+      set(1000, 550);
+      scrolled(el); // 1000 - 550 - 100 = 350: near the bottom under the new threshold
+      set(1200, 550);
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: "auto" });
+    });
+
+    it("a scroll moving down, such as a smooth scroll to the bottom, keeps following", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      set(5000, 950);
+      scrolled(el); // mid-way through a smooth scroll: far from the bottom, moving down
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 5000, behavior: "auto" });
+    });
+  });
+
   it("does nothing for lvt-fx:scroll='preserve'", () => {
     document.body.innerHTML = `<div id="container" lvt-fx:scroll="preserve"></div>`;
     const container = document.getElementById("container")!;

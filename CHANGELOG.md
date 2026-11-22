@@ -5,6 +5,19 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`lvt-fx:scroll="bottom-sticky"` keeps following when one render adds
+  many rows.** Whether to follow was decided from the position after the
+  render. A list that started empty and then got 200 rows at once was left
+  far from its new bottom, as if the reader had scrolled up, and stopped
+  following. Following is now decided by the reader's scrolling: scrolling
+  up away from the bottom stops it, and scrolling back near the bottom
+  resumes it. A scroll moving down, such as a smooth scroll in progress,
+  never stops it.
+
 ## [v0.25.10] - 2026-11-21
 
 ### Fixed
