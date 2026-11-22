@@ -293,12 +293,15 @@ function applyFxEffect(htmlElement: HTMLElement, effect: string, config: string)
             htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior: "instant" });
             break;
           }
-          if (!stickyFollow.has(htmlElement)) {
+          const sticky = stickyFollow.get(htmlElement);
+          if (!sticky) {
             // Initialized before this element was tracked (its guard was
             // carried over): seed from where it is now.
             trackStickyFollow(htmlElement, threshold, isNearBottom(htmlElement, threshold));
+          } else {
+            sticky.threshold = threshold; // the scroll handler uses the latest
           }
-          if (stickyFollow.get(htmlElement)) {
+          if (stickyFollow.get(htmlElement)!.follow) {
             htmlElement.scrollTo({ top: htmlElement.scrollHeight, behavior });
           }
           break;
@@ -417,8 +420,8 @@ export function teardownFxLifecycleListeners(rootElement: Element): void {
 const VALID_SCROLL_BEHAVIORS = new Set(["auto", "smooth", "instant"]);
 
 // stickyFollow records, per bottom-sticky element, whether renders should
-// keep it at the bottom.
-const stickyFollow = new WeakMap<HTMLElement, boolean>();
+// keep it at the bottom, and the threshold its last render read.
+const stickyFollow = new WeakMap<HTMLElement, { follow: boolean; threshold: number }>();
 
 function isNearBottom(el: HTMLElement, threshold: number): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
@@ -429,14 +432,16 @@ function isNearBottom(el: HTMLElement, threshold: number): boolean {
 // and resumes by scrolling back near it. A scroll moving down, such as a
 // smooth scroll to the bottom in progress, never stops following.
 function trackStickyFollow(el: HTMLElement, threshold: number, follow: boolean): void {
-  stickyFollow.set(el, follow);
+  const sticky = { follow, threshold };
+  stickyFollow.set(el, sticky);
   let lastTop = el.scrollTop;
   el.addEventListener("scroll", () => {
+    if (el.getAttribute("lvt-fx:scroll") !== "bottom-sticky") return; // mode changed
     const top = el.scrollTop;
-    if (isNearBottom(el, threshold)) {
-      stickyFollow.set(el, true);
+    if (isNearBottom(el, sticky.threshold)) {
+      sticky.follow = true;
     } else if (top < lastTop) {
-      stickyFollow.set(el, false);
+      sticky.follow = false;
     }
     lastTop = top;
   }, { passive: true });

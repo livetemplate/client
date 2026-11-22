@@ -231,6 +231,32 @@ describe("handleScrollDirectives", () => {
       expect(scrollTo).toHaveBeenCalledWith({ top: 1400, behavior: "auto" });
     });
 
+    it("rows removed while following keep it following", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      set(600, 500); // rows dropped: the browser clamps scrollTop, still at the bottom
+      scrolled(el);
+      set(800, 500);
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: "auto" });
+    });
+
+    it("the scroll handler uses the threshold of the latest render", () => {
+      const { el, scrollTo, set } = setup();
+      set(1000, 900);
+      handleScrollDirectives(document.body);
+      el.style.setProperty("--lvt-scroll-threshold", "400");
+      handleScrollDirectives(document.body);
+      set(1000, 550);
+      scrolled(el); // 1000 - 550 - 100 = 350: near the bottom under the new threshold
+      set(1200, 550);
+      scrollTo.mockClear();
+      handleScrollDirectives(document.body);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: "auto" });
+    });
+
     it("a scroll moving down, such as a smooth scroll to the bottom, keeps following", () => {
       const { el, scrollTo, set } = setup();
       set(1000, 900);
