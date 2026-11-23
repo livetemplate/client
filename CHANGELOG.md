@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **The client reads a message's statics table.** livetemplate releases after
-  v0.26.0 send each statics array that repeats within one message once, in a
+  v0.26.1 send each statics array that repeats within one message once, in a
   top-level `"S"`, with `"s": <index>` where it repeats (tree-update spec §2.5).
   `expandStaticsTable` resolves the indexes as a message arrives, before
   anything reads or merges it, so the rest of the client sees arrays as before.
