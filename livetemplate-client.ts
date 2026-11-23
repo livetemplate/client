@@ -6,6 +6,7 @@
  */
 
 import morphdom from "morphdom";
+import { expandStaticsTable } from "./state/statics-table";
 import { FocusManager } from "./dom/focus-manager";
 import {
   setupToastClickOutside,
@@ -718,6 +719,9 @@ export class LiveTemplateClient {
       if (response.meta?.attributes) {
         reportUnclaimedAttributes(response.meta.attributes, this.instanceHandlers);
       }
+      // analyzeStatics reads statics before applyUpdate would expand them, so
+      // the message's statics table is resolved first.
+      expandStaticsTable(response.tree);
       // Analyze statics before updateDOM so wireElements() inside updateDOM
       // has bound fields to work with. Additive: new fields from conditionally
       // rendered templates are detected as they appear in updates.

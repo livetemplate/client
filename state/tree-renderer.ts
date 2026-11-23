@@ -1,5 +1,6 @@
 import type { TargetedRangeOp, TreeNode, UpdateResult } from "../types";
 import type { Logger } from "../utils/logger";
+import { expandStaticsTable } from "./statics-table";
 
 /**
  * Optional context for `applyUpdate` that opts into per-op targeted DOM
@@ -161,6 +162,9 @@ export class TreeRenderer {
     update: TreeNode,
     opts?: ApplyUpdateOptions
   ): UpdateResult {
+    // Resolve a message's statics table first: every path that applies a tree
+    // comes through here, so nothing below ever sees a statics index.
+    expandStaticsTable(update);
     let changed = false;
     const targetedOps: TargetedRangeOp[] = [];
     const skipPaths = new Set<string>();
