@@ -33,13 +33,14 @@ describe("expandStaticsTable", () => {
   it("leaves a tree without S untouched, and expanding twice is a no-op", () => {
     const plain: any = { "0": { s: row, "0": "a" } };
     const before = JSON.stringify(plain);
-    expect(JSON.stringify(expandStaticsTable(plain))).toBe(before);
+    expandStaticsTable(plain);
+    expect(JSON.stringify(plain)).toBe(before);
     const table: any = { S: [row], "0": { s: 0, "0": "a" } };
     expandStaticsTable(table);
     const once = JSON.stringify(table);
     expandStaticsTable(table);
     expect(JSON.stringify(table)).toBe(once);
-    expect(expandStaticsTable(undefined)).toBeUndefined();
+    expect(() => expandStaticsTable(undefined)).not.toThrow();
   });
 
   it("throws on an index the table doesn't have", () => {

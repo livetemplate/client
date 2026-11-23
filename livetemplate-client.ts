@@ -722,8 +722,7 @@ export class LiveTemplateClient {
       // Analyze statics before updateDOM so wireElements() inside updateDOM
       // has bound fields to work with. Additive: new fields from conditionally
       // rendered templates are detected as they appear in updates.
-      // Resolve the statics table before analyzeStatics reads the statics;
-      // applyUpdate would expand it too, but only after this read.
+      // analyzeStatics reads statics before applyUpdate would expand them.
       expandStaticsTable(response.tree);
       this.changeAutoWirer.analyzeStatics(response.tree);
 
