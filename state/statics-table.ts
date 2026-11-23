@@ -11,7 +11,6 @@ export function expandStaticsTable(tree: TreeNode | undefined): void {
   if (!root || !Array.isArray(table)) {
     return;
   }
-  delete root.S;
 
   const walk = (value: object): void => {
     if (Array.isArray(value)) {
@@ -39,4 +38,6 @@ export function expandStaticsTable(tree: TreeNode | undefined): void {
     }
   };
   walk(root);
+  // Dropped only after every index resolved: a bad message keeps its table.
+  delete root.S;
 }

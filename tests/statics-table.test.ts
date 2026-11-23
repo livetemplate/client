@@ -43,10 +43,16 @@ describe("expandStaticsTable", () => {
     expect(() => expandStaticsTable(undefined)).not.toThrow();
   });
 
-  it("throws on an index the table doesn't have", () => {
-    expect(() => expandStaticsTable({ S: [row], "0": { s: 3 } } as any)).toThrow(
-      "statics table has no entry 3"
-    );
+  it("throws on an index the table doesn't have, and keeps the table", () => {
+    const bad = { S: [row], "0": { s: 3 } } as any;
+    expect(() => expandStaticsTable(bad)).toThrow("statics table has no entry 3");
+    expect(bad.S).toEqual([row]);
+  });
+
+  it("drops a table that no node points at", () => {
+    const tree = { S: [row], s: ["<p>", "</p>"], "0": "x" } as any;
+    expandStaticsTable(tree);
+    expect(tree).toEqual({ s: ["<p>", "</p>"], "0": "x" });
   });
 });
 

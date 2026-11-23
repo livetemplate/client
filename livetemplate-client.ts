@@ -719,11 +719,12 @@ export class LiveTemplateClient {
       if (response.meta?.attributes) {
         reportUnclaimedAttributes(response.meta.attributes, this.instanceHandlers);
       }
+      // analyzeStatics reads statics before applyUpdate would expand them, so
+      // the message's statics table is resolved first.
+      expandStaticsTable(response.tree);
       // Analyze statics before updateDOM so wireElements() inside updateDOM
       // has bound fields to work with. Additive: new fields from conditionally
       // rendered templates are detected as they appear in updates.
-      // analyzeStatics reads statics before applyUpdate would expand them.
-      expandStaticsTable(response.tree);
       this.changeAutoWirer.analyzeStatics(response.tree);
 
       this.updateDOM(this.wrapperElement, response.tree, response.meta);
