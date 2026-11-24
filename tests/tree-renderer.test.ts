@@ -228,6 +228,26 @@ describe("TreeRenderer", () => {
       });
       expect(result.html).toContain("<li>{{payload}}</li>");
     });
+
+    it("renders one in an attribute", () => {
+      const result = renderer.applyUpdate({
+        s: ['<a title="', '">t</a>'],
+        0: "{{x}}",
+      });
+      expect(result.html).toContain('<a title="{{x}}">t</a>');
+    });
+
+    // The server escapes values; the client keeps the escaping, braces or not.
+    it("keeps an escaped value escaped", () => {
+      const result = renderer.applyUpdate({
+        s: ["<p>", "</p>"],
+        0: "{{&lt;script&gt;alert(1)&lt;/script&gt;}}",
+      });
+      expect(result.html).toContain(
+        "<p>{{&lt;script&gt;alert(1)&lt;/script&gt;}}</p>"
+      );
+      expect(result.html).not.toContain("<script>");
+    });
   });
 
   describe("render - range to non-range transition", () => {
