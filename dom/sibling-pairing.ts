@@ -51,12 +51,6 @@ const PLACEABLE = new Set([
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
-/**
- * Auto keys start with a control character that keys written in templates
- * don't use, so an auto key won't equal an author key in practice.
- */
-const AUTO = "\u0001";
-
 /** The first class token. */
 function firstClass(el: Element): string {
   const c = (el.getAttribute("class") || "").trimStart();
@@ -85,8 +79,13 @@ function alike(a: Element, b: Element): boolean {
 }
 
 export interface Pairing {
-  /** The shared key of each paired element, on both sides; null if none. */
-  keys: WeakMap<Element, string> | null;
+  /**
+   * The shared key of each paired element, on both sides; null if none. An
+   * author key where the pair has one, else a fresh Symbol, which can never
+   * equal an author key (morphdom uses keys only as lookup-object properties
+   * and with ===).
+   */
+  keys: WeakMap<Element, string | symbol> | null;
   /** Placeholders inserted into the live tree, for morphdom to fill. */
   placeholders: Element[];
 }
@@ -97,9 +96,8 @@ export interface Pairing {
  * morphdom looks keyed nodes up tree-wide.
  */
 export function pairSiblings(from: Element, to: Element): Pairing {
-  let keys: WeakMap<Element, string> | null = null;
+  let keys: WeakMap<Element, string | symbol> | null = null;
   const placeholders: Element[] = [];
-  let next = 0;
   // The author keys anywhere in the live tree, read only when a keyed new
   // element needs a placeholder: a key that already exists elsewhere is a
   // keyed move, and morphdom must find the real node, not a placeholder. A
@@ -116,7 +114,7 @@ export function pairSiblings(from: Element, to: Element): Pairing {
     }
     return liveKeys.has(k);
   };
-  const key = (a: Element, b: Element, k: string = AUTO + next++): void => {
+  const key = (a: Element, b: Element, k: string | symbol = Symbol("sibling pair")): void => {
     keys = keys || new WeakMap();
     keys.set(a, k);
     keys.set(b, k);

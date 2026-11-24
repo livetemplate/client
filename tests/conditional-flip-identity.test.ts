@@ -404,4 +404,33 @@ describe("a conditional flip keeps its siblings", () => {
     expect(nodes().layout).toBe(before.layout);
     expect(nodes().section).toBe(before.section);
   });
+
+  describe("alike siblings in the middle of a list", () => {
+    const list = (mid: unknown) => ({
+      s: [`<ul>\n<li class="item">1</li>\n`, `\n<li class="item">3</li>\n</ul>`],
+      0: mid,
+    });
+    const two = { s: [`<li class="item">2</li>`] };
+    const fresh = (state: any): string => {
+      const el = document.createElement("div");
+      el.setAttribute("data-lvt-id", "fresh-" + Math.random());
+      document.body.appendChild(el);
+      new LiveTemplateClient().updateDOM(el, state);
+      return el.innerHTML;
+    };
+
+    it("an insertion renders as the server sent it", () => {
+      client.updateDOM(wrapper, list(""));
+      client.updateDOM(wrapper, { 0: two });
+      expect([...wrapper.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["1", "2", "3"]);
+      expect(wrapper.innerHTML).toBe(fresh(list(two)));
+    });
+
+    it("a deletion renders as the server sent it", () => {
+      client.updateDOM(wrapper, list(two));
+      client.updateDOM(wrapper, { 0: "" });
+      expect([...wrapper.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["1", "3"]);
+      expect(wrapper.innerHTML).toBe(fresh(list("")));
+    });
+  });
 });

@@ -2063,8 +2063,12 @@ export class LiveTemplateClient {
     // Siblings paired by signature for the whole-page morph (pairSiblings),
     // and the placeholders it put in the live tree for new elements. Unset for
     // the applier's single-row morphs.
-    let autoKeys: WeakMap<Element, string> | null = null;
+    let autoKeys: WeakMap<Element, string | symbol> | null = null;
     let placeholders = new Set<Element>();
+    // The placeholders morphdom actually reached and filled. One it never
+    // reaches (an ancestor's update was skipped: an open popover, a focused
+    // element) is taken out again after the morph.
+    let filled = new Set<Element>();
 
     // Build morphdom options once so the applier's `u` op (which morphdoms
     // a single row) uses the same callback set — focus skip, lvt-ignore,
@@ -2076,7 +2080,9 @@ export class LiveTemplateClient {
         // key pairSiblings gave an unkeyed element, so a conditional appearing
         // before it can't make morphdom re-pair it by position.
         if (node.nodeType === 1) {
-          return authorKey(node) || autoKeys?.get(node);
+          // A symbol key works as a morphdom key: it only indexes the lookup
+          // object and compares with ===.
+          return (authorKey(node) || autoKeys?.get(node)) as any;
         }
       },
       onBeforeElUpdated: (fromEl: any, toEl: any) => {
@@ -2085,6 +2091,7 @@ export class LiveTemplateClient {
         // apply, and lvt-updated must not fire. onNodeAdded runs for it after
         // the morph.
         if (placeholders.has(fromEl)) {
+          filled.add(fromEl);
           return true;
         }
 
@@ -2424,28 +2431,28 @@ export class LiveTemplateClient {
       }
     }
 
-    let morphed = false;
     try {
       const paired = pairSiblings(element, tempWrapper);
       autoKeys = paired.keys;
       placeholders = new Set(paired.placeholders);
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
-      morphed = true;
       // Each filled placeholder was an addition: lvt-mounted, the textarea
       // value and the directive-scan counter, as for any added node.
-      placeholders.forEach((ph) => morphdomOptions.onNodeAdded(ph));
+      placeholders.forEach((ph) => {
+        if (filled.has(ph)) morphdomOptions.onNodeAdded(ph);
+      });
     } finally {
-      // After a throw, take out the placeholders morphdom never started
-      // filling. One it partly filled stays, like the rest of a half-applied
-      // morph; the next render reconciles it.
-      if (!morphed) {
-        placeholders.forEach((ph) => {
-          if (!ph.firstChild && !ph.hasAttributes()) ph.remove();
-        });
-      }
+      // Take out every placeholder morphdom never reached, after a skipped
+      // ancestor or a throw, so that subtree is exactly as morphdom left it.
+      // One it filled stays: after a throw, like the rest of a half-applied
+      // morph, which the next render reconciles.
+      placeholders.forEach((ph) => {
+        if (!filled.has(ph)) ph.remove();
+      });
       autoKeys = null;
       placeholders = new Set();
+      filled = new Set();
       // Strip lifecycle markers regardless of whether morphdom threw,
       // preventing leaked attributes on the live DOM.
       this.rangeDomApplier.cleanupMarkers(element);
