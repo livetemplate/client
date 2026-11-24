@@ -16,24 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detached them: a click in progress was lost, an iframe reloaded, and focus
   and scroll went.
 
-  Now, before each update, the client pairs siblings by tag, id and first
-  class, and lines up the gaps between them, whitespace included. A new
-  element gets an empty placeholder in its place, which morphdom fills as an
-  addition (`lvt-mounted` fires, `lvt-updated` doesn't). A departing element
-  is removed after the others, so no sibling is moved past it.
+  Now, as morphdom descends into a container, the client lines its children
+  up with the incoming render first, but only in the unambiguous case. The
+  alike siblings at the front and back must match, and what is left must be a
+  pure insertion of plain containers (`div`, `section`, `li`, …) or a pure
+  removal. A new element gets an empty placeholder that morphdom fills in
+  place (`lvt-mounted` fires, `lvt-updated` doesn't). Departing elements are
+  removed in place, through the usual discard hook. Whitespace between
+  siblings is lined up too, as is text added between unchanged elements.
 
-  Siblings that swap places are now moved, so each keeps its state, where
-  morphdom used to morph one into the other's node by position. A departing
-  element is moved to the end of its parent before morphdom removes it. So on
-  its way out, a custom element in it runs its disconnect and connect
-  callbacks, and an iframe in it reloads.
-
-  Only plain containers get a placeholder: a new script, iframe, form control,
-  custom element or SVG element keeps today's handling. Alike siblings, such as
-  identical `<li>`s, still pair by position, so key those.
-
-  On a 3,000-row page in Chrome, an ordinary update costs about 10% more
-  (about 23 ms).
+  Everything else is left exactly as before: mixed changes, keyed moves, new
+  elements that aren't plain containers, `lvt-ignore` elements leaving, and
+  pages with a repeated `data-key`. A container morphdom skips (focus, an open
+  popover, `lvt-ignore`) is never touched.
 
 ## [v0.27.0] - 2026-11-24
 

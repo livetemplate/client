@@ -6,7 +6,7 @@
  */
 
 import morphdom from "morphdom";
-import { pairSiblings } from "./dom/sibling-pairing";
+import { alignChildren, AlignEnv } from "./dom/sibling-align";
 import { authorKey, ignored, targetedSkip } from "./dom/morph-rules";
 import { expandStaticsTable } from "./state/statics-table";
 import { FocusManager } from "./dom/focus-manager";
@@ -2060,17 +2060,41 @@ export class LiveTemplateClient {
       return;
     }
 
-    // Siblings paired by signature for the whole-page morph (pairSiblings),
-    // and the placeholders it put in the live tree for new elements. Unset for
-    // the applier's single-row morphs.
-    let autoKeys: WeakMap<Element, string | symbol> | null = null;
-    let placeholders = new Set<Element>();
-    let spacers: ChildNode[] = [];
-    let departed: ReturnType<typeof pairSiblings>["departed"] = [];
-    // The placeholders morphdom actually reached and filled. One it never
-    // reaches (an ancestor's update was skipped: an open popover, a focused
-    // element) is taken out again after the morph.
-    let filled = new Set<Element>();
+    // Placeholders alignChildren put in for new elements (with the element's
+    // author key, if it has one), and those morphdom has reached and filled.
+    const placeholders = new Map<Element, string | undefined>();
+    const filled = new Set<Element>();
+    // Author keys in the live page and in the incoming render, read on first use.
+    let liveKeys: Map<string, number> | null = null; // read once, before any removal
+    let incomingKeys: Map<string, number> | null = null;
+    const keysIn = (root: Element): Map<string, number> => {
+      const ks = new Map<string, number>();
+      root.querySelectorAll("[data-key], [data-lvt-key]").forEach((el) => {
+        const k = authorKey(el);
+        if (k) ks.set(k, (ks.get(k) || 0) + 1);
+      });
+      return ks;
+    };
+    const alignEnv: AlignEnv = {
+      discard: (el) => {
+        // As morphdom's removal: the hook on the element, then on its keyed
+        // descendants that aren't moving elsewhere (morphdom discards those
+        // separately), then the removal itself.
+        if (morphdomOptions.onBeforeNodeDiscarded(el) === false) return;
+        el.querySelectorAll("[data-key], [data-lvt-key]").forEach((d) => {
+          const k = authorKey(d);
+          if (k && alignEnv.incomingKeyCount(k) === 0) morphdomOptions.onBeforeNodeDiscarded(d);
+        });
+        el.remove();
+      },
+      liveHasKey: (k) => (liveKeys ??= keysIn(element)).has(k),
+      incomingKeyCount: (k) => (incomingKeys ??= keysIn(tempWrapper)).get(k) || 0,
+      hasDuplicateKeys: () => {
+        const repeats = (m: Map<string, number>) => [...m.values()].some((n) => n > 1);
+        return repeats((liveKeys ??= keysIn(element))) || repeats((incomingKeys ??= keysIn(tempWrapper)));
+      },
+      placeholder: (ph, k) => placeholders.set(ph, k),
+    };
 
     // Build morphdom options once so the applier's `u` op (which morphdoms
     // a single row) uses the same callback set — focus skip, lvt-ignore,
@@ -2078,22 +2102,18 @@ export class LiveTemplateClient {
     const morphdomOptions = {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
       getNodeKey: (node: any) => {
-        // Use data-key or data-lvt-key for efficient reconciliation; else the
-        // key pairSiblings gave an unkeyed element, so a conditional appearing
-        // before it can't make morphdom re-pair it by position.
+        // Use data-key or data-lvt-key for efficient reconciliation; a
+        // placeholder for a new author-keyed element carries that element's key.
         if (node.nodeType === 1) {
-          // A symbol key works as a morphdom key: it only indexes the lookup
-          // object and compares with ===.
-          return (authorKey(node) || autoKeys?.get(node)) as any;
+          return authorKey(node) || placeholders.get(node);
         }
       },
       onBeforeElUpdated: (fromEl: any, toEl: any) => {
-        // A placeholder pairSiblings put in for a new element is an addition,
+        // A placeholder alignChildren put in for a new element is an addition,
         // not an update: none of the branches below that carry live state
-        // apply, and lvt-updated must not fire. onNodeAdded runs for it after
-        // the morph.
+        // apply, and lvt-updated must not fire. Its onNodeAdded runs from
+        // onBeforeElChildrenUpdated, once its attributes are in.
         if (placeholders.has(fromEl)) {
-          filled.add(fromEl);
           return true;
         }
 
@@ -2377,6 +2397,18 @@ export class LiveTemplateClient {
           this.nodesAddedThisRender++;
         }
       },
+      onBeforeElChildrenUpdated: (fromEl: any, toEl: any) => {
+        // A filled placeholder's own lvt-mounted etc. runs here: its
+        // attributes are copied and its children not yet added, so the order
+        // matches an element morphdom adds whole (parent first).
+        if (placeholders.has(fromEl) && !filled.has(fromEl)) {
+          filled.add(fromEl);
+          morphdomOptions.onNodeAdded(fromEl);
+        }
+        // Morphdom descends into this container: line its children up first.
+        alignChildren(fromEl, toEl, alignEnv);
+        return true;
+      },
       onBeforeNodeDiscarded: (node: any) => {
         // Execute lvt-destroyed lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -2434,43 +2466,19 @@ export class LiveTemplateClient {
     }
 
     try {
-      const paired = pairSiblings(element, tempWrapper);
-      autoKeys = paired.keys;
-      placeholders = new Set(paired.placeholders);
-      spacers = paired.spacers;
-      departed = paired.departed;
+      // morphdom gives the root (childrenOnly) no onBeforeElChildrenUpdated,
+      // and it always descends into it: line its children up here.
+      alignChildren(element, tempWrapper, alignEnv);
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
-      // Each filled placeholder was an addition: lvt-mounted, the textarea
-      // value and the directive-scan counter, as for any added node. (The
-      // client registers no onBeforeNodeAdded, so no add-time hook is missed.)
-      placeholders.forEach((ph) => {
-        if (filled.has(ph)) morphdomOptions.onNodeAdded(ph);
-      });
     } finally {
-      // Take out every placeholder morphdom never reached, after a skipped
-      // ancestor or a throw, so that subtree is exactly as morphdom left it.
-      // One it filled stays: after a throw, like the rest of a half-applied
-      // morph, which the next render reconciles.
-      placeholders.forEach((ph) => {
+      // After a throw, take out placeholders morphdom never reached; the next
+      // render reconciles the rest of a half-applied morph. (Without a throw
+      // every placeholder is reached: it is only put in once morphdom
+      // descends into its container.)
+      placeholders.forEach((_k, ph) => {
         if (!filled.has(ph)) ph.remove();
       });
-      // Likewise the spacer text nodes morphdom never reached (still empty),
-      // and departing elements it never removed (a skipped parent, or a throw)
-      // go back where they were, so a skipped subtree looks as it did.
-      spacers.forEach((sp) => {
-        if (!sp.nodeValue) sp.remove();
-      });
-      departed.forEach(({ el, parent, prev }) => {
-        if (el.parentNode !== parent) return; // removed, as planned
-        const next = prev && prev.parentNode === parent ? prev.nextSibling : parent.firstChild;
-        if (next !== el) parent.insertBefore(el, next);
-      });
-      spacers = [];
-      departed = [];
-      autoKeys = null;
-      placeholders = new Set();
-      filled = new Set();
       // Strip lifecycle markers regardless of whether morphdom threw,
       // preventing leaked attributes on the live DOM.
       this.rangeDomApplier.cleanupMarkers(element);
