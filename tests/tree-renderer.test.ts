@@ -208,6 +208,48 @@ describe("TreeRenderer", () => {
     });
   });
 
+  describe("render - values that look like template actions", () => {
+    // A value is data, so text such as an .http file's {{host}} or a JSON
+    // body's "{{payload}}" renders as sent, whatever its braces.
+    it("renders a value that starts with {{ and ends with }}", () => {
+      const result = renderer.applyUpdate({
+        s: ["<span>", "</span><code>", "</code>"],
+        0: "{{host}}/users/{{id}}",
+        1: "{{token}}",
+      });
+      expect(result.html).toContain("<span>{{host}}/users/{{id}}</span>");
+      expect(result.html).toContain("<code>{{token}}</code>");
+    });
+
+    it("renders one inside a range item", () => {
+      const result = renderer.applyUpdate({
+        s: ["<ul>", "</ul>"],
+        0: { d: [{ 0: "{{payload}}", _k: "1" }], s: ["<li>", "</li>"] },
+      });
+      expect(result.html).toContain("<li>{{payload}}</li>");
+    });
+
+    it("renders one in an attribute", () => {
+      const result = renderer.applyUpdate({
+        s: ['<a title="', '">t</a>'],
+        0: "{{x}}",
+      });
+      expect(result.html).toContain('<a title="{{x}}">t</a>');
+    });
+
+    // The server escapes values; the client keeps the escaping, braces or not.
+    it("keeps an escaped value escaped", () => {
+      const result = renderer.applyUpdate({
+        s: ["<p>", "</p>"],
+        0: "{{&lt;script&gt;alert(1)&lt;/script&gt;}}",
+      });
+      expect(result.html).toContain(
+        "<p>{{&lt;script&gt;alert(1)&lt;/script&gt;}}</p>"
+      );
+      expect(result.html).not.toContain("<script>");
+    });
+  });
+
   describe("render - range to non-range transition", () => {
     it("should render else content after range items are removed", () => {
       // Initial: range with items

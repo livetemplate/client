@@ -564,14 +564,6 @@ export class TreeRenderer {
       return "";
     }
 
-    if (
-      typeof value === "string" &&
-      value.startsWith("{{") &&
-      value.endsWith("}}")
-    ) {
-      return "";
-    }
-
     if (typeof value === "object" && !Array.isArray(value)) {
       if (
         value.d &&

@@ -5,6 +5,15 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A value that starts with `{{` and ends with `}}` renders as sent.** The
+  renderer showed such a value as empty, so text like `{{host}}/users/{{id}}`
+  from an `.http` file, or a body of `{{payload}}`, disappeared from the page.
+  The server never sends a template action as a value, so every value is data.
+
 ## [v0.26.0] - 2026-11-23
 
 ### Added
