@@ -92,6 +92,12 @@ export interface Pairing {
   placeholders: Element[];
   /** Empty text and comment nodes inserted to line gaps up. */
   spacers: ChildNode[];
+  /**
+   * Departing elements moved to the end of their parent, with where they
+   * were: if morphdom then skips that parent and never removes one, the
+   * caller puts it back.
+   */
+  departed: { el: Element; parent: Element; prev: ChildNode | null }[];
 }
 
 /**
@@ -103,6 +109,7 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   let keys: WeakMap<Element, string | symbol> | null = null;
   const placeholders: Element[] = [];
   const spacers: ChildNode[] = [];
+  const departed: Pairing["departed"] = [];
   // The author keys anywhere in the live tree, read only when a keyed new
   // element needs a placeholder: a key that already exists elsewhere is a
   // keyed move, and morphdom must find the real node, not a placeholder. A
@@ -298,9 +305,12 @@ export function pairSiblings(from: Element, to: Element): Pairing {
       else gap.push(n);
     }
     flush(null);
-    for (const d of departing) f.appendChild(d);
+    for (const d of departing) {
+      departed.push({ el: d, parent: f, prev: d.previousSibling });
+      f.appendChild(d);
+    }
   };
 
   walk(from, to);
-  return { keys, placeholders, spacers };
+  return { keys, placeholders, spacers, departed };
 }

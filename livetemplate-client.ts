@@ -2066,6 +2066,7 @@ export class LiveTemplateClient {
     let autoKeys: WeakMap<Element, string | symbol> | null = null;
     let placeholders = new Set<Element>();
     let spacers: ChildNode[] = [];
+    let departed: ReturnType<typeof pairSiblings>["departed"] = [];
     // The placeholders morphdom actually reached and filled. One it never
     // reaches (an ancestor's update was skipped: an open popover, a focused
     // element) is taken out again after the morph.
@@ -2437,10 +2438,12 @@ export class LiveTemplateClient {
       autoKeys = paired.keys;
       placeholders = new Set(paired.placeholders);
       spacers = paired.spacers;
+      departed = paired.departed;
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
       // Each filled placeholder was an addition: lvt-mounted, the textarea
-      // value and the directive-scan counter, as for any added node.
+      // value and the directive-scan counter, as for any added node. (The
+      // client registers no onBeforeNodeAdded, so no add-time hook is missed.)
       placeholders.forEach((ph) => {
         if (filled.has(ph)) morphdomOptions.onNodeAdded(ph);
       });
@@ -2452,13 +2455,19 @@ export class LiveTemplateClient {
       placeholders.forEach((ph) => {
         if (!filled.has(ph)) ph.remove();
       });
-      // After a throw, also take out the spacer text nodes still empty. A
-      // departing element moved to the end stays until the next render
-      // removes it, with the rest of the half-applied morph.
+      // Likewise the spacer text nodes morphdom never reached (still empty),
+      // and departing elements it never removed (a skipped parent, or a throw)
+      // go back where they were, so a skipped subtree looks as it did.
       spacers.forEach((sp) => {
         if (!sp.nodeValue) sp.remove();
       });
+      departed.forEach(({ el, parent, prev }) => {
+        if (el.parentNode !== parent) return; // removed, as planned
+        const next = prev && prev.parentNode === parent ? prev.nextSibling : parent.firstChild;
+        if (next !== el) parent.insertBefore(el, next);
+      });
       spacers = [];
+      departed = [];
       autoKeys = null;
       placeholders = new Set();
       filled = new Set();

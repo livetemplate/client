@@ -110,4 +110,17 @@ describe("a morph that throws partway", () => {
     expect(lastOpts.onBeforeNodeDiscarded(plain)).not.toBe(false);
     expect(lastOpts.onBeforeNodeDiscarded(hooked)).not.toBe(false);
   });
+
+  it("a departing sibling inside a skipped ancestor stays where it was", () => {
+    client.updateDOM(wrapper, {
+      s: [`\n<div class="pop">\n`, `\n<div class="x">X</div>\n<div class="y">Y</div>\n</div>\n`],
+      0: { s: [`\n<div class="gone">G</div>\n`] },
+    });
+    const pop = wrapper.querySelector(".pop")!;
+    const before = pop.innerHTML;
+    skipOn = "pop";
+    client.updateDOM(wrapper, { 0: "" });
+    expect(wrapper.querySelector(".pop")).toBe(pop);
+    expect(pop.innerHTML).toBe(before);
+  });
 });
