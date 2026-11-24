@@ -3,7 +3,7 @@ import type { Logger } from "../utils/logger";
 import type { TargetedRangeOp } from "../types";
 import { cssEscape } from "../utils/css-escape";
 
-const KEY_ATTRIBUTES = ["data-key", "data-lvt-key"] as const;
+export const KEY_ATTRIBUTES = ["data-key", "data-lvt-key"] as const;
 // Pre-compile attribute-presence regexes once at module load — these were
 // previously rebuilt on every staticsContainKeyAttribute call (per static
 // segment, per attribute) which showed up in profiling on initial render.

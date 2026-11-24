@@ -6,6 +6,8 @@
  */
 
 import morphdom from "morphdom";
+import { pairSiblings } from "./dom/sibling-pairing";
+import { authorKey, ignored, targetedSkip } from "./dom/morph-rules";
 import { expandStaticsTable } from "./state/statics-table";
 import { FocusManager } from "./dom/focus-manager";
 import {
@@ -2058,31 +2060,40 @@ export class LiveTemplateClient {
       return;
     }
 
+    // Siblings paired by signature for the whole-page morph (pairSiblings),
+    // and the placeholders it put in the live tree for new elements. Unset for
+    // the applier's single-row morphs.
+    let autoKeys: WeakMap<Element, string> | null = null;
+    let placeholders = new Set<Element>();
+
     // Build morphdom options once so the applier's `u` op (which morphdoms
     // a single row) uses the same callback set — focus skip, lvt-ignore,
     // checkbox preservation, lifecycle hooks all stay consistent.
     const morphdomOptions = {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
       getNodeKey: (node: any) => {
-        // Use data-key or data-lvt-key for efficient reconciliation
+        // Use data-key or data-lvt-key for efficient reconciliation; else the
+        // key pairSiblings gave an unkeyed element, so a conditional appearing
+        // before it can't make morphdom re-pair it by position.
         if (node.nodeType === 1) {
-          return (
-            node.getAttribute("data-key") ||
-            node.getAttribute("data-lvt-key") ||
-            undefined
-          );
+          return authorKey(node) || autoKeys?.get(node);
         }
       },
       onBeforeElUpdated: (fromEl: any, toEl: any) => {
+        // A placeholder pairSiblings put in for a new element is an addition,
+        // not an update: none of the branches below that carry live state
+        // apply, and lvt-updated must not fire. onNodeAdded runs for it after
+        // the morph.
+        if (placeholders.has(fromEl)) {
+          return true;
+        }
+
         // Targeted-apply skip: the live container's children were already
         // mutated directly by RangeDomApplier, and the rebuilt tempWrapper
         // has the container empty + tagged with data-lvt-targeted-skip.
         // Returning false short-circuits the entire subtree update —
         // morphdom skips both the diff walk AND the children-replacement.
-        if (
-          toEl.nodeType === Node.ELEMENT_NODE &&
-          (toEl as Element).hasAttribute(TARGETED_SKIP_ATTR)
-        ) {
+        if (toEl.nodeType === Node.ELEMENT_NODE && targetedSkip(toEl as Element)) {
           return false;
         }
 
@@ -2139,11 +2150,7 @@ export class LiveTemplateClient {
         // Checked on fromEl (live DOM) so both server templates and
         // client JS can add/remove it. Use data-lvt-force-update on
         // the server's version to bypass and resume diffing.
-        if (
-          fromEl.nodeType === Node.ELEMENT_NODE &&
-          (fromEl as Element).hasAttribute("lvt-ignore") &&
-          !(toEl as Element).hasAttribute("data-lvt-force-update")
-        ) {
+        if (fromEl.nodeType === Node.ELEMENT_NODE && ignored(fromEl as Element, toEl as Element)) {
           return false;
         }
 
@@ -2417,10 +2424,26 @@ export class LiveTemplateClient {
       }
     }
 
+    let morphed = false;
     try {
+      const paired = pairSiblings(element, tempWrapper);
+      autoKeys = paired.keys;
+      placeholders = new Set(paired.placeholders);
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
+      morphed = true;
+      // Each filled placeholder was an addition: lvt-mounted, the textarea
+      // value and the directive-scan counter, as for any added node.
+      placeholders.forEach((ph) => morphdomOptions.onNodeAdded(ph));
     } finally {
+      // A throw leaves placeholders morphdom never filled: take them out.
+      if (!morphed) {
+        placeholders.forEach((ph) => {
+          if (!ph.firstChild && !ph.hasAttributes()) ph.remove();
+        });
+      }
+      autoKeys = null;
+      placeholders = new Set();
       // Strip lifecycle markers regardless of whether morphdom threw,
       // preventing leaked attributes on the live DOM.
       this.rangeDomApplier.cleanupMarkers(element);

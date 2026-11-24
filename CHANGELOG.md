@@ -5,6 +5,30 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An element appearing or going away no longer rebuilds the elements after
+  it.** morphdom pairs unkeyed siblings by position. So a conditional element
+  that appeared before two unkeyed `<div>`s shifted each into the next and
+  rebuilt the last. Its keyed contents were moved into the copy, which
+  detached them: a click in progress was lost, an iframe reloaded, and focus
+  and scroll went.
+
+  Now, before each update, the client pairs siblings by tag, id and first
+  class, and lines up the gaps between them, whitespace included. A new
+  element gets an empty placeholder in its place, which morphdom fills as an
+  addition (`lvt-mounted` fires, `lvt-updated` doesn't). A departing element
+  is removed after the others, so no sibling is moved past it.
+
+  Only plain containers get a placeholder: a new script, iframe, form control,
+  custom element or SVG element keeps today's handling. Alike siblings, such as
+  identical `<li>`s, still pair by position, so key those.
+
+  On a 3,000-row page in Chrome, an ordinary update costs about 10% more
+  (about 23 ms).
+
 ## [v0.27.0] - 2026-11-24
 
 ### Fixed
