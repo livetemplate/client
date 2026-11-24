@@ -37,7 +37,9 @@ import { authorKey, morphSkips } from "./morph-rules";
 
 /**
  * Plain HTML containers and text tags: inserting one empty and filling it in
- * is the same as inserting it whole.
+ * is the same as inserting it whole. TR, TD and LI are safe here: placeholders
+ * are made with createElement, not parsed, so there is no parser context to
+ * get wrong.
  */
 const PLACEABLE = new Set([
   "DIV", "SECTION", "MAIN", "ASIDE", "HEADER", "FOOTER", "NAV", "ARTICLE",
@@ -153,7 +155,9 @@ export function pairSiblings(from: Element, to: Element): Pairing {
       if (!authored) key(fc, tc); // author-keyed pairs already match by key
     };
 
-    // Author keys first, then signatures unique on both sides.
+    // Author keys first, then signatures unique on both sides. A key that
+    // repeats among siblings is already a template bug; the last one pairs and
+    // the others are treated as departing.
     const byKey = new Map<string, Element>();
     fromKids.forEach((c, i) => {
       const k = fromKeys[i];
@@ -238,7 +242,10 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   //   usual (lifecycle hooks and all) without passing them on the way. The
   //   move disconnects and reconnects them first (a custom element's
   //   callbacks run, an iframe inside reloads), which is harmless for an
-  //   element on its way out; lvt-destroyed doesn't depend on position.
+  //   element on its way out; lvt-destroyed doesn't depend on position. This
+  //   relies on removals not being vetoed: the client's onBeforeNodeDiscarded
+  //   always allows them, so a departing element is gone by the end of the
+  //   same morph, as it was before.
   const align = (
     f: Element,
     t: Element,

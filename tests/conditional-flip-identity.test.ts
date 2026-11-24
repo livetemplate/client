@@ -388,4 +388,20 @@ describe("a conditional flip keeps its siblings", () => {
     expect(wrapper.querySelector(".a input.field")).toBe(field);
     expect((wrapper.querySelector(".a input.field") as HTMLInputElement).value).toBe("typed");
   });
+
+  it("a node the client injected is removed as before, and its siblings stay", () => {
+    // Not in any render: morphdom has always removed such a node. The pre-pass
+    // treats it as departing, so it goes the same way, without moving the
+    // siblings around it.
+    client.updateDOM(wrapper, page(""));
+    const before = nodes();
+    const injected = document.createElement("div");
+    injected.className = "injected";
+    before.backdrop!.before(injected);
+    client.updateDOM(wrapper, { 0: toast });
+    expect(wrapper.querySelector(".injected")).toBeNull();
+    expect(nodes()).toEqual(before);
+    expect(nodes().layout).toBe(before.layout);
+    expect(nodes().section).toBe(before.section);
+  });
 });
