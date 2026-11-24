@@ -433,4 +433,16 @@ describe("a conditional flip keeps its siblings", () => {
       expect(wrapper.innerHTML).toBe(fresh(list("")));
     });
   });
+
+  it("leaves an lvt-ignore subtree alone, with no placeholder in it", () => {
+    client.updateDOM(wrapper, {
+      s: [`\n<div class="kept" lvt-ignore>\n`, `\n<div class="x">X</div>\n</div>\n<div class="after">A</div>\n`],
+      0: "",
+    });
+    const kept = wrapper.querySelector(".kept")!;
+    const before = kept.innerHTML;
+    client.updateDOM(wrapper, { 0: { s: [`\n<div class="note">new</div>\n`] } });
+    expect(wrapper.querySelector(".kept")).toBe(kept);
+    expect(kept.innerHTML).toBe(before);
+  });
 });

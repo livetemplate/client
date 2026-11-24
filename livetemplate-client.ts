@@ -2065,6 +2065,7 @@ export class LiveTemplateClient {
     // the applier's single-row morphs.
     let autoKeys: WeakMap<Element, string | symbol> | null = null;
     let placeholders = new Set<Element>();
+    let spacers: ChildNode[] = [];
     // The placeholders morphdom actually reached and filled. One it never
     // reaches (an ancestor's update was skipped: an open popover, a focused
     // element) is taken out again after the morph.
@@ -2435,6 +2436,7 @@ export class LiveTemplateClient {
       const paired = pairSiblings(element, tempWrapper);
       autoKeys = paired.keys;
       placeholders = new Set(paired.placeholders);
+      spacers = paired.spacers;
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
       // Each filled placeholder was an addition: lvt-mounted, the textarea
@@ -2450,6 +2452,13 @@ export class LiveTemplateClient {
       placeholders.forEach((ph) => {
         if (!filled.has(ph)) ph.remove();
       });
+      // After a throw, also take out the spacer text nodes still empty. A
+      // departing element moved to the end stays until the next render
+      // removes it, with the rest of the half-applied morph.
+      spacers.forEach((sp) => {
+        if (!sp.nodeValue) sp.remove();
+      });
+      spacers = [];
       autoKeys = null;
       placeholders = new Set();
       filled = new Set();

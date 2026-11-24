@@ -39,7 +39,9 @@ import { authorKey, morphSkips } from "./morph-rules";
  * Plain HTML containers and text tags: inserting one empty and filling it in
  * is the same as inserting it whole. TR, TD and LI are safe here: placeholders
  * are made with createElement, not parsed, so there is no parser context to
- * get wrong.
+ * get wrong. Interactive and replaced elements (BUTTON, A, IMG, INPUT and the
+ * like) stay out: they carry focus, activation or loading behaviour, and the
+ * list only grows when a tag is known to fill in the same as it inserts.
  */
 const PLACEABLE = new Set([
   "DIV", "SECTION", "MAIN", "ASIDE", "HEADER", "FOOTER", "NAV", "ARTICLE",
@@ -88,6 +90,8 @@ export interface Pairing {
   keys: WeakMap<Element, string | symbol> | null;
   /** Placeholders inserted into the live tree, for morphdom to fill. */
   placeholders: Element[];
+  /** Empty text and comment nodes inserted to line gaps up. */
+  spacers: ChildNode[];
 }
 
 /**
@@ -98,6 +102,7 @@ export interface Pairing {
 export function pairSiblings(from: Element, to: Element): Pairing {
   let keys: WeakMap<Element, string | symbol> | null = null;
   const placeholders: Element[] = [];
+  const spacers: ChildNode[] = [];
   // The author keys anywhere in the live tree, read only when a keyed new
   // element needs a placeholder: a key that already exists elsewhere is a
   // keyed move, and morphdom must find the real node, not a placeholder. A
@@ -279,7 +284,9 @@ export function pairSiblings(from: Element, to: Element): Pairing {
           k++;
         } else {
           const doc = f.ownerDocument;
-          f.insertBefore(n.nodeType === 8 ? doc.createComment("") : doc.createTextNode(""), before);
+          const spacer = n.nodeType === 8 ? doc.createComment("") : doc.createTextNode("");
+          f.insertBefore(spacer, before);
+          spacers.push(spacer);
         }
       }
       gap = [];
@@ -295,5 +302,5 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   };
 
   walk(from, to);
-  return { keys, placeholders };
+  return { keys, placeholders, spacers };
 }
