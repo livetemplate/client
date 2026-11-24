@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   addition (`lvt-mounted` fires, `lvt-updated` doesn't). A departing element
   is removed after the others, so no sibling is moved past it.
 
+  Siblings that swap places are now moved, so each keeps its state, where
+  morphdom used to morph one into the other's node by position.
+
   Only plain containers get a placeholder: a new script, iframe, form control,
   custom element or SVG element keeps today's handling. Alike siblings, such as
   identical `<li>`s, still pair by position, so key those.

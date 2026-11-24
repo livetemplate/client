@@ -16,7 +16,8 @@
  *   common case and allocates nothing.
  * - Elsewhere it pairs unkeyed siblings whose signature is unique on both
  *   sides, then pairs what is left by tag with a spare live element that keeps
- *   the pairs in order, and gives each pair a shared key for getNodeKey. The signature is the tag, the id and the first
+ *   the pairs in order, and gives each pair a shared key for getNodeKey. The
+ *   signature is the tag, the id and the first
  *   class token: modifier classes come and go (a template's `{{if}} is-open`,
  *   a class the client toggles), and such an element is still the same one.
  * - Keys alone don't stop moves: morphdom appends a new unmatched element at
@@ -99,7 +100,9 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   let next = 0;
   // The author keys anywhere in the live tree, read only when a keyed new
   // element needs a placeholder: a key that already exists elsewhere is a
-  // keyed move, and morphdom must find the real node, not a placeholder.
+  // keyed move, and morphdom must find the real node, not a placeholder. A
+  // snapshot is enough: placeholders carry no key attributes, and nothing
+  // here adds or changes a keyed live node.
   let liveKeys: Set<string> | null = null;
   const keyedLive = (k: string): boolean => {
     if (!liveKeys) {
@@ -128,9 +131,9 @@ export function pairSiblings(from: Element, to: Element): Pairing {
       b = b.nextElementSibling;
     }
     if (!a && !b) {
-      for (a = f.firstElementChild, b = t.firstElementChild; a && b; a = a.nextElementSibling, b = b.nextElementSibling) {
-        walk(a, b);
-      }
+      a = f.firstElementChild;
+      b = t.firstElementChild;
+      for (; a && b; a = a.nextElementSibling, b = b.nextElementSibling) walk(a, b);
       return;
     }
     reshaped(f, t);
@@ -215,7 +218,9 @@ export function pairSiblings(from: Element, to: Element): Pairing {
         order.push(fromIndex.get(fc)!);
       }
     });
-    // Pairs out of order are a real reorder: morphdom moves them, as it should.
+    // Pairs out of order are a real reorder: morphdom moves them, as it should,
+    // so each element keeps its state (before, positional pairing morphed one
+    // sibling's content into another's node).
     if (order.some((x, k) => k > 0 && x < order[k - 1])) return;
     align(f, t, partner, pairedFrom);
   };
@@ -230,8 +235,16 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   //   the live ones in order and adding empty ones where short (an extra live
   //   one is harmless: morphdom drops it);
   // - departing live elements move to the end, where morphdom removes them as
-  //   usual (lifecycle hooks and all) without passing them on the way.
-  const align = (f: Element, t: Element, partner: Map<Element, Element>, pairedFrom: Set<Element>): void => {
+  //   usual (lifecycle hooks and all) without passing them on the way. The
+  //   move disconnects and reconnects them first (a custom element's
+  //   callbacks run, an iframe inside reloads), which is harmless for an
+  //   element on its way out; lvt-destroyed doesn't depend on position.
+  const align = (
+    f: Element,
+    t: Element,
+    partner: Map<Element, Element>,
+    pairedFrom: Set<Element>
+  ): void => {
     const departing: Element[] = [];
     let live: ChildNode | null = f.firstChild;
     let gap: ChildNode[] = [];
@@ -250,7 +263,8 @@ export function pairSiblings(from: Element, to: Element): Pairing {
         if (n.nodeType === 1) {
           const tc = n as Element;
           const ak = authorKey(tc);
-          if (end && tc.namespaceURI === HTML_NS && PLACEABLE.has(tc.tagName) && !(ak && keyedLive(ak))) {
+          const placeable = end && tc.namespaceURI === HTML_NS && PLACEABLE.has(tc.tagName);
+          if (placeable && !(ak && keyedLive(ak))) {
             const ph = f.ownerDocument.createElement(tc.tagName);
             f.insertBefore(ph, before);
             key(ph, tc, ak);

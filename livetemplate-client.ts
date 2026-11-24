@@ -2436,7 +2436,9 @@ export class LiveTemplateClient {
       // value and the directive-scan counter, as for any added node.
       placeholders.forEach((ph) => morphdomOptions.onNodeAdded(ph));
     } finally {
-      // A throw leaves placeholders morphdom never filled: take them out.
+      // After a throw, take out the placeholders morphdom never started
+      // filling. One it partly filled stays, like the rest of a half-applied
+      // morph; the next render reconciles it.
       if (!morphed) {
         placeholders.forEach((ph) => {
           if (!ph.firstChild && !ph.hasAttributes()) ph.remove();

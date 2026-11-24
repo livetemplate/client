@@ -288,7 +288,7 @@ describe("a conditional flip keeps its siblings", () => {
       expect(nodes().layout).toBe(before.layout);
       expect(nodes().backdrop).toBe(before.backdrop);
       // The departing toast may be moved aside before it is removed; no one else.
-    expect(detached().filter((c) => c !== "toast")).toEqual([]);
+      expect(detached().filter((c) => c !== "toast")).toEqual([]);
     });
 
     it("appearing and going repeatedly leaves the page as a fresh render", () => {
@@ -367,5 +367,25 @@ describe("a conditional flip keeps its siblings", () => {
     document.body.appendChild(fresh);
     new LiveTemplateClient().updateDOM(fresh, { ...tree, ...update });
     expect(wrapper.innerHTML).toBe(fresh.innerHTML);
+  });
+
+  it("siblings that swap places keep their identity: state follows the element", () => {
+    // Before, morphdom morphed swapped unkeyed siblings in place by position,
+    // so a's content went into b's node. Now each is paired by signature and
+    // moved, so the input keeps its live value.
+    client.updateDOM(wrapper, {
+      s: [``, `\n`, `\n`],
+      0: { s: [`<div class="a"><input class="field"></div>`] },
+      1: { s: [`<div class="b">B</div>`] },
+    });
+    const field = wrapper.querySelector("input.field") as HTMLInputElement;
+    field.value = "typed";
+    client.updateDOM(wrapper, {
+      0: { s: [`<div class="b">B</div>`] },
+      1: { s: [`<div class="a"><input class="field"></div>`] },
+    });
+    expect([...wrapper.children].map((e) => e.className)).toEqual(["b", "a"]);
+    expect(wrapper.querySelector(".a input.field")).toBe(field);
+    expect((wrapper.querySelector(".a input.field") as HTMLInputElement).value).toBe("typed");
   });
 });
