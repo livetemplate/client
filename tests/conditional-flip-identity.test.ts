@@ -301,4 +301,71 @@ describe("a conditional flip keeps its siblings", () => {
       expect(wrapper.innerHTML).toBe(fresh.innerHTML);
     });
   });
+
+  // A keyed element that moves to where a new element appears must stay the
+  // same node, whichever side of the insertion point it comes from, and
+  // nothing may be left behind.
+  describe("a keyed element moving to a new spot", () => {
+    const fresh = (tree: any) => {
+      const el = document.createElement("div");
+      el.setAttribute("data-lvt-id", "fresh-" + Math.random());
+      document.body.appendChild(el);
+      new LiveTemplateClient().updateDOM(el, tree);
+      return el.innerHTML;
+    };
+
+    it("from after the insertion point", () => {
+      const tree = {
+        s: [`<span class="kbd"></span>\n`, `\n<div class="backdrop"></div>\n<div class="layout">`, `</div>\n`],
+        0: "",
+        1: { s: [`<section data-key="stage"><input class="field"></section>`] },
+      };
+      client.updateDOM(wrapper, tree);
+      const stage = wrapper.querySelector('section[data-key="stage"]');
+      const backdrop = wrapper.querySelector(".backdrop");
+      const update = { 0: { s: [`<section data-key="stage"><input class="field"></section>`] }, 1: "" };
+      client.updateDOM(wrapper, update);
+      expect(wrapper.querySelector('section[data-key="stage"]')).toBe(stage);
+      expect(wrapper.querySelectorAll('section[data-key="stage"]').length).toBe(1);
+      expect(wrapper.querySelector(".backdrop")).toBe(backdrop);
+      expect(wrapper.innerHTML).toBe(fresh({ ...tree, ...update }));
+    });
+
+    it("from before the insertion point", () => {
+      const tree = {
+        s: [`<div class="top">`, `</div>\n<span class="kbd"></span>\n`, `\n<div class="backdrop"></div>\n<div class="layout"></div>\n`],
+        0: { s: [`<section data-key="stage"><input class="field"></section>`] },
+        1: "",
+      };
+      client.updateDOM(wrapper, tree);
+      const stage = wrapper.querySelector('section[data-key="stage"]');
+      const update = { 0: "", 1: { s: [`<section data-key="stage"><input class="field"></section>`] } };
+      client.updateDOM(wrapper, update);
+      expect(wrapper.querySelector('section[data-key="stage"]')).toBe(stage);
+      expect(wrapper.querySelectorAll('section[data-key="stage"]').length).toBe(1);
+      expect(wrapper.innerHTML).toBe(fresh({ ...tree, ...update }));
+    });
+  });
+
+  it("a reorder with an insertion falls back to morphdom and leaves nothing behind", () => {
+    const tree = {
+      s: [``, `\n`, `\n`, `\n`],
+      0: "",
+      1: { s: [`<div class="a">A</div>`] },
+      2: { s: [`<div class="b">B</div>`] },
+    };
+    client.updateDOM(wrapper, tree);
+    const update = {
+      0: { s: [`<div class="new">N</div>`] },
+      1: { s: [`<div class="b">B</div>`] },
+      2: { s: [`<div class="a">A</div>`] },
+    };
+    client.updateDOM(wrapper, update);
+    expect([...wrapper.children].map((e) => e.className)).toEqual(["new", "b", "a"]);
+    const fresh = document.createElement("div");
+    fresh.setAttribute("data-lvt-id", "fresh-reorder");
+    document.body.appendChild(fresh);
+    new LiveTemplateClient().updateDOM(fresh, { ...tree, ...update });
+    expect(wrapper.innerHTML).toBe(fresh.innerHTML);
+  });
 });

@@ -48,7 +48,10 @@ const PLACEABLE = new Set([
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
-/** A prefix no author key can carry, so an auto key never equals one. */
+/**
+ * Auto keys start with a control character that keys written in templates
+ * don't use, so an auto key won't equal an author key in practice.
+ */
 const AUTO = "\u0001";
 
 /** The first class token. */
@@ -94,6 +97,20 @@ export function pairSiblings(from: Element, to: Element): Pairing {
   let keys: WeakMap<Element, string> | null = null;
   const placeholders: Element[] = [];
   let next = 0;
+  // The author keys anywhere in the live tree, read only when a keyed new
+  // element needs a placeholder: a key that already exists elsewhere is a
+  // keyed move, and morphdom must find the real node, not a placeholder.
+  let liveKeys: Set<string> | null = null;
+  const keyedLive = (k: string): boolean => {
+    if (!liveKeys) {
+      liveKeys = new Set();
+      for (const el of Array.from(from.querySelectorAll("[data-key], [data-lvt-key]"))) {
+        const ak = authorKey(el);
+        if (ak) liveKeys.add(ak);
+      }
+    }
+    return liveKeys.has(k);
+  };
   const key = (a: Element, b: Element, k: string = AUTO + next++): void => {
     keys = keys || new WeakMap();
     keys.set(a, k);
@@ -232,10 +249,11 @@ export function pairSiblings(from: Element, to: Element): Pairing {
         const before: Node | null = k < texts.length ? texts[k] : end;
         if (n.nodeType === 1) {
           const tc = n as Element;
-          if (end && tc.namespaceURI === HTML_NS && PLACEABLE.has(tc.tagName)) {
+          const ak = authorKey(tc);
+          if (end && tc.namespaceURI === HTML_NS && PLACEABLE.has(tc.tagName) && !(ak && keyedLive(ak))) {
             const ph = f.ownerDocument.createElement(tc.tagName);
             f.insertBefore(ph, before);
-            key(ph, tc, authorKey(tc));
+            key(ph, tc, ak);
             placeholders.push(ph);
           }
         } else if (k < texts.length && texts[k].nodeType === n.nodeType) {
