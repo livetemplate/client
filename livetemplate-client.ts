@@ -6,6 +6,8 @@
  */
 
 import morphdom from "morphdom";
+import { alignChildren, AlignEnv } from "./dom/sibling-align";
+import { authorKey, ignored, targetedSkip } from "./dom/morph-rules";
 import { expandStaticsTable } from "./state/statics-table";
 import { FocusManager } from "./dom/focus-manager";
 import {
@@ -2058,31 +2060,69 @@ export class LiveTemplateClient {
       return;
     }
 
+    // Placeholders alignChildren put in for new elements (with the element's
+    // author key, if it has one), and those morphdom has reached and filled.
+    const placeholders = new Map<Element, string | undefined>();
+    const filled = new Set<Element>();
+    // Author keys in the live page and in the incoming render, read on first use.
+    let liveKeys: Map<string, number> | null = null; // read once, before any removal
+    let incomingKeys: Map<string, number> | null = null;
+    const keysIn = (root: Element): Map<string, number> => {
+      const ks = new Map<string, number>();
+      root.querySelectorAll("[data-key], [data-lvt-key]").forEach((el) => {
+        const k = authorKey(el);
+        if (k) ks.set(k, (ks.get(k) || 0) + 1);
+      });
+      return ks;
+    };
+    const alignEnv: AlignEnv = {
+      discard: (el) => {
+        // As morphdom's removal: the hook on the element, then on its keyed
+        // descendants that aren't moving elsewhere (morphdom discards those
+        // separately), then the removal itself.
+        if (morphdomOptions.onBeforeNodeDiscarded(el) === false) return;
+        el.querySelectorAll("[data-key], [data-lvt-key]").forEach((d) => {
+          const k = authorKey(d);
+          if (k && alignEnv.incomingKeyCount(k) === 0) morphdomOptions.onBeforeNodeDiscarded(d);
+        });
+        el.remove();
+      },
+      liveHasKey: (k) => (liveKeys ??= keysIn(element)).has(k),
+      incomingKeyCount: (k) => (incomingKeys ??= keysIn(tempWrapper)).get(k) || 0,
+      hasDuplicateKeys: () => {
+        const repeats = (m: Map<string, number>) => [...m.values()].some((n) => n > 1);
+        return repeats((liveKeys ??= keysIn(element))) || repeats((incomingKeys ??= keysIn(tempWrapper)));
+      },
+      placeholder: (ph, k) => placeholders.set(ph, k),
+    };
+
     // Build morphdom options once so the applier's `u` op (which morphdoms
     // a single row) uses the same callback set — focus skip, lvt-ignore,
     // checkbox preservation, lifecycle hooks all stay consistent.
     const morphdomOptions = {
       childrenOnly: true, // Only update children, preserve the wrapper element itself
       getNodeKey: (node: any) => {
-        // Use data-key or data-lvt-key for efficient reconciliation
+        // Use data-key or data-lvt-key for efficient reconciliation; a
+        // placeholder for a new author-keyed element carries that element's key.
         if (node.nodeType === 1) {
-          return (
-            node.getAttribute("data-key") ||
-            node.getAttribute("data-lvt-key") ||
-            undefined
-          );
+          return authorKey(node) || placeholders.get(node);
         }
       },
       onBeforeElUpdated: (fromEl: any, toEl: any) => {
+        // A placeholder alignChildren put in for a new element is an addition,
+        // not an update: none of the branches below that carry live state
+        // apply, and lvt-updated must not fire. Its onNodeAdded runs from
+        // onBeforeElChildrenUpdated, once its attributes are in.
+        if (placeholders.has(fromEl)) {
+          return true;
+        }
+
         // Targeted-apply skip: the live container's children were already
         // mutated directly by RangeDomApplier, and the rebuilt tempWrapper
         // has the container empty + tagged with data-lvt-targeted-skip.
         // Returning false short-circuits the entire subtree update —
         // morphdom skips both the diff walk AND the children-replacement.
-        if (
-          toEl.nodeType === Node.ELEMENT_NODE &&
-          (toEl as Element).hasAttribute(TARGETED_SKIP_ATTR)
-        ) {
+        if (toEl.nodeType === Node.ELEMENT_NODE && targetedSkip(toEl as Element)) {
           return false;
         }
 
@@ -2139,11 +2179,7 @@ export class LiveTemplateClient {
         // Checked on fromEl (live DOM) so both server templates and
         // client JS can add/remove it. Use data-lvt-force-update on
         // the server's version to bypass and resume diffing.
-        if (
-          fromEl.nodeType === Node.ELEMENT_NODE &&
-          (fromEl as Element).hasAttribute("lvt-ignore") &&
-          !(toEl as Element).hasAttribute("data-lvt-force-update")
-        ) {
+        if (fromEl.nodeType === Node.ELEMENT_NODE && ignored(fromEl as Element, toEl as Element)) {
           return false;
         }
 
@@ -2361,6 +2397,18 @@ export class LiveTemplateClient {
           this.nodesAddedThisRender++;
         }
       },
+      onBeforeElChildrenUpdated: (fromEl: any, toEl: any) => {
+        // A filled placeholder's own lvt-mounted etc. runs here: its
+        // attributes are copied and its children not yet added, so the order
+        // matches an element morphdom adds whole (parent first).
+        if (placeholders.has(fromEl) && !filled.has(fromEl)) {
+          filled.add(fromEl);
+          morphdomOptions.onNodeAdded(fromEl);
+        }
+        // Morphdom descends into this container: line its children up first.
+        alignChildren(fromEl, toEl, alignEnv);
+        return true;
+      },
       onBeforeNodeDiscarded: (node: any) => {
         // Execute lvt-destroyed lifecycle hook
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -2418,9 +2466,19 @@ export class LiveTemplateClient {
     }
 
     try {
+      // morphdom gives the root (childrenOnly) no onBeforeElChildrenUpdated,
+      // and it always descends into it: line its children up here.
+      alignChildren(element, tempWrapper, alignEnv);
       // Use morphdom to efficiently update the element
       morphdom(element, tempWrapper, morphdomOptions);
     } finally {
+      // After a throw, take out placeholders morphdom never reached; the next
+      // render reconciles the rest of a half-applied morph. (Without a throw
+      // every placeholder is reached: it is only put in once morphdom
+      // descends into its container.)
+      placeholders.forEach((_k, ph) => {
+        if (!filled.has(ph)) ph.remove();
+      });
       // Strip lifecycle markers regardless of whether morphdom threw,
       // preventing leaked attributes on the live DOM.
       this.rangeDomApplier.cleanupMarkers(element);

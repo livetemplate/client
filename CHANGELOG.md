@@ -5,6 +5,35 @@ All notable changes to @livetemplate/client will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An element appearing or going away no longer rebuilds the elements after
+  it.** morphdom pairs unkeyed siblings by position. So a conditional element
+  that appeared before two unkeyed `<div>`s shifted each into the next and
+  rebuilt the last. Its keyed contents were moved into the copy, which
+  detached them: a click in progress was lost, an iframe reloaded, and focus
+  and scroll went.
+
+  Now, as morphdom descends into a container, the client lines its children
+  up with the incoming render first, but only in the unambiguous case. The
+  alike siblings at the front and back must match, and what is left must be a
+  pure insertion of plain containers (`div`, `section`, `li`, …) or a pure
+  removal. A new element gets an empty placeholder that morphdom fills in
+  place (`lvt-mounted` fires, `lvt-updated` doesn't). Departing elements are
+  removed in place, through the usual discard hook. Whitespace between
+  siblings is lined up too, as is text added between unchanged elements.
+
+  Everything else is left exactly as before: mixed changes, keyed moves, new
+  elements that aren't plain containers, `lvt-ignore` elements leaving, and
+  pages with a repeated `data-key`. A container morphdom skips (focus, an open
+  popover, `lvt-ignore`) is never touched.
+
+  On a 3,000-row page in Chrome, an ordinary update costs about 10% more
+  (15–20 ms). One that adds an element before unkeyed siblings is up to twice
+  as fast, since nothing is rebuilt.
+
 ## [v0.27.0] - 2026-11-24
 
 ### Fixed
