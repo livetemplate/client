@@ -154,15 +154,24 @@ function alignGap(
 
 /** Aligns f's children with t's in place; see the file comment. */
 export function alignChildren(f: Element, t: Element, env: AlignEnv): void {
-  if (morphSkips(f, t)) return;
-  const L = elements(f);
-  const T = elements(t);
   // No live elements, or none incoming: no siblings to keep.
-  if (L.length === 0 || T.length === 0) return;
-  if (L.length === T.length && L.every((c, i) => sameShape(c, T[i]))) {
+  if (!f.firstElementChild || !t.firstElementChild || morphSkips(f, t)) return;
+  // The common case, checked by walking both lists in step without building
+  // anything: the same tags in order. (Keys aren't read here: with the same
+  // tags, differing keys are a reorder or a mixed change, which is left to
+  // morphdom's own key matching either way.)
+  let a: Element | null = f.firstElementChild;
+  let b: Element | null = t.firstElementChild;
+  while (a && b && a.tagName === b.tagName) {
+    a = a.nextElementSibling;
+    b = b.nextElementSibling;
+  }
+  if (!a && !b) {
     // Same elements. If only text or comments were added between them, line
     // up each gap (empty text nodes only), so no element meets a text node.
     if (f.childNodes.length < t.childNodes.length && !env.hasDuplicateKeys()) {
+      const L = elements(f);
+      const T = elements(t);
       for (let i = 0; i <= L.length; i++) {
         alignGap(
           f,
@@ -176,6 +185,8 @@ export function alignChildren(f: Element, t: Element, env: AlignEnv): void {
     }
     return;
   }
+  const L = elements(f);
+  const T = elements(t);
 
   let p = 0;
   while (p < L.length && p < T.length && alike(L[p], T[p])) p++;
