@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages with a repeated `data-key`. A container morphdom skips (focus, an open
   popover, `lvt-ignore`) is never touched.
 
+  On a 3,000-row page in Chrome, an ordinary update costs about 10% more
+  (15–20 ms). One that adds an element before unkeyed siblings is up to twice
+  as fast, since nothing is rebuilt.
+
 ## [v0.27.0] - 2026-11-24
 
 ### Fixed
